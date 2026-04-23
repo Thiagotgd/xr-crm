@@ -1828,6 +1828,22 @@ loadBoard();
 loadCustomTabs().then(() => refreshTabBadges());
 loadMsgsRapidas();
 setInterval(() => { if (!currentContato) loadBoard(); refreshTabBadges(); }, 30000);
+
+// Auto-refresh messages when chat is open (every 5s)
+setInterval(async () => {
+  if (!currentContato) return;
+  try {
+    const fresh = await api('GET', '/api/contato/' + currentContato.id);
+    const oldMsgs = currentContato.mensagens || [];
+    const newMsgs = fresh.mensagens || [];
+    const oldLast = oldMsgs.length ? oldMsgs[0].id : 0;
+    const newLast = newMsgs.length ? newMsgs[0].id : 0;
+    if (newLast !== oldLast || newMsgs.length !== oldMsgs.length) {
+      currentContato = fresh;
+      renderDetail();
+    }
+  } catch(e) {}
+}, 5000);
 </script>
 </body>
 </html>
