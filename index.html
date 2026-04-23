@@ -100,17 +100,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .detail-overlay.show { display: flex; justify-content: flex-end; }
 .detail-panel { width: 100%; max-width: 600px; height: 100%; background: var(--bg); display: flex; flex-direction: column; animation: slideLeft .25s ease; overflow: hidden; }
 @keyframes slideLeft { from { transform: translateX(100%); } to { transform: translateX(0); } }
-.detail-top { padding: 16px; background: var(--card-bg); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.detail-top .dt-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.detail-top .dt-back { font-size: 20px; cursor: pointer; padding: 4px; background: none; border: none; color: var(--text); }
-.detail-top .dt-actions { display: flex; gap: 8px; }
-.detail-info { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 13px; }
-.detail-info span { color: var(--text-muted); }
-.detail-info strong { color: var(--text); }
+.detail-top { padding: 8px 12px; background: var(--card-bg); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.detail-top .dt-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0; }
+.detail-top .dt-back { font-size: 18px; cursor: pointer; padding: 2px; background: none; border: none; color: var(--text); }
+.detail-top .dt-actions { display: flex; gap: 6px; }
+.detail-info-inner { display: none; }
+.detail-info-inner.expanded { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; font-size: 12px; padding-top: 6px; }
+.detail-info-inner span { color: var(--text-muted); }
+.detail-info-inner strong { color: var(--text); }
+.detail-toggle { background: none; border: none; color: var(--text-muted); font-size: 11px; cursor: pointer; padding: 4px 0; }
+.detail-toggle:hover { color: var(--text); }
 
 /* Etapa selector in detail */
-.etapa-bar { display: flex; overflow-x: auto; gap: 6px; padding: 10px 16px; background: var(--card-bg); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.etapa-btn { padding: 5px 12px; border-radius: 16px; font-size: 11px; font-weight: 600; border: 2px solid var(--border); background: transparent; color: var(--text-muted); cursor: pointer; white-space: nowrap; transition: all .2s; }
+.etapa-bar { display: flex; overflow-x: auto; gap: 4px; padding: 6px 12px; background: var(--card-bg); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.etapa-btn { padding: 4px 10px; border-radius: 14px; font-size: 10px; font-weight: 600; border: 2px solid var(--border); background: transparent; color: var(--text-muted); cursor: pointer; white-space: nowrap; transition: all .2s; }
 .etapa-btn.current { border-color: var(--accent); color: var(--accent); background: rgba(59,130,246,.1); }
 
 /* Messages */
@@ -176,6 +179,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .grupo-card .gc-meta { font-size: 10px; color: var(--text-muted); text-align: right; flex-shrink: 0; }
 .grupo-card .gc-actions { flex-shrink: 0; }
 .grupo-chat-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 150; display: flex; justify-content: flex-end; }
+
+/* Forward button on messages */
+.msg-fwd-btn { background: none; border: none; font-size: 13px; cursor: pointer; opacity: 0.5; padding: 2px 4px; vertical-align: middle; }
+.msg-fwd-btn:hover { opacity: 1; }
+
+/* Forward modal */
+.fwd-list { max-height: 50vh; overflow-y: auto; }
+.fwd-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.fwd-item:active { background: var(--card-hover); }
+.fwd-item .fwd-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.fwd-item .fwd-avatar-fb { width: 36px; height: 36px; border-radius: 50%; background: #4b5563; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 14px; flex-shrink: 0; }
+.fwd-item .fwd-info { flex: 1; min-width: 0; }
+.fwd-item .fwd-name { font-weight: 600; font-size: 14px; }
+.fwd-item .fwd-sub { font-size: 12px; color: var(--text-muted); }
+.fwd-section-title { font-size: 12px; font-weight: 700; color: var(--accent); text-transform: uppercase; padding: 10px 0 4px; }
 
 /* Mobile */
 @media (max-width: 768px) {
@@ -355,6 +373,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   </div>
 </div>
 
+<!-- Forward Modal -->
+<div class="modal-overlay" id="forwardModal" onclick="if(event.target===this)closeForwardModal()">
+  <div class="modal">
+    <h2>Encaminhar para...</h2>
+    <input type="text" id="fwdSearch" placeholder="Buscar contato ou grupo..." oninput="filterForwardList()" style="width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;outline:none;margin-bottom:8px">
+    <div class="fwd-list" id="fwdList"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeForwardModal()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -491,29 +521,26 @@ function renderDetail() {
 
   const avatarEl = document.getElementById('detailAvatar');
   if (c.foto_url) {
-    avatarEl.innerHTML = '<img src="' + esc(c.foto_url) + '" style="width:50px;height:50px;border-radius:50%;object-fit:cover" onerror="this.parentElement.innerHTML=\'<div style=\\\'width:50px;height:50px;border-radius:50%;background:#4b5563;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:22px\\\'>' + (c.nome || '?').charAt(0).toUpperCase() + '</div>\'">';
+    avatarEl.innerHTML = '<img src="' + esc(c.foto_url) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover" onerror="this.parentElement.innerHTML=\'<div style=\\\'width:36px;height:36px;border-radius:50%;background:#4b5563;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px\\\'>' + (c.nome || '?').charAt(0).toUpperCase() + '</div>\'">';
   } else {
-    avatarEl.innerHTML = '<div style="width:50px;height:50px;border-radius:50%;background:#4b5563;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:22px">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+    avatarEl.innerHTML = '<div style="width:36px;height:36px;border-radius:50%;background:#4b5563;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
   }
 
-  const equipeOptions = '<option value="">Sem responsável</option>' + equipe.map(m =>
-    '<option value="' + esc(m.name || m.username) + '"' + (c.responsavel === (m.name || m.username) ? ' selected' : '') + '>' + esc(m.name || m.username) + '</option>'
-  ).join('');
-
-  document.getElementById('detailInfo').innerHTML =
-    '<div><span>Telefone</span><br><strong>' + formatPhone(c.telefone) + '</strong></div>' +
-    '<div><span>Pet</span><br><strong>' + esc(c.pet_nome || '-') + (c.pet_especie ? ' (' + c.pet_especie + ')' : '') + '</strong></div>' +
-    '<div><span>Veterinario</span><br><strong>' + esc(c.veterinario || '-') + '</strong></div>' +
-    '<div><span>Desde</span><br><strong>' + (c.created_at || '-') + '</strong></div>' +
-    '<div style="grid-column:1/-1"><span>Responsável</span><br>' +
-      '<select onchange="setResponsavel(this.value)" style="margin-top:4px;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;width:100%">' + equipeOptions + '</select>' +
-    '</div>' +
-    '<div style="grid-column:1/-1" id="detailAbasSection"><span>Abas</span><br><div id="detailAbasButtons" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div></div>' +
-    (c.notas ? '<div style="grid-column:1/-1"><span>Obs</span><br><strong>' + esc(c.notas) + '</strong></div>' : '') +
-    '<div style="grid-column:1/-1"><span>Etiquetas</span><br><div class="tags-row" style="margin-top:4px">' +
-      (c.etiquetas && c.etiquetas.length ? c.etiquetas.map(t => '<span class="tag" style="background:' + t.cor + '">' + esc(t.nome) + '<span class="tag-remove" onclick="removeTag(' + c.id + ',' + t.id + ')"> x</span></span>').join('') : '') +
-      '<span class="tag-add-btn" onclick="openTagModal()">+ etiqueta</span>' +
-    '</div></div>';
+  const infoEl = document.getElementById('detailInfo');
+  infoEl.innerHTML =
+    '<button class="detail-toggle" onclick="var d=document.getElementById(\'detailInfoInner\');d.classList.toggle(\'expanded\');this.textContent=d.classList.contains(\'expanded\')?\'▲ Ocultar detalhes\':\'▼ Ver detalhes\'">▼ Ver detalhes</button>' +
+    '<div class="detail-info-inner" id="detailInfoInner">' +
+      '<div><span>Telefone</span><br><strong>' + formatPhone(c.telefone) + '</strong></div>' +
+      '<div><span>Pet</span><br><strong>' + esc(c.pet_nome || '-') + (c.pet_especie ? ' (' + c.pet_especie + ')' : '') + '</strong></div>' +
+      '<div><span>Veterinario</span><br><strong>' + esc(c.veterinario || '-') + '</strong></div>' +
+      '<div><span>Desde</span><br><strong>' + (c.created_at || '-') + '</strong></div>' +
+      '<div style="grid-column:1/-1" id="detailAbasSection"><span>Abas</span><br><div id="detailAbasButtons" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div></div>' +
+      (c.notas ? '<div style="grid-column:1/-1"><span>Obs</span><br><strong>' + esc(c.notas) + '</strong></div>' : '') +
+      '<div style="grid-column:1/-1"><span>Etiquetas</span><br><div class="tags-row" style="margin-top:4px">' +
+        (c.etiquetas && c.etiquetas.length ? c.etiquetas.map(t => '<span class="tag" style="background:' + t.cor + '">' + esc(t.nome) + '<span class="tag-remove" onclick="removeTag(' + c.id + ',' + t.id + ')"> x</span></span>').join('') : '') +
+        '<span class="tag-add-btn" onclick="openTagModal()">+ etiqueta</span>' +
+      '</div></div>' +
+    '</div>';
 
   document.getElementById('etapaBar').innerHTML = etapas.map(e =>
     '<button class="etapa-btn' + (c.etapa === e.id ? ' current' : '') + '" style="' + (c.etapa === e.id ? 'border-color:' + e.cor + ';color:' + e.cor : '') + '" onclick="moveContato(\'' + e.id + '\')">' + e.label + '</button>'
@@ -536,10 +563,17 @@ function renderDetail() {
       } else {
         content = esc(m.texto);
       }
+      const fwdBtn = '<button class="msg-fwd-btn" onclick="event.stopPropagation();openForwardModal(' + m.id + ',\'' + esc(m.tipo) + '\',\'' + esc(m.media_path || '') + '\')" title="Encaminhar">&#x21AA;&#xFE0F;</button>';
       return '<div class="msg ' + m.direcao + '">' + content +
-        '<div class="msg-time">' + (m.created_at || '') + '</div></div>';
+        '<div class="msg-time">' + (m.created_at || '') + ' ' + fwdBtn + '</div></div>';
     }).join('');
     area.scrollTop = area.scrollHeight;
+    // Scroll again after images load
+    area.querySelectorAll('img, audio').forEach(el => {
+      el.addEventListener('load', () => { area.scrollTop = area.scrollHeight; });
+      el.addEventListener('loadeddata', () => { area.scrollTop = area.scrollHeight; });
+    });
+    setTimeout(() => { area.scrollTop = area.scrollHeight; }, 200);
   }
 }
 
@@ -864,27 +898,28 @@ async function loadGrupos() {
     list.innerHTML = '<div class="empty"><div class="emoji">&#x1F465;</div>Nenhum grupo monitorado.<br>Clique em "+ Adicionar grupo" para começar.</div>';
     return;
   }
-  list.innerHTML = grupos.map(g =>
-    '<div class="grupo-card" onclick="openGrupoChat(' + g.id + ',\'' + esc(g.nome).replace(/'/g, "\\'") + '\')">' +
-      (g.foto_url
-        ? '<div class="gc-icon" style="position:relative;padding:0;overflow:hidden"><img src="' + esc(g.foto_url) + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%">' +
-            (g.nao_lidas > 0 ? '<span class="unread-badge" style="position:absolute;top:-6px;right:-6px">' + g.nao_lidas + '</span>' : '') +
-          '</div>'
-        : '<div class="gc-icon" style="position:relative">&#x1F465;' +
-            (g.nao_lidas > 0 ? '<span class="unread-badge" style="position:absolute;top:-6px;right:-6px">' + g.nao_lidas + '</span>' : '') +
-          '</div>'
-      ) +
-      '<div class="gc-info">' +
-        '<div class="gc-name">' + esc(g.nome) + '</div>' +
-        '<div class="gc-last">' + (g.ultimo_remetente ? esc(g.ultimo_remetente) + ': ' : '') + esc(g.ultima_msg || 'Sem mensagens') + '</div>' +
+  list.innerHTML = grupos.map(g => {
+    const avatar = g.foto_url
+      ? '<img class="cc-avatar" src="' + esc(g.foto_url) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
+        '<div class="cc-avatar cc-avatar-fallback" style="display:none;width:38px;height:38px">&#x1F465;</div>'
+      : '<div class="cc-avatar cc-avatar-fallback" style="width:38px;height:38px">&#x1F465;</div>';
+    const unread = g.nao_lidas || 0;
+    const lastTime = g.ultima_msg_at ? formatTime(new Date(g.ultima_msg_at)) : '';
+    return '<div class="contact-card' + (unread ? ' has-unread' : '') + '" style="border-left-color:#283593;margin-bottom:8px" onclick="openGrupoChat(' + g.id + ',\'' + esc(g.nome).replace(/'/g, "\\'") + '\')">' +
+      '<div class="cc-header-row">' + avatar +
+      '<div class="cc-header-info"><div class="cc-name">' + esc(g.nome) + '</div>' +
+      '<div class="cc-phone" style="font-size:11px;color:var(--text-muted)">' + g.total_msgs + ' mensagens</div></div>' +
+      (unread ? '<span class="unread-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '') +
       '</div>' +
-      '<div class="gc-meta">' +
-        (g.ultima_msg_at || '') + '<br>' +
-        '<span style="font-size:11px;color:var(--text-muted)">' + g.total_msgs + ' msgs</span>' +
+      (g.ultima_msg ? '<div class="cc-msg">' + (g.ultimo_remetente ? esc(g.ultimo_remetente) + ': ' : '') + esc(g.ultima_msg) + '</div>' : '') +
+      '<div class="cc-footer">' +
+        '<span class="cc-time">' + lastTime + '</span>' +
+        '<div class="cc-actions">' +
+          '<button onclick="event.stopPropagation();removeGrupo(' + g.id + ')" style="background:none;border:none;color:var(--danger);font-size:16px;cursor:pointer;padding:2px" title="Remover">&#x2715;</button>' +
+        '</div>' +
       '</div>' +
-      '<div class="gc-actions"><button class="btn btn-danger btn-sm" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();removeGrupo(' + g.id + ')">&#x2715;</button></div>' +
-    '</div>'
-  ).join('');
+    '</div>';
+  }).join('');
 }
 
 let currentGrupoId = null;
@@ -1199,6 +1234,111 @@ async function refreshTabBadges() {
       });
     }
   } catch(e) {}
+}
+
+// ─── Forward Message ─────────────────────────────────────────────────────────
+let forwardMsgId = null;
+let forwardMsgTipo = null;
+let forwardMediaPath = null;
+let fwdContatos = [];
+let fwdGrupos = [];
+
+function openForwardModal(msgId, tipo, mediaPath) {
+  forwardMsgId = msgId;
+  forwardMsgTipo = tipo;
+  forwardMediaPath = mediaPath;
+  document.getElementById('fwdSearch').value = '';
+  loadForwardList();
+  document.getElementById('forwardModal').classList.add('show');
+}
+
+function closeForwardModal() {
+  document.getElementById('forwardModal').classList.remove('show');
+  forwardMsgId = null;
+}
+
+async function loadForwardList() {
+  [fwdContatos, fwdGrupos] = await Promise.all([
+    api('GET', '/api/contatos'),
+    api('GET', '/api/grupos')
+  ]);
+  // Also include contacts from custom tabs
+  for (const aba of customAbas) {
+    const abaContatos = await api('GET', '/api/aba/' + aba.id + '/contatos');
+    for (const c of abaContatos) {
+      if (!fwdContatos.find(fc => fc.id === c.id)) fwdContatos.push(c);
+    }
+  }
+  renderForwardList();
+}
+
+function renderForwardList() {
+  const list = document.getElementById('fwdList');
+  let html = '';
+
+  if (fwdGrupos.length) {
+    html += '<div class="fwd-section-title">Grupos</div>';
+    html += fwdGrupos.map(g =>
+      '<div class="fwd-item" data-search="' + esc(g.nome).toLowerCase() + '" onclick="forwardToGrupo(' + g.id + ')">' +
+        (g.foto_url
+          ? '<img class="fwd-avatar" src="' + esc(g.foto_url) + '">'
+          : '<div class="fwd-avatar-fb">&#x1F465;</div>') +
+        '<div class="fwd-info"><div class="fwd-name">' + esc(g.nome) + '</div>' +
+        '<div class="fwd-sub">Grupo</div></div>' +
+      '</div>'
+    ).join('');
+  }
+
+  if (fwdContatos.length) {
+    html += '<div class="fwd-section-title">Contatos</div>';
+    html += fwdContatos.map(c =>
+      '<div class="fwd-item" data-search="' + esc((c.nome || '') + ' ' + c.telefone).toLowerCase() + '" onclick="forwardToContato(' + c.id + ')">' +
+        (c.foto_url
+          ? '<img class="fwd-avatar" src="' + esc(c.foto_url) + '" onerror="this.outerHTML=\'<div class=fwd-avatar-fb>' + (c.nome || '?').charAt(0).toUpperCase() + '</div>\'">'
+          : '<div class="fwd-avatar-fb">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>') +
+        '<div class="fwd-info"><div class="fwd-name">' + esc(c.nome || c.telefone) + '</div>' +
+        '<div class="fwd-sub">' + formatPhone(c.telefone) + '</div></div>' +
+      '</div>'
+    ).join('');
+  }
+
+  list.innerHTML = html || '<div class="empty">Nenhum contato ou grupo</div>';
+}
+
+function filterForwardList() {
+  const q = document.getElementById('fwdSearch').value.trim().toLowerCase();
+  document.querySelectorAll('#fwdList .fwd-item').forEach(item => {
+    if (!q) { item.style.display = ''; return; }
+    item.style.display = (item.dataset.search || '').includes(q) ? '' : 'none';
+  });
+  // Also hide section titles if all items below are hidden
+  document.querySelectorAll('#fwdList .fwd-section-title').forEach(title => {
+    let next = title.nextElementSibling;
+    let hasVisible = false;
+    while (next && !next.classList.contains('fwd-section-title')) {
+      if (next.style.display !== 'none') hasVisible = true;
+      next = next.nextElementSibling;
+    }
+    title.style.display = hasVisible || !q ? '' : 'none';
+  });
+}
+
+async function forwardToContato(contatoId) {
+  try {
+    toast('Encaminhando...');
+    await api('POST', '/api/forward', { msgId: forwardMsgId, toContatoId: contatoId });
+    toast('Encaminhada!');
+    closeForwardModal();
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+async function forwardToGrupo(grupoId) {
+  try {
+    toast('Encaminhando...');
+    await api('POST', '/api/forward', { msgId: forwardMsgId, toGrupoId: grupoId });
+    toast('Encaminhada!');
+    closeForwardModal();
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
 }
 
 // ─── Init ────────────────────────────────────────────────────────────────────

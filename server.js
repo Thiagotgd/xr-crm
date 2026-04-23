@@ -828,6 +828,73 @@ async function handleRequest(req, res) {
     return sendJSON(res, 200, { grupos: gruposNaoLidas.total, abas: abasBadges });
   }
 
+  // ─── API: Forward message ────────────────────────────────────────────────
+  if (method === 'POST' && pathname === '/api/forward') {
+    const body = await parseBody(req);
+    const { msgId, toContatoId, toGrupoId } = body;
+    if (!msgId) return sendJSON(res, 400, { error: 'msgId required' });
+    if (!toContatoId && !toGrupoId) return sendJSON(res, 400, { error: 'toContatoId or toGrupoId required' });
+
+    // Find the original message
+    const msg = db.prepare('SELECT * FROM mensagens WHERE id = ?').get(msgId);
+    if (!msg) return sendJSON(res, 404, { error: 'Message not found' });
+
+    // Determine destination phone/jid
+    let destPhone = null;
+    let destGrupo = null;
+    if (toContatoId) {
+      const dest = db.prepare('SELECT * FROM contatos WHERE id = ?').get(toContatoId);
+      if (!dest) return sendJSON(res, 404, { error: 'Contato not found' });
+      destPhone = dest.telefone;
+    } else {
+      destGrupo = db.prepare('SELECT * FROM grupos WHERE id = ?').get(toGrupoId);
+      if (!destGrupo) return sendJSON(res, 404, { error: 'Grupo not found' });
+    }
+
+    const target = destPhone || destGrupo.jid;
+
+    try {
+      if (msg.media_path && msg.tipo !== 'text') {
+        // Forward media
+        const filePath = path.join(MEDIA_DIR, msg.media_path);
+        if (fs.existsSync(filePath)) {
+          const base64 = fs.readFileSync(filePath).toString('base64');
+          const ext = path.extname(msg.media_path).toLowerCase();
+          const mediatype = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) ? 'image'
+            : ['.mp4'].includes(ext) ? 'video'
+            : ['.ogg', '.mp3', '.opus'].includes(ext) ? 'audio'
+            : 'document';
+          const caption = (msg.texto && !msg.texto.startsWith('[')) ? msg.texto : '';
+          await evoSendMedia(target, mediatype, base64, caption, msg.media_path);
+        } else {
+          // File missing, send text fallback
+          await evoSendText(target, msg.texto || '[mídia não disponível]');
+        }
+      } else {
+        // Forward text
+        await evoSendText(target, msg.texto);
+      }
+
+      // Save forwarded message in destination
+      if (toContatoId) {
+        db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path) VALUES (?, 'out', ?, ?, ?)").run(
+          toContatoId, msg.texto || '', msg.tipo, msg.media_path || ''
+        );
+        db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(toContatoId);
+      } else if (toGrupoId) {
+        db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo) VALUES (?, 'me', 'Eu', ?, ?)").run(
+          toGrupoId, msg.texto || '[mídia encaminhada]', msg.tipo
+        );
+      }
+
+      console.log('[CRM] Forwarded msg ' + msgId + ' to ' + target);
+      return sendJSON(res, 200, { ok: true });
+    } catch (e) {
+      console.error('[CRM] Forward error:', e.message);
+      return sendJSON(res, 500, { error: 'Falha ao encaminhar: ' + e.message });
+    }
+  }
+
   // ─── API: Stats ───────────────────────────────────────────────────────────
   if (method === 'GET' && pathname === '/api/stats') {
     const stats = db.prepare(`
