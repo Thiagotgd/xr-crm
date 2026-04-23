@@ -103,6 +103,17 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_contato_abas ON contato_abas(aba_id);
 
+  CREATE TABLE IF NOT EXISTS etapa_historico (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contato_id INTEGER NOT NULL REFERENCES contatos(id) ON DELETE CASCADE,
+    etapa_de TEXT DEFAULT '',
+    etapa_para TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_etapa_hist_contato ON etapa_historico(contato_id);
+  CREATE INDEX IF NOT EXISTS idx_etapa_hist_para ON etapa_historico(etapa_para);
+
   CREATE TABLE IF NOT EXISTS msgs_rapidas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     titulo TEXT NOT NULL,
@@ -123,6 +134,19 @@ try { db.exec("ALTER TABLE contatos ADD COLUMN equipe_xr INTEGER DEFAULT 0"); } 
 try { db.exec("ALTER TABLE contato_abas ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_msg_id TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_remote_jid TEXT DEFAULT ''"); } catch {}
+
+// Seed etapa_historico from existing contacts (one-time migration)
+try {
+  const hasHist = db.prepare("SELECT COUNT(*) as c FROM etapa_historico").get().c;
+  if (!hasHist) {
+    const existingContatos = db.prepare("SELECT id, etapa, created_at FROM contatos").all();
+    const insertHist = db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para, created_at) VALUES (?, '', ?, ?)");
+    db.transaction(() => {
+      for (const c of existingContatos) insertHist.run(c.id, c.etapa, c.created_at);
+    })();
+    console.log(`[CRM] Seeded etapa_historico with ${existingContatos.length} entries`);
+  }
+} catch (e) { console.error('[CRM] Seed hist err:', e.message); }
 
 // Seed default custom tabs + migrate equipe_xr data
 try {
@@ -422,10 +446,12 @@ async function handleRequest(req, res) {
     if (!telefone) return sendJSON(res, 400, { error: 'telefone required' });
     const phone = telefone.replace(/\D/g, '');
     try {
+      const finalEtapa = etapa || 'novo';
       const result = db.prepare(`
         INSERT INTO contatos (nome, telefone, pet_nome, pet_especie, veterinario, etapa, notas)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(nome || '', phone, pet_nome || '', pet_especie || '', veterinario || '', etapa || 'novo', notas || '');
+      `).run(nome || '', phone, pet_nome || '', pet_especie || '', veterinario || '', finalEtapa, notas || '');
+      db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, '', ?)").run(result.lastInsertRowid, finalEtapa);
       return sendJSON(res, 201, { ok: true, id: result.lastInsertRowid });
     } catch (e) {
       if (e.message.includes('UNIQUE')) return sendJSON(res, 409, { error: 'Contato com este telefone já existe' });
@@ -446,6 +472,13 @@ async function handleRequest(req, res) {
       }
     }
     if (fields.length === 0) return sendJSON(res, 400, { error: 'No fields to update' });
+    // Log etapa change if applicable
+    if (body.etapa !== undefined) {
+      const old = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(id);
+      if (old && old.etapa !== body.etapa) {
+        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, ?)").run(id, old.etapa, body.etapa);
+      }
+    }
     fields.push("updated_at = datetime('now','localtime')");
     values.push(id);
     db.prepare(`UPDATE contatos SET ${fields.join(', ')} WHERE id = ?`).run(...values);
@@ -457,7 +490,9 @@ async function handleRequest(req, res) {
     const id = pathname.split('/')[3];
     const body = await parseBody(req);
     if (!body.etapa) return sendJSON(res, 400, { error: 'etapa required' });
+    const old = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(id);
     db.prepare("UPDATE contatos SET etapa = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(body.etapa, id);
+    if (old) db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, ?)").run(id, old.etapa, body.etapa);
     return sendJSON(res, 200, { ok: true });
   }
 
@@ -586,6 +621,7 @@ async function handleRequest(req, res) {
           VALUES (?, ?, 'novo', datetime('now','localtime'), datetime('now','localtime'))
         `).run('', phone);
         contato = { id: result.lastInsertRowid, etapa: 'novo' };
+        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, '', 'novo')").run(contato.id);
         console.log(`[CRM] Novo contato (fromMe): ${phone}`);
       } else {
         const fotoUrl = await evoFetchProfilePic(phone);
@@ -594,6 +630,7 @@ async function handleRequest(req, res) {
           VALUES (?, ?, 'novo', ?, datetime('now','localtime'), datetime('now','localtime'))
         `).run(pushName, phone, fotoUrl);
         contato = { id: result.lastInsertRowid, etapa: 'novo' };
+        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, '', 'novo')").run(contato.id);
         console.log(`[CRM] Novo contato: ${pushName} (${phone}) foto: ${fotoUrl ? 'sim' : 'nao'}`);
       }
     } else {
@@ -604,6 +641,7 @@ async function handleRequest(req, res) {
       // If contact was finalized for 2+ days and THEY sent a message, move back to "novo"
       if (!isFromMe && contato.etapa === 'finalizado' && contato.updated_at < new Date(Date.now() - 2 * 86400000).toISOString().replace('T', ' ').slice(0, 19)) {
         db.prepare("UPDATE contatos SET etapa = 'novo', last_message_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
+        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, 'finalizado', 'novo')").run(contato.id);
         console.log(`[CRM] Contato ${contato.nome || phone} voltou de finalizado para novo`);
       } else {
         db.prepare("UPDATE contatos SET last_message_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
@@ -991,6 +1029,71 @@ async function handleRequest(req, res) {
       console.error('[CRM] Forward error:', e.message);
       return sendJSON(res, 500, { error: 'Falha ao encaminhar: ' + e.message });
     }
+  }
+
+  // ─── API: Métricas ─────────────────────────────────────────────────────────
+  if (method === 'GET' && pathname === '/api/metricas') {
+    const periodo = urlObj.searchParams.get('periodo') || '30'; // dias
+    const dias = parseInt(periodo) || 30;
+    const desde = `datetime('now','localtime','-${dias} days')`;
+
+    // 1. Funil: quantos contatos passaram por cada etapa no período
+    const etapasAll = db.prepare('SELECT id, label, ordem, cor FROM etapas_config ORDER BY ordem').all();
+    const funil = etapasAll.map(e => {
+      const passaram = db.prepare(`
+        SELECT COUNT(DISTINCT contato_id) as total FROM etapa_historico
+        WHERE etapa_para = ? AND created_at >= ${desde}
+      `).get(e.id);
+      // Quantos ainda estão nessa etapa
+      const atuais = db.prepare('SELECT COUNT(*) as total FROM contatos WHERE etapa = ?').get(e.id);
+      return { id: e.id, label: e.label, cor: e.cor, passaram: passaram.total, atuais: atuais.total };
+    });
+
+    // 2. Tempo médio por etapa (em horas)
+    // Calcula quanto tempo cada contato ficou em cada etapa usando histórico de transições
+    const tempoMedio = etapasAll.map(e => {
+      const rows = db.prepare(`
+        SELECT h1.contato_id, h1.created_at as entrou,
+          (SELECT MIN(h2.created_at) FROM etapa_historico h2
+           WHERE h2.contato_id = h1.contato_id AND h2.etapa_de = h1.etapa_para AND h2.created_at > h1.created_at
+          ) as saiu
+        FROM etapa_historico h1
+        WHERE h1.etapa_para = ? AND h1.created_at >= ${desde}
+      `).all(e.id);
+
+      let totalHoras = 0, count = 0;
+      for (const r of rows) {
+        if (r.saiu) {
+          const diff = (new Date(r.saiu) - new Date(r.entrou)) / 3600000;
+          if (diff > 0) { totalHoras += diff; count++; }
+        }
+      }
+      return { id: e.id, label: e.label, cor: e.cor, media_horas: count > 0 ? Math.round(totalHoras / count * 10) / 10 : null, amostras: count };
+    });
+
+    // 3. Novos contatos por dia (últimos N dias)
+    const novosPorDia = db.prepare(`
+      SELECT date(created_at) as dia, COUNT(*) as total
+      FROM contatos WHERE created_at >= ${desde}
+      GROUP BY date(created_at) ORDER BY dia
+    `).all();
+
+    // 4. Taxa de conversão: quantos chegaram a finalizado vs total de novos
+    const totalNovos = db.prepare(`SELECT COUNT(DISTINCT contato_id) as c FROM etapa_historico WHERE etapa_para = 'novo' AND created_at >= ${desde}`).get().c;
+    const totalFinalizados = db.prepare(`SELECT COUNT(DISTINCT contato_id) as c FROM etapa_historico WHERE etapa_para = 'finalizado' AND created_at >= ${desde}`).get().c;
+    const taxaConversao = totalNovos > 0 ? Math.round(totalFinalizados / totalNovos * 1000) / 10 : 0;
+
+    // 5. Contatos parados (sem mensagem há 3+ dias, não finalizados)
+    const parados = db.prepare(`
+      SELECT c.id, c.nome, c.telefone, c.etapa, c.last_message_at,
+        ROUND((julianday('now','localtime') - julianday(c.last_message_at)) * 24) as horas_parado
+      FROM contatos c
+      WHERE c.etapa != 'finalizado'
+      AND c.last_message_at < datetime('now','localtime','-3 days')
+      ORDER BY c.last_message_at ASC LIMIT 20
+    `).all();
+
+    return sendJSON(res, 200, { funil, tempoMedio, novosPorDia, taxaConversao, totalNovos, totalFinalizados, parados, periodo: dias });
   }
 
   // ─── API: Stats ───────────────────────────────────────────────────────────
