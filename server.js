@@ -102,6 +102,14 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_contato_abas ON contato_abas(aba_id);
+
+  CREATE TABLE IF NOT EXISTS msgs_rapidas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    titulo TEXT NOT NULL,
+    texto TEXT NOT NULL,
+    ordem INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  );
 `);
 
 // Migrations
@@ -112,6 +120,7 @@ try { db.exec("ALTER TABLE contatos ADD COLUMN responsavel TEXT DEFAULT ''"); } 
 try { db.exec("ALTER TABLE grupos ADD COLUMN last_read_at TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE grupos ADD COLUMN foto_url TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN equipe_xr INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE contato_abas ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 
 // Seed default custom tabs + migrate equipe_xr data
 try {
@@ -731,7 +740,7 @@ async function handleRequest(req, res) {
   if (method === 'GET' && pathname.match(/^\/api\/aba\/\d+\/contatos$/)) {
     const abaId = pathname.split('/')[3];
     const rows = db.prepare(`
-      SELECT c.*,
+      SELECT c.*, ca.pinado,
         (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id) as total_msgs,
         (SELECT texto FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg,
         (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id AND direcao = 'in' AND created_at > COALESCE(NULLIF(c.last_read_at,''), '1970-01-01')) as nao_lidas,
@@ -739,7 +748,7 @@ async function handleRequest(req, res) {
         (SELECT created_at FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_at
       FROM contatos c
       JOIN contato_abas ca ON ca.contato_id = c.id
-      WHERE ca.aba_id = ? ORDER BY c.last_message_at DESC
+      WHERE ca.aba_id = ? ORDER BY ca.pinado DESC, c.last_message_at DESC
     `).all(abaId);
     const getEtiquetas = db.prepare('SELECT e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id WHERE ce.contato_id = ?');
     for (const row of rows) { row.etiquetas = getEtiquetas.all(row.id); }
@@ -759,6 +768,17 @@ async function handleRequest(req, res) {
     const contatoId = parts[3], abaId = parts[5];
     db.prepare('DELETE FROM contato_abas WHERE contato_id = ? AND aba_id = ?').run(contatoId, abaId);
     return sendJSON(res, 200, { ok: true });
+  }
+
+  // Toggle pin on contact in tab
+  if (method === 'POST' && pathname.match(/^\/api\/contato\/\d+\/aba\/\d+\/pin$/)) {
+    const parts = pathname.split('/');
+    const contatoId = parts[3], abaId = parts[5];
+    const current = db.prepare('SELECT pinado FROM contato_abas WHERE contato_id = ? AND aba_id = ?').get(contatoId, abaId);
+    if (!current) return sendJSON(res, 404, { error: 'Not found' });
+    const newVal = current.pinado ? 0 : 1;
+    db.prepare('UPDATE contato_abas SET pinado = ? WHERE contato_id = ? AND aba_id = ?').run(newVal, contatoId, abaId);
+    return sendJSON(res, 200, { ok: true, pinado: newVal });
   }
 
   // Get which tabs a contact belongs to
@@ -826,6 +846,34 @@ async function handleRequest(req, res) {
       `).get(aba.id).c;
     }
     return sendJSON(res, 200, { grupos: gruposNaoLidas.total, abas: abasBadges });
+  }
+
+  // ─── API: Mensagens Rápidas CRUD ──────────────────────────────────────────
+  if (method === 'GET' && pathname === '/api/msgs-rapidas') {
+    return sendJSON(res, 200, db.prepare('SELECT * FROM msgs_rapidas ORDER BY ordem, id').all());
+  }
+  if (method === 'POST' && pathname === '/api/msg-rapida') {
+    const body = await parseBody(req);
+    if (!body.titulo || !body.texto) return sendJSON(res, 400, { error: 'titulo e texto required' });
+    const maxOrdem = db.prepare('SELECT COALESCE(MAX(ordem),0) as m FROM msgs_rapidas').get().m;
+    const r = db.prepare('INSERT INTO msgs_rapidas (titulo, texto, ordem) VALUES (?, ?, ?)').run(body.titulo.trim(), body.texto.trim(), maxOrdem + 1);
+    return sendJSON(res, 201, { ok: true, id: r.lastInsertRowid });
+  }
+  if (method === 'PUT' && pathname.match(/^\/api\/msg-rapida\/\d+$/)) {
+    const id = pathname.split('/').pop();
+    const body = await parseBody(req);
+    const fields = [], values = [];
+    if (body.titulo !== undefined) { fields.push('titulo = ?'); values.push(body.titulo.trim()); }
+    if (body.texto !== undefined) { fields.push('texto = ?'); values.push(body.texto.trim()); }
+    if (fields.length === 0) return sendJSON(res, 400, { error: 'No fields' });
+    values.push(id);
+    db.prepare(`UPDATE msgs_rapidas SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    return sendJSON(res, 200, { ok: true });
+  }
+  if (method === 'DELETE' && pathname.match(/^\/api\/msg-rapida\/\d+$/)) {
+    const id = pathname.split('/').pop();
+    db.prepare('DELETE FROM msgs_rapidas WHERE id = ?').run(id);
+    return sendJSON(res, 200, { ok: true });
   }
 
   // ─── API: Forward message ────────────────────────────────────────────────

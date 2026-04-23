@@ -63,6 +63,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .contact-card .cc-actions button { background: none; border: none; font-size: 14px; cursor: pointer; padding: 2px; opacity: 0.6; }
 .contact-card .cc-actions button:hover { opacity: 1; }
 .contact-card.parado { border-left-color: var(--danger); }
+.contact-card.urgente { animation: pulseUrgente 1.5s infinite; }
+.contact-card.urgente .cc-urgente { font-size: 11px; color: var(--danger); font-weight: 700; margin-bottom: 4px; }
+@keyframes pulseUrgente { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } 50% { box-shadow: 0 0 12px 2px rgba(239,68,68,0.5); } }
 .contact-card .unread-badge { background: #25d366; color: #fff; font-size: 11px; font-weight: 700; min-width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; padding: 0 5px; flex-shrink: 0; }
 .contact-card.has-unread { background: var(--card-hover); }
 .contact-card.followup { border-left-color: #f59e0b !important; }
@@ -180,6 +183,25 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .grupo-card .gc-actions { flex-shrink: 0; }
 .grupo-chat-overlay { position: fixed; inset: 0; background: var(--bg); z-index: 150; display: flex; justify-content: flex-end; }
 
+/* Config tabs */
+.config-tabs { display: flex; gap: 0; margin-bottom: 12px; border-bottom: 2px solid var(--border); }
+.config-tab { flex: 1; padding: 8px; text-align: center; font-size: 13px; font-weight: 600; background: none; border: none; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+.config-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.config-panel { display: none; }
+.config-panel.active { display: block; }
+
+/* Pin indicator */
+.cc-pin { font-size: 12px; color: var(--accent); margin-left: 4px; }
+
+/* Quick msg button */
+.quick-msg-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-muted); padding: 4px 6px; }
+.quick-msg-btn:hover { color: var(--text); }
+.quick-msg-list { max-height: 50vh; overflow-y: auto; }
+.quick-msg-item { padding: 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.quick-msg-item:active { background: var(--card-hover); }
+.quick-msg-item .qm-title { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+.quick-msg-item .qm-text { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* Forward button on messages */
 .msg-fwd-btn { background: none; border: none; font-size: 13px; cursor: pointer; opacity: 0.5; padding: 2px 4px; vertical-align: middle; }
 .msg-fwd-btn:hover { opacity: 1; }
@@ -228,7 +250,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   </div>
   <div class="header-actions">
     <span id="paradosBadge" class="badge" style="display:none"></span>
-    <button class="btn btn-ghost btn-sm" onclick="openManageTags()">Etiquetas</button>
+    <button class="btn btn-ghost btn-sm" onclick="openConfig()" style="font-size:18px;padding:6px 10px">&#x2699;&#xFE0F;</button>
     <button class="btn btn-primary btn-sm" onclick="openNewModal()">+ Novo</button>
   </div>
 </div>
@@ -304,10 +326,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div class="etapa-bar" id="etapaBar"></div>
     <div class="messages-area" id="messagesArea"></div>
     <div class="compose-bar">
-      <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Enviar arquivo">&#x1F4CE;</button>
+      <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
       <input type="file" id="fileInput" style="display:none" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onchange="sendFile(this)">
-      <input type="text" id="composeInput" placeholder="Enviar mensagem..." onkeydown="if(event.key==='Enter')sendMessage()">
-      <button class="btn btn-primary btn-sm" onclick="sendMessage()">Enviar</button>
+      <button class="quick-msg-btn" onclick="openQuickMsg()" title="Mensagem rápida" style="font-size:18px;padding:2px 4px">&#x26A1;</button>
+      <input type="text" id="composeInput" placeholder="Mensagem..." onkeydown="if(event.key==='Enter')sendMessage()" style="min-width:0">
+      <button class="btn btn-primary btn-sm" onclick="sendMessage()" style="padding:7px 10px;font-size:12px;white-space:nowrap">Enviar</button>
     </div>
   </div>
 </div>
@@ -357,18 +380,48 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   </div>
 </div>
 
-<!-- Tag Manager (from header) -->
-<div class="modal-overlay" id="manageTagsModal" onclick="if(event.target===this)closeManageTags()">
+<!-- Config Modal (Etiquetas + Msgs Rápidas) -->
+<div class="modal-overlay" id="configModal" onclick="if(event.target===this)closeConfig()">
   <div class="modal">
-    <h2>Gerenciar Etiquetas</h2>
-    <div id="manageTagList"></div>
-    <div class="etiqueta-manage" style="margin-top:16px">
-      <input type="text" id="newTagNome" placeholder="Nova etiqueta" style="flex:1;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px">
-      <input type="color" id="newTagCor" value="#3b82f6" style="width:36px;height:36px;border:none;border-radius:8px;cursor:pointer;background:none">
-      <button class="btn btn-primary btn-sm" onclick="createTag()">Criar</button>
+    <h2>&#x2699;&#xFE0F; Configurações</h2>
+    <div class="config-tabs">
+      <button class="config-tab active" onclick="switchConfigTab('etiquetas')">Etiquetas</button>
+      <button class="config-tab" onclick="switchConfigTab('msgsrapidas')">Msgs Rápidas</button>
     </div>
+
+    <!-- Etiquetas panel -->
+    <div class="config-panel active" id="configEtiquetas">
+      <div id="manageTagList"></div>
+      <div class="etiqueta-manage" style="margin-top:16px">
+        <input type="text" id="newTagNome" placeholder="Nova etiqueta" style="flex:1;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px">
+        <input type="color" id="newTagCor" value="#3b82f6" style="width:36px;height:36px;border:none;border-radius:8px;cursor:pointer;background:none">
+        <button class="btn btn-primary btn-sm" onclick="createTag()">Criar</button>
+      </div>
+    </div>
+
+    <!-- Msgs Rápidas panel -->
+    <div class="config-panel" id="configMsgsRapidas">
+      <div id="manageMsgRapidaList"></div>
+      <div style="margin-top:16px">
+        <input type="text" id="newMsgRapidaTitulo" placeholder="Título (ex: Saudação)" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin-bottom:6px">
+        <textarea id="newMsgRapidaTexto" placeholder="Texto da mensagem..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;min-height:60px;resize:vertical"></textarea>
+        <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="createMsgRapida()">Criar</button>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeConfig()">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Quick Message Picker (from chat) -->
+<div class="modal-overlay" id="quickMsgModal" onclick="if(event.target===this)closeQuickMsg()">
+  <div class="modal">
+    <h2>&#x26A1; Mensagem Rápida</h2>
+    <div class="quick-msg-list" id="quickMsgList"></div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeManageTags()">Fechar</button>
+      <button class="btn btn-ghost" onclick="closeQuickMsg()">Cancelar</button>
     </div>
   </div>
 </div>
@@ -455,12 +508,15 @@ function renderKanban() {
               const lastMsgAt = c.ultima_msg_at ? new Date(c.ultima_msg_at) : null;
               const horasSemResposta = lastMsgAt ? (now - lastMsgAt) / 3600000 : 0;
               const followup = c.ultima_msg_dir === 'out' && horasSemResposta >= 24 && etapa.id !== 'finalizado';
+              // Lead novo sem resposta há mais de 1h
+              const minSemResposta = lastMsgAt ? (now - lastMsgAt) / 60000 : 0;
+              const urgente = etapa.id === 'novo' && c.ultima_msg_dir === 'in' && minSemResposta >= 60;
               const avatar = c.foto_url
                 ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
                   '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
                 : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
               const unread = c.nao_lidas || 0;
-              return '<div class="contact-card' + (parado ? ' parado' : '') + (unread ? ' has-unread' : '') + (followup ? ' followup' : '') + '" style="border-left-color:' + etapa.cor + '" data-id="' + c.id + '" draggable="true" onclick="openDetail(' + c.id + ')">' +
+              return '<div class="contact-card' + (urgente ? ' urgente' : '') + (parado ? ' parado' : '') + (unread ? ' has-unread' : '') + (followup ? ' followup' : '') + '" style="border-left-color:' + (urgente ? 'var(--danger)' : etapa.cor) + '" data-id="' + c.id + '" draggable="true" onclick="openDetail(' + c.id + ')">' +
                 '<div class="cc-header-row">' + avatar +
                 '<div class="cc-header-info"><div class="cc-name">' + esc(c.nome || c.telefone) + '</div>' +
                 '<div class="cc-phone">' + formatPhone(c.telefone) + '</div></div>' +
@@ -471,6 +527,7 @@ function renderKanban() {
                 (c.etiquetas && c.etiquetas.length ? '<div class="tags-row">' + c.etiquetas.map(t => '<span class="tag" style="background:' + t.cor + '">' + esc(t.nome) + '</span>').join('') + '</div>' : '') +
                 (c.ultima_msg ? '<div class="cc-msg">' + esc(c.ultima_msg) + '</div>' : '') +
                 (followup ? '<div class="cc-followup">&#x23F0; Follow-up (' + Math.floor(horasSemResposta) + 'h sem resposta)</div>' : '') +
+                (urgente ? '<div class="cc-urgente">&#x1F6A8; ' + (minSemResposta >= 120 ? Math.floor(minSemResposta/60) + 'h' : Math.floor(minSemResposta) + 'min') + ' sem resposta!</div>' : '') +
                 '<div class="cc-footer">' +
                   '<span class="cc-time">' + (lastMsg ? formatTime(lastMsg) : '') + '</span>' +
                   '<div class="cc-actions">' +
@@ -774,14 +831,29 @@ function renderTagPicker() {
       ).join('') + '</div>';
 }
 
-// ─── Etiquetas: Manager (do header) ─────────────────────────────────────────
-function openManageTags() {
+// ─── Config Modal ───────────────────────────────────────────────────────────
+function openConfig() {
   renderManageTags();
-  document.getElementById('manageTagsModal').classList.add('show');
+  renderManageMsgsRapidas();
+  document.getElementById('configModal').classList.add('show');
 }
-function closeManageTags() {
-  document.getElementById('manageTagsModal').classList.remove('show');
+function closeConfig() {
+  document.getElementById('configModal').classList.remove('show');
 }
+function switchConfigTab(tab) {
+  document.querySelectorAll('.config-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.config-panel').forEach(p => p.classList.remove('active'));
+  if (tab === 'etiquetas') {
+    document.querySelector('.config-tab:nth-child(1)').classList.add('active');
+    document.getElementById('configEtiquetas').classList.add('active');
+  } else {
+    document.querySelector('.config-tab:nth-child(2)').classList.add('active');
+    document.getElementById('configMsgsRapidas').classList.add('active');
+  }
+}
+
+// ─── Etiquetas: Manager ─────────────────────────────────────────────────────
+function openManageTags() { openConfig(); }
 function renderManageTags() {
   document.getElementById('manageTagList').innerHTML = allTags.length === 0
     ? '<p style="color:var(--text-muted);font-size:13px">Nenhuma etiqueta criada.</p>'
@@ -852,6 +924,88 @@ async function deleteTag(id) {
     }
     renderManageTags();
     toast('Etiqueta apagada');
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+// ─── Mensagens Rápidas ──────────────────────────────────────────────────────
+let msgsRapidas = [];
+
+async function loadMsgsRapidas() {
+  msgsRapidas = await api('GET', '/api/msgs-rapidas');
+}
+
+function renderManageMsgsRapidas() {
+  const list = document.getElementById('manageMsgRapidaList');
+  if (!list) return;
+  if (msgsRapidas.length === 0) {
+    list.innerHTML = '<p style="color:var(--text-muted);font-size:13px">Nenhuma mensagem rápida criada.</p>';
+    return;
+  }
+  list.innerHTML = msgsRapidas.map(m =>
+    '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+      '<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px">' + esc(m.titulo) + '</div>' +
+      '<div style="font-size:12px;color:var(--text-muted);white-space:pre-wrap;max-height:60px;overflow:hidden">' + esc(m.texto) + '</div></div>' +
+      '<button class="btn btn-danger btn-sm" style="padding:4px 10px;font-size:12px;flex-shrink:0" onclick="deleteMsgRapida(' + m.id + ')">Apagar</button>' +
+    '</div>'
+  ).join('');
+}
+
+async function createMsgRapida() {
+  const titulo = document.getElementById('newMsgRapidaTitulo').value.trim();
+  const texto = document.getElementById('newMsgRapidaTexto').value.trim();
+  if (!titulo || !texto) return toast('Preencha título e texto', 'err');
+  try {
+    await api('POST', '/api/msg-rapida', { titulo, texto });
+    msgsRapidas = await api('GET', '/api/msgs-rapidas');
+    document.getElementById('newMsgRapidaTitulo').value = '';
+    document.getElementById('newMsgRapidaTexto').value = '';
+    renderManageMsgsRapidas();
+    toast('Mensagem rápida criada!');
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+async function deleteMsgRapida(id) {
+  if (!confirm('Apagar esta mensagem rápida?')) return;
+  try {
+    await api('DELETE', '/api/msg-rapida/' + id);
+    msgsRapidas = await api('GET', '/api/msgs-rapidas');
+    renderManageMsgsRapidas();
+    toast('Mensagem rápida apagada');
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+// ─── Quick Message Picker (from chat) ─────────────────────────────────────
+function openQuickMsg() {
+  if (!currentContato) return;
+  renderQuickMsgList();
+  document.getElementById('quickMsgModal').classList.add('show');
+}
+function closeQuickMsg() {
+  document.getElementById('quickMsgModal').classList.remove('show');
+}
+
+function renderQuickMsgList() {
+  const list = document.getElementById('quickMsgList');
+  if (msgsRapidas.length === 0) {
+    list.innerHTML = '<div class="empty"><div class="emoji">&#x26A1;</div>Nenhuma mensagem rápida.<br>Crie em ⚙️ Configurações.</div>';
+    return;
+  }
+  list.innerHTML = msgsRapidas.map(m =>
+    '<div class="quick-msg-item" onclick="sendQuickMsg(' + m.id + ')">' +
+      '<div class="qm-title">' + esc(m.titulo) + '</div>' +
+      '<div class="qm-text">' + esc(m.texto) + '</div>' +
+    '</div>'
+  ).join('');
+}
+
+async function sendQuickMsg(id) {
+  const msg = msgsRapidas.find(m => m.id === id);
+  if (!msg || !currentContato) return;
+  closeQuickMsg();
+  try {
+    await api('POST', '/api/contato/' + currentContato.id + '/mensagem', { texto: msg.texto });
+    await openDetail(currentContato.id);
+    toast('Enviada!');
   } catch(e) { toast('Erro: ' + e.message, 'err'); }
 }
 
@@ -1051,11 +1205,13 @@ async function loadCustomTab(abaId) {
       ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
         '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
       : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
-    return '<div class="contact-card' + (unread ? ' has-unread' : '') + (followup ? ' followup' : '') + '" style="border-left-color:' + (aba ? aba.cor : 'var(--accent)') + ';margin-bottom:8px" onclick="openDetail(' + c.id + ')">' +
+    const pinIcon = c.pinado ? '<span class="cc-pin" title="Fixado">&#x1F4CC;</span>' : '';
+    return '<div class="contact-card' + (unread ? ' has-unread' : '') + (followup ? ' followup' : '') + '" style="border-left-color:' + (aba ? aba.cor : 'var(--accent)') + ';margin-bottom:8px" data-contato-id="' + c.id + '" data-aba-id="' + abaId + '" onclick="openDetail(' + c.id + ')">' +
       '<div class="cc-header-row">' + avatar +
-      '<div class="cc-header-info"><div class="cc-name">' + esc(c.nome || c.telefone) + '</div>' +
+      '<div class="cc-header-info"><div class="cc-name">' + pinIcon + esc(c.nome || c.telefone) + '</div>' +
       '<div class="cc-phone">' + formatPhone(c.telefone) + '</div></div>' +
       (unread ? '<span class="unread-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '') +
+      '<button onclick="event.stopPropagation();togglePin(' + c.id + ',' + abaId + ')" style="background:none;border:none;font-size:16px;cursor:pointer;padding:4px 6px;flex-shrink:0;opacity:' + (c.pinado ? '1' : '0.4') + '" title="' + (c.pinado ? 'Desafixar' : 'Fixar') + '">&#x1F4CC;</button>' +
       '<button onclick="event.stopPropagation();removeFromTab(' + c.id + ',' + abaId + ')" style="background:none;border:none;color:var(--danger);font-size:18px;cursor:pointer;padding:4px 6px;flex-shrink:0" title="Remover da aba">&#x2715;</button>' +
       '</div>' +
       (c.pet_nome ? '<div class="cc-pet">&#x1f43e; ' + esc(c.pet_nome) + (c.pet_especie ? ' (' + c.pet_especie + ')' : '') + '</div>' : '') +
@@ -1081,7 +1237,16 @@ function filterCustomList() {
   });
 }
 
+async function togglePin(contatoId, abaId) {
+  try {
+    const result = await api('POST', '/api/contato/' + contatoId + '/aba/' + abaId + '/pin');
+    toast(result.pinado ? 'Fixado!' : 'Desafixado');
+    loadCustomTab(abaId);
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
 async function removeFromTab(contatoId, abaId) {
+  if (!confirm('Tem certeza que quer remover este contato da aba?')) return;
   try {
     await api('DELETE', '/api/contato/' + contatoId + '/aba/' + abaId);
     toast('Removido');
@@ -1344,6 +1509,7 @@ async function forwardToGrupo(grupoId) {
 // ─── Init ────────────────────────────────────────────────────────────────────
 loadBoard();
 loadCustomTabs().then(() => refreshTabBadges());
+loadMsgsRapidas();
 setInterval(() => { if (!currentContato) loadBoard(); refreshTabBadges(); }, 30000);
 </script>
 </body>
