@@ -546,13 +546,15 @@ async function handleRequest(req, res) {
     }
 
     // Save file locally
+    const rawBase64 = body.base64.includes(',') ? body.base64.split(',')[1] : body.base64;
     const mime = body.mimetype || '';
     const ext = body.fileName ? path.extname(body.fileName) : (mime.includes('jpeg') || mime.includes('jpg') ? '.jpg' : mime.includes('png') ? '.png' : mime.includes('pdf') ? '.pdf' : '');
     const filename = `${Date.now()}_${contato.id}_out${ext}`;
-    fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(body.base64, 'base64'));
+    fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(rawBase64, 'base64'));
 
+    const msgTexto = body.caption || body.fileName || `[${body.mediatype}]`;
     db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path) VALUES (?, 'out', ?, ?, ?)").run(
-      id, body.caption || `[${body.mediatype}]`, body.mediatype === 'image' ? 'image' : 'document', filename
+      id, msgTexto, body.mediatype === 'image' ? 'image' : 'document', filename
     );
     db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(id);
     return sendJSON(res, 200, { ok: true });

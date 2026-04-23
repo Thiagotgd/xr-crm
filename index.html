@@ -392,6 +392,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div class="compose-bar" style="position:relative">
       <div class="slash-popup" id="slashPopup"></div>
       <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
+      <button class="attach-btn" onclick="abrirOrcamento()" title="Criar orçamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
       <input type="file" id="fileInput" style="display:none" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onchange="sendFile(this)">
       <input type="text" id="composeInput" placeholder="Mensagem... ( / para atalhos)" onkeydown="handleComposeKey(event)" oninput="checkSlashTrigger(this)" style="min-width:0">
       <button class="btn btn-primary btn-sm" onclick="sendMessage()" style="padding:7px 10px;font-size:12px;white-space:nowrap">Enviar</button>
@@ -1700,6 +1701,18 @@ async function forwardToGrupo(grupoId) {
     toast('Encaminhada!');
     closeForwardModal();
   } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+// ─── Orçamento integration ──────────────────────────────────────────────────
+function abrirOrcamento() {
+  if (!currentContato) return;
+  const params = new URLSearchParams();
+  if (currentContato.nome) params.set('responsavel', currentContato.nome);
+  if (currentContato.pet_nome) params.set('animal', currentContato.pet_nome);
+  params.set('telefone', currentContato.telefone);
+  params.set('contato_id', currentContato.id);
+  const url = 'https://orcamento.xrdiagnostico.tech?' + params.toString();
+  window.open(url, '_blank');
 }
 
 // ─── Métricas ───────────────────────────────────────────────────────────────
