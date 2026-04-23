@@ -196,15 +196,23 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 /* Quick msg button */
 .quick-msg-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-muted); padding: 4px 6px; }
 .quick-msg-btn:hover { color: var(--text); }
-.quick-msg-list { max-height: 50vh; overflow-y: auto; }
-.quick-msg-item { padding: 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
-.quick-msg-item:active { background: var(--card-hover); }
-.quick-msg-item .qm-title { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
-.quick-msg-item .qm-text { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Forward button on messages */
-.msg-fwd-btn { background: none; border: none; font-size: 13px; cursor: pointer; opacity: 0.5; padding: 2px 4px; vertical-align: middle; }
-.msg-fwd-btn:hover { opacity: 1; }
+/* Slash command popup */
+.slash-popup { position: absolute; bottom: 100%; left: 0; right: 0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px 10px 0 0; box-shadow: 0 -4px 20px rgba(0,0,0,.4); max-height: 240px; overflow-y: auto; display: none; z-index: 50; }
+.slash-popup.show { display: block; }
+.slash-item { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; cursor: pointer; border-bottom: 1px solid var(--border); }
+.slash-item:last-child { border-bottom: none; }
+.slash-item:active { background: var(--card-hover); }
+.slash-item .slash-cmd { font-weight: 700; font-size: 14px; color: var(--accent); }
+.slash-item .slash-preview { font-size: 12px; color: var(--text-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Message context menu */
+.msg-context-menu { position: fixed; z-index: 300; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,.5); overflow: hidden; min-width: 160px; }
+.msg-context-item { display: flex; align-items: center; gap: 10px; padding: 12px 16px; font-size: 14px; font-weight: 500; cursor: pointer; border-bottom: 1px solid var(--border); color: var(--text); }
+.msg-context-item:last-child { border-bottom: none; }
+.msg-context-item:active { background: var(--card-hover); }
+.msg-context-item.danger { color: var(--danger); }
+.msg.selected { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 12px; }
 
 /* Forward modal */
 .fwd-list { max-height: 50vh; overflow-y: auto; }
@@ -325,11 +333,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     </div>
     <div class="etapa-bar" id="etapaBar"></div>
     <div class="messages-area" id="messagesArea"></div>
-    <div class="compose-bar">
+    <div class="compose-bar" style="position:relative">
+      <div class="slash-popup" id="slashPopup"></div>
       <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
       <input type="file" id="fileInput" style="display:none" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onchange="sendFile(this)">
-      <button class="quick-msg-btn" onclick="openQuickMsg()" title="Mensagem rápida" style="font-size:18px;padding:2px 4px">&#x26A1;</button>
-      <input type="text" id="composeInput" placeholder="Mensagem..." onkeydown="if(event.key==='Enter')sendMessage()" style="min-width:0">
+      <input type="text" id="composeInput" placeholder="Mensagem... ( / para atalhos)" onkeydown="handleComposeKey(event)" oninput="checkSlashTrigger(this)" style="min-width:0">
       <button class="btn btn-primary btn-sm" onclick="sendMessage()" style="padding:7px 10px;font-size:12px;white-space:nowrap">Enviar</button>
     </div>
   </div>
@@ -415,16 +423,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   </div>
 </div>
 
-<!-- Quick Message Picker (from chat) -->
-<div class="modal-overlay" id="quickMsgModal" onclick="if(event.target===this)closeQuickMsg()">
-  <div class="modal">
-    <h2>&#x26A1; Mensagem Rápida</h2>
-    <div class="quick-msg-list" id="quickMsgList"></div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeQuickMsg()">Cancelar</button>
-    </div>
-  </div>
-</div>
 
 <!-- Forward Modal -->
 <div class="modal-overlay" id="forwardModal" onclick="if(event.target===this)closeForwardModal()">
@@ -436,6 +434,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <button class="btn btn-ghost" onclick="closeForwardModal()">Cancelar</button>
     </div>
   </div>
+</div>
+
+<!-- Message Context Menu -->
+<div class="msg-context-menu" id="msgContextMenu" style="display:none">
+  <div class="msg-context-item" onclick="contextForward()">&#x21AA;&#xFE0F; Encaminhar</div>
+  <div class="msg-context-item" onclick="contextCopy()">&#x1F4CB; Copiar texto</div>
+  <div class="msg-context-item danger" onclick="contextDelete()">&#x1F5D1;&#xFE0F; Apagar</div>
 </div>
 
 <!-- Toast -->
@@ -620,9 +625,8 @@ function renderDetail() {
       } else {
         content = esc(m.texto);
       }
-      const fwdBtn = '<button class="msg-fwd-btn" onclick="event.stopPropagation();openForwardModal(' + m.id + ',\'' + esc(m.tipo) + '\',\'' + esc(m.media_path || '') + '\')" title="Encaminhar">&#x21AA;&#xFE0F;</button>';
-      return '<div class="msg ' + m.direcao + '">' + content +
-        '<div class="msg-time">' + (m.created_at || '') + ' ' + fwdBtn + '</div></div>';
+      return '<div class="msg ' + m.direcao + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
+        '<div class="msg-time">' + (m.created_at || '') + '</div></div>';
     }).join('');
     area.scrollTop = area.scrollHeight;
     // Scroll again after images load
@@ -975,33 +979,66 @@ async function deleteMsgRapida(id) {
 }
 
 // ─── Quick Message Picker (from chat) ─────────────────────────────────────
-function openQuickMsg() {
-  if (!currentContato) return;
-  renderQuickMsgList();
-  document.getElementById('quickMsgModal').classList.add('show');
-}
-function closeQuickMsg() {
-  document.getElementById('quickMsgModal').classList.remove('show');
+let slashOpen = false;
+
+function checkSlashTrigger(input) {
+  const val = input.value;
+  if (val.startsWith('/')) {
+    const filter = val.slice(1).toLowerCase();
+    showSlashPopup(filter);
+  } else {
+    hideSlashPopup();
+  }
 }
 
-function renderQuickMsgList() {
-  const list = document.getElementById('quickMsgList');
+function handleComposeKey(e) {
+  if (e.key === 'Enter') {
+    if (slashOpen) {
+      // Send first visible slash item
+      const first = document.querySelector('#slashPopup .slash-item:not([style*="display: none"])');
+      if (first) { first.click(); e.preventDefault(); return; }
+    }
+    sendMessage();
+  } else if (e.key === 'Escape') {
+    hideSlashPopup();
+    document.getElementById('composeInput').value = '';
+  }
+}
+
+function showSlashPopup(filter) {
+  const popup = document.getElementById('slashPopup');
   if (msgsRapidas.length === 0) {
-    list.innerHTML = '<div class="empty"><div class="emoji">&#x26A1;</div>Nenhuma mensagem rápida.<br>Crie em ⚙️ Configurações.</div>';
+    popup.innerHTML = '<div style="padding:12px 14px;color:var(--text-muted);font-size:13px">Nenhuma msg rápida. Crie em ⚙️</div>';
+    popup.classList.add('show');
+    slashOpen = true;
     return;
   }
-  list.innerHTML = msgsRapidas.map(m =>
-    '<div class="quick-msg-item" onclick="sendQuickMsg(' + m.id + ')">' +
-      '<div class="qm-title">' + esc(m.titulo) + '</div>' +
-      '<div class="qm-text">' + esc(m.texto) + '</div>' +
+  popup.innerHTML = msgsRapidas.map(m =>
+    '<div class="slash-item" data-filter="' + esc(m.titulo.toLowerCase()) + '" onclick="sendQuickMsg(' + m.id + ')">' +
+      '<span class="slash-cmd">/' + esc(m.titulo) + '</span>' +
+      '<span class="slash-preview">' + esc(m.texto) + '</span>' +
     '</div>'
   ).join('');
+  // Filter
+  if (filter) {
+    popup.querySelectorAll('.slash-item').forEach(item => {
+      item.style.display = item.dataset.filter.includes(filter) ? '' : 'none';
+    });
+  }
+  popup.classList.add('show');
+  slashOpen = true;
+}
+
+function hideSlashPopup() {
+  document.getElementById('slashPopup').classList.remove('show');
+  slashOpen = false;
 }
 
 async function sendQuickMsg(id) {
   const msg = msgsRapidas.find(m => m.id === id);
   if (!msg || !currentContato) return;
-  closeQuickMsg();
+  hideSlashPopup();
+  document.getElementById('composeInput').value = '';
   try {
     await api('POST', '/api/contato/' + currentContato.id + '/mensagem', { texto: msg.texto });
     await openDetail(currentContato.id);
@@ -1400,6 +1437,109 @@ async function refreshTabBadges() {
     }
   } catch(e) {}
 }
+
+// ─── Message Context Menu (long press) ───────────────────────────────────────
+let contextMsgId = null;
+let contextMsgTipo = null;
+let contextMsgMedia = null;
+let contextMsgText = null;
+let msgLongPressTimer = null;
+
+function showMsgContextMenu(msgEl, x, y) {
+  contextMsgId = msgEl.dataset.msgId;
+  contextMsgTipo = msgEl.dataset.msgTipo;
+  contextMsgMedia = msgEl.dataset.msgMedia;
+  // Get text content (skip images/audio elements)
+  const clone = msgEl.cloneNode(true);
+  clone.querySelectorAll('img, audio, a.msg-file-link, .msg-time').forEach(el => el.remove());
+  contextMsgText = clone.textContent.trim();
+
+  document.querySelectorAll('.msg.selected').forEach(m => m.classList.remove('selected'));
+  msgEl.classList.add('selected');
+
+  const menu = document.getElementById('msgContextMenu');
+  menu.style.display = 'block';
+  // Position menu
+  const menuW = 160, menuH = 140;
+  let left = x, top = y;
+  if (left + menuW > window.innerWidth) left = window.innerWidth - menuW - 10;
+  if (top + menuH > window.innerHeight) top = y - menuH;
+  if (left < 5) left = 5;
+  if (top < 5) top = 5;
+  menu.style.left = left + 'px';
+  menu.style.top = top + 'px';
+}
+
+function hideMsgContextMenu() {
+  document.getElementById('msgContextMenu').style.display = 'none';
+  document.querySelectorAll('.msg.selected').forEach(m => m.classList.remove('selected'));
+  contextMsgId = null;
+}
+
+function contextForward() {
+  if (!contextMsgId) return;
+  const id = contextMsgId, tipo = contextMsgTipo, media = contextMsgMedia;
+  hideMsgContextMenu();
+  openForwardModal(id, tipo, media);
+}
+
+function contextCopy() {
+  if (contextMsgText) {
+    navigator.clipboard.writeText(contextMsgText).then(() => toast('Copiado!')).catch(() => toast('Erro ao copiar', 'err'));
+  }
+  hideMsgContextMenu();
+}
+
+async function contextDelete() {
+  if (!contextMsgId) return;
+  const id = contextMsgId;
+  hideMsgContextMenu();
+  if (!confirm('Apagar esta mensagem? Será apagada do CRM e do WhatsApp.')) return;
+  try {
+    const result = await api('DELETE', '/api/mensagem/' + id);
+    toast(result.whatsappDeleted ? 'Apagada do CRM e WhatsApp!' : 'Apagada do CRM');
+    if (currentContato) await openDetail(currentContato.id);
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+// Long press on messages
+document.addEventListener('touchstart', function(e) {
+  const msg = e.target.closest('.msg[data-msg-id]');
+  if (!msg) return;
+  const touch = e.touches[0];
+  msgLongPressTimer = setTimeout(function() {
+    if (navigator.vibrate) navigator.vibrate(30);
+    showMsgContextMenu(msg, touch.clientX, touch.clientY);
+  }, 500);
+}, { passive: true });
+
+document.addEventListener('touchmove', function() {
+  if (msgLongPressTimer) { clearTimeout(msgLongPressTimer); msgLongPressTimer = null; }
+}, { passive: true });
+
+document.addEventListener('touchend', function() {
+  if (msgLongPressTimer) { clearTimeout(msgLongPressTimer); msgLongPressTimer = null; }
+}, { passive: true });
+
+// Desktop: right click on message
+document.addEventListener('contextmenu', function(e) {
+  const msg = e.target.closest('.msg[data-msg-id]');
+  if (!msg) return;
+  e.preventDefault();
+  showMsgContextMenu(msg, e.clientX, e.clientY);
+});
+
+// Close menu on tap outside
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('#msgContextMenu') && !e.target.closest('.msg[data-msg-id]')) {
+    hideMsgContextMenu();
+  }
+});
+document.addEventListener('touchstart', function(e) {
+  if (!e.target.closest('#msgContextMenu') && document.getElementById('msgContextMenu').style.display !== 'none') {
+    if (!e.target.closest('.msg[data-msg-id]')) hideMsgContextMenu();
+  }
+}, { passive: true });
 
 // ─── Forward Message ─────────────────────────────────────────────────────────
 let forwardMsgId = null;

@@ -121,6 +121,8 @@ try { db.exec("ALTER TABLE grupos ADD COLUMN last_read_at TEXT DEFAULT ''"); } c
 try { db.exec("ALTER TABLE grupos ADD COLUMN foto_url TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN equipe_xr INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contato_abas ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_msg_id TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_remote_jid TEXT DEFAULT ''"); } catch {}
 
 // Seed default custom tabs + migrate equipe_xr data
 try {
@@ -271,6 +273,25 @@ function evoFetchProfilePic(phone) {
     });
     req.on('error', () => resolve(''));
     req.setTimeout(10000, () => { req.destroy(); resolve(''); });
+    req.write(payload);
+    req.end();
+  });
+}
+
+function evoDeleteMessage(remoteJid, msgId, fromMe) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(`${EVO_BASE}/chat/deleteMessageForEveryone/${EVO_INSTANCE}`);
+    const payload = JSON.stringify({ id: msgId, fromMe, remoteJid });
+    const req = http.request({
+      hostname: url.hostname, port: url.port, path: url.pathname,
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY, 'Content-Length': Buffer.byteLength(payload) }
+    }, res => {
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
     req.write(payload);
     req.end();
   });
@@ -456,15 +477,19 @@ async function handleRequest(req, res) {
     if (!contato) return sendJSON(res, 404, { error: 'Contato not found' });
 
     // Send via Evolution
+    let waKey = null;
     try {
-      await evoSendText(contato.telefone, body.texto);
+      const result = await evoSendText(contato.telefone, body.texto);
+      if (result && result.key) waKey = result.key;
     } catch (e) {
       console.error('[CRM] Erro enviando msg:', e.message);
       return sendJSON(res, 500, { error: 'Falha ao enviar: ' + e.message });
     }
 
     // Save message
-    db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo) VALUES (?, 'out', ?, 'text')").run(id, body.texto);
+    const waMsgId = (waKey && waKey.id) || '';
+    const waJid = (waKey && waKey.remoteJid) || jidFromPhone(contato.telefone);
+    db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, wa_msg_id, wa_remote_jid) VALUES (?, 'out', ?, 'text', ?, ?)").run(id, body.texto, waMsgId, waJid);
     db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(id);
     return sendJSON(res, 200, { ok: true });
   }
@@ -611,8 +636,10 @@ async function handleRequest(req, res) {
 
       const caption = tipo === 'image' && msg.imageMessage && msg.imageMessage.caption ? msg.imageMessage.caption : '';
       const direcao = isFromMe ? 'out' : 'in';
-      db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path) VALUES (?, ?, ?, ?, ?)").run(
-        contato.id, direcao, texto || caption || `[${tipo}]`, tipo, mediaPath
+      const waMsgId = (key && key.id) || '';
+      const waJid = jid || '';
+      db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+        contato.id, direcao, texto || caption || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid
       );
     }
 
@@ -846,6 +873,29 @@ async function handleRequest(req, res) {
       `).get(aba.id).c;
     }
     return sendJSON(res, 200, { grupos: gruposNaoLidas.total, abas: abasBadges });
+  }
+
+  // ─── API: Delete message (CRM + WhatsApp) ─────────────────────────────────
+  if (method === 'DELETE' && pathname.match(/^\/api\/mensagem\/\d+$/)) {
+    const msgId = pathname.split('/').pop();
+    const msg = db.prepare('SELECT * FROM mensagens WHERE id = ?').get(msgId);
+    if (!msg) return sendJSON(res, 404, { error: 'Message not found' });
+
+    // Try to delete from WhatsApp if we have the key
+    if (msg.wa_msg_id && msg.wa_remote_jid) {
+      try {
+        const fromMe = msg.direcao === 'out';
+        await evoDeleteMessage(msg.wa_remote_jid, msg.wa_msg_id, fromMe);
+        console.log('[CRM] Deleted from WhatsApp:', msg.wa_msg_id);
+      } catch (e) {
+        console.error('[CRM] Erro deletando do WhatsApp:', e.message);
+      }
+    }
+
+    // Delete from CRM database
+    db.prepare('DELETE FROM mensagens WHERE id = ?').run(msgId);
+    console.log('[CRM] Deleted msg ' + msgId);
+    return sendJSON(res, 200, { ok: true, whatsappDeleted: !!(msg.wa_msg_id && msg.wa_remote_jid) });
   }
 
   // ─── API: Mensagens Rápidas CRUD ──────────────────────────────────────────
