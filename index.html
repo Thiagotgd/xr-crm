@@ -782,6 +782,10 @@ async function openDetail(id) {
     renderDetail();
     renderDetailAbas();
     document.getElementById('detailOverlay').classList.add('show');
+    // Sync: update conversas unread too
+    const idx = conversasList.findIndex(c => c.id === id);
+    if (idx >= 0) { conversasList[idx].nao_lidas = 0; conversasList[idx].manual_unread = 0; }
+    refreshTabBadges();
   } catch(e) { toast('Erro: ' + e.message, 'err'); }
 }
 
@@ -1892,7 +1896,12 @@ function abrirOrcamento() {
   params.set('contato_id', currentContato.id);
   const url = 'https://orcamento.xrdiagnostico.tech?' + params.toString();
   window.open(url, '_blank');
-  api('POST', '/api/contato/' + currentContato.id + '/orcamento-enviado').catch(() => {});
+  api('POST', '/api/contato/' + currentContato.id + '/orcamento-enviado').then(() => {
+    currentContato.etapa = 'orcamento';
+    renderDetail();
+    loadBoard();
+    loadConversas();
+  }).catch(() => {});
 }
 
 // ─── Métricas ───────────────────────────────────────────────────────────────
@@ -2197,12 +2206,12 @@ async function openConversaChat(id) {
     document.getElementById('chatActivePanel').style.display = 'flex';
     // Mobile: show chat
     document.getElementById('conversasChat').classList.add('mobile-open');
-    // Update active row
-    renderConversasList();
     // Update sidebar unread (mark as read happened on GET)
     const idx = conversasList.findIndex(c => c.id === id);
     if (idx >= 0) { conversasList[idx].nao_lidas = 0; conversasList[idx].manual_unread = 0; }
     renderConversasList();
+    // Sync: update kanban badges too
+    refreshTabBadges();
   } catch(e) { toast('Erro: ' + e.message, 'err'); }
 }
 
@@ -2331,7 +2340,12 @@ function abrirOrcamentoChat() {
   params.set('telefone', currentChatContato.telefone);
   params.set('contato_id', currentChatContato.id);
   window.open('https://orcamento.xrdiagnostico.tech?' + params.toString(), '_blank');
-  api('POST', '/api/contato/' + currentChatContato.id + '/orcamento-enviado').catch(() => {});
+  api('POST', '/api/contato/' + currentChatContato.id + '/orcamento-enviado').then(() => {
+    currentChatContato.etapa = 'orcamento';
+    renderConversaChat();
+    loadConversas();
+    loadBoard();
+  }).catch(() => {});
 }
 
 // Slash commands for chat
@@ -2527,7 +2541,7 @@ setInterval(() => {
   if (currentTab === 'conversas' && !currentChatContato) loadConversas();
   if (currentTab === 'kanban' && !currentContato) loadBoard();
   refreshTabBadges();
-}, 30000);
+}, 10000);
 
 // Auto-refresh messages when chat is open (every 5s)
 setInterval(async () => {

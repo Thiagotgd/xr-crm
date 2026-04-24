@@ -671,9 +671,17 @@ async function handleRequest(req, res) {
     const phone = phoneFromJid(jid);
     if (!phone) return sendJSON(res, 200, { ok: true, ignored: true });
 
-    // Skip status updates (no actual message content)
+    // Handle status updates (no actual message content)
     const status = data.status || '';
     if (!data.message && (status === 'SERVER_ACK' || status === 'DELIVERY_ACK' || status === 'READ' || status === 'PLAYED')) {
+      // If I read a message on real WhatsApp, mark as read in CRM too
+      if (status === 'READ' && !isFromMe) {
+        const contato = db.prepare('SELECT id FROM contatos WHERE telefone = ?').get(phone);
+        if (contato) {
+          db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(contato.id);
+          console.log(`[CRM] WhatsApp read sync: ${phone} marked as read`);
+        }
+      }
       return sendJSON(res, 200, { ok: true, ignored: true });
     }
 
