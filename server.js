@@ -137,6 +137,8 @@ try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_remote_jid TEXT DEFAULT ''");
 try { db.exec("ALTER TABLE contatos ADD COLUMN manual_unread INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN favorito INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE contatos ADD COLUMN orcamento_enviado_at TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE contatos ADD COLUMN ultima_resposta_cliente_at TEXT DEFAULT ''"); } catch {}
 
 // Seed etapa_historico from existing contacts (one-time migration)
 try {
@@ -534,6 +536,21 @@ async function handleRequest(req, res) {
     return sendJSON(res, 200, { ok: true, favorito: newVal });
   }
 
+  // POST /api/contato/:id/orcamento-enviado — mark quote as sent + auto-move
+  if (method === 'POST' && pathname.match(/^\/api\/contato\/\d+\/orcamento-enviado$/)) {
+    const id = pathname.split('/')[3];
+    const contato = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(id);
+    if (!contato) return sendJSON(res, 404, { error: 'Not found' });
+    const etapasAntes = ['novo', 'aguardando_exame', 'agendamento'];
+    if (etapasAntes.includes(contato.etapa)) {
+      db.prepare("UPDATE contatos SET etapa = 'orcamento', orcamento_enviado_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(id);
+      db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'orcamento')").run(id, contato.etapa);
+    } else {
+      db.prepare("UPDATE contatos SET orcamento_enviado_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(id);
+    }
+    return sendJSON(res, 200, { ok: true });
+  }
+
   // ─── API: Contatos (conversas view - all contacts) ────────────────────────
   if (method === 'GET' && pathname === '/api/contatos/conversas') {
     const rows = db.prepare(`
@@ -737,6 +754,25 @@ async function handleRequest(req, res) {
       db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
         contato.id, direcao, texto || caption || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid
       );
+    }
+
+    // ─── Auto-move to Orçamento when PDF sent outgoing ───────────────────
+    if (isFromMe && tipo === 'document') {
+      const etapasAntes = ['novo', 'aguardando_exame', 'agendamento'];
+      const currentEtapa = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(contato.id);
+      if (currentEtapa && etapasAntes.includes(currentEtapa.etapa)) {
+        db.prepare("UPDATE contatos SET etapa = 'orcamento', orcamento_enviado_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
+        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'orcamento')").run(contato.id, currentEtapa.etapa);
+        console.log(`[CRM] Auto-move para Orçamento: ${contato.nome || phone} (PDF enviado)`);
+      } else if (currentEtapa && currentEtapa.etapa === 'orcamento' && !db.prepare('SELECT orcamento_enviado_at FROM contatos WHERE id = ?').get(contato.id).orcamento_enviado_at) {
+        // Already in orcamento but no timestamp — set it now
+        db.prepare("UPDATE contatos SET orcamento_enviado_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
+      }
+    }
+
+    // ─── Track last client response (for follow-up) ─────────────────────
+    if (!isFromMe) {
+      db.prepare("UPDATE contatos SET ultima_resposta_cliente_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
     }
 
     return sendJSON(res, 200, { ok: true });

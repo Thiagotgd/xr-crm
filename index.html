@@ -338,6 +338,10 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .conversa-star { font-size: 16px; cursor: pointer; padding: 4px; flex-shrink: 0; opacity: 0.3; transition: opacity .15s; line-height: 1; }
 .conversa-star:hover { opacity: 0.7; }
 .conversa-star.active { opacity: 1; color: #f59e0b; }
+.followup-badge { font-size: 10px; padding: 2px 6px; border-radius: 8px; font-weight: 600; white-space: nowrap; margin-top: 2px; display: inline-block; }
+.followup-badge.warm { background: #f59e0b22; color: #f59e0b; }
+.followup-badge.hot { background: #ef444422; color: #ef4444; }
+.followup-badge.cold { background: #8696a022; color: #8696a0; }
 .conversa-time { font-size: 12px; color: var(--text-muted); flex-shrink: 0; margin-left: 8px; line-height: 1.3; }
 .conversa-time.unread { color: var(--wa-badge-bg); }
 .conversa-bottom-row { display: flex; justify-content: space-between; align-items: center; margin-top: 2px; }
@@ -425,6 +429,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
       <button class="filter-chip active" data-filter="tudo" onclick="setConversasFilter('tudo')">Tudo</button>
       <button class="filter-chip" data-filter="nao-lidas" onclick="setConversasFilter('nao-lidas')">Não lidas</button>
       <button class="filter-chip" data-filter="favoritas" onclick="setConversasFilter('favoritas')">Favoritas</button>
+      <button class="filter-chip" data-filter="pendentes" onclick="setConversasFilter('pendentes')">Pendentes</button>
       <button class="filter-chip" onclick="switchTab('grupos')">Grupos</button>
       <div class="etiquetas-dropdown">
         <button class="filter-chip" onclick="toggleEtiquetasDropdown()">Etiquetas &#x25BE;</button>
@@ -1887,6 +1892,7 @@ function abrirOrcamento() {
   params.set('contato_id', currentContato.id);
   const url = 'https://orcamento.xrdiagnostico.tech?' + params.toString();
   window.open(url, '_blank');
+  api('POST', '/api/contato/' + currentContato.id + '/orcamento-enviado').catch(() => {});
 }
 
 // ─── Métricas ───────────────────────────────────────────────────────────────
@@ -2029,6 +2035,14 @@ function renderConversasList() {
     filtered = filtered.filter(c => (c.nao_lidas > 0 || c.manual_unread));
   } else if (conversasFilter === 'favoritas') {
     filtered = filtered.filter(c => c.favorito);
+  } else if (conversasFilter === 'pendentes') {
+    filtered = filtered.filter(c => {
+      if (c.etapa !== 'orcamento' || !c.orcamento_enviado_at) return false;
+      const enviadoAt = new Date(c.orcamento_enviado_at);
+      const ultimaResp = c.ultima_resposta_cliente_at ? new Date(c.ultima_resposta_cliente_at) : null;
+      if (ultimaResp && ultimaResp >= enviadoAt) return false;
+      return (new Date() - enviadoAt) >= 24 * 3600000;
+    });
   } else if (conversasFilter === 'etiqueta') {
     if (conversasTagFilter) {
       filtered = filtered.filter(c => c.etiquetas && c.etiquetas.some(t => t.id === conversasTagFilter));
@@ -2085,6 +2099,20 @@ function renderConversasList() {
       ? '<div class="conversa-tags">' + c.etiquetas.map(t => '<span class="tag" style="background:' + t.cor + '">' + esc(t.nome) + '</span>').join('') + '</div>'
       : '';
 
+    // Follow-up badge for orçamento sem resposta
+    let followupHtml = '';
+    if (c.etapa === 'orcamento' && c.orcamento_enviado_at) {
+      const enviadoAt = new Date(c.orcamento_enviado_at);
+      const ultimaResp = c.ultima_resposta_cliente_at ? new Date(c.ultima_resposta_cliente_at) : null;
+      // Only show if client hasn't responded AFTER the quote was sent
+      if (!ultimaResp || ultimaResp < enviadoAt) {
+        const horasSem = (now - enviadoAt) / 3600000;
+        if (horasSem >= 72) followupHtml = '<span class="followup-badge cold">&#x1F9CA; ' + Math.floor(horasSem / 24) + 'd esfriou</span>';
+        else if (horasSem >= 48) followupHtml = '<span class="followup-badge hot">&#x1F525; 48h sem resposta</span>';
+        else if (horasSem >= 24) followupHtml = '<span class="followup-badge warm">&#x23F0; 24h sem resposta</span>';
+      }
+    }
+
     return '<div class="conversa-row' + (isActive ? ' active' : '') + (unread ? ' has-unread' : '') + '" data-id="' + c.id + '" onclick="openConversaChat(' + c.id + ')" oncontextmenu="showConversaContext(event,' + c.id + ')">' +
       avatar +
       '<div class="conversa-info">' +
@@ -2099,6 +2127,7 @@ function renderConversasList() {
             (unread ? '<span class="conversa-unread-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '') +
           '</div>' +
         '</div>' +
+        followupHtml +
         tags +
       '</div>' +
     '</div>';
@@ -2302,6 +2331,7 @@ function abrirOrcamentoChat() {
   params.set('telefone', currentChatContato.telefone);
   params.set('contato_id', currentChatContato.id);
   window.open('https://orcamento.xrdiagnostico.tech?' + params.toString(), '_blank');
+  api('POST', '/api/contato/' + currentChatContato.id + '/orcamento-enviado').catch(() => {});
 }
 
 // Slash commands for chat
