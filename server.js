@@ -134,6 +134,9 @@ try { db.exec("ALTER TABLE contatos ADD COLUMN equipe_xr INTEGER DEFAULT 0"); } 
 try { db.exec("ALTER TABLE contato_abas ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_msg_id TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_remote_jid TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE contatos ADD COLUMN manual_unread INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE contatos ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE contatos ADD COLUMN favorito INTEGER DEFAULT 0"); } catch {}
 
 // Seed etapa_historico from existing contacts (one-time migration)
 try {
@@ -345,6 +348,14 @@ async function handleRequest(req, res) {
     }
   }
 
+  if (method === 'GET' && pathname === '/chat-bg.jpg') {
+    const bgPath = path.join(__dirname, 'chat-bg.jpg');
+    if (fs.existsSync(bgPath)) {
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=604800' });
+      return fs.createReadStream(bgPath).pipe(res);
+    }
+  }
+
   // ─── Serve media files ────────────────────────────────────────────────────
   if (method === 'GET' && pathname.startsWith('/media/')) {
     const filename = path.basename(pathname);
@@ -434,8 +445,8 @@ async function handleRequest(req, res) {
     if (!contato) return sendJSON(res, 404, { error: 'Not found' });
     contato.mensagens = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? ORDER BY created_at DESC LIMIT 50').all(id);
     contato.etiquetas = db.prepare('SELECT e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id WHERE ce.contato_id = ?').all(id);
-    // Mark as read
-    db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime') WHERE id = ?").run(id);
+    // Mark as read + reset manual_unread
+    db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(id);
     return sendJSON(res, 200, contato);
   }
 
@@ -494,6 +505,51 @@ async function handleRequest(req, res) {
     db.prepare("UPDATE contatos SET etapa = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(body.etapa, id);
     if (old) db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, ?)").run(id, old.etapa, body.etapa);
     return sendJSON(res, 200, { ok: true });
+  }
+
+  // ─── API: Marcar como não lido ─────────────────────────────────────────────
+  if (method === 'POST' && pathname.match(/^\/api\/contato\/\d+\/marcar-nao-lido$/)) {
+    const id = pathname.split('/')[3];
+    db.prepare('UPDATE contatos SET manual_unread = 1 WHERE id = ?').run(id);
+    return sendJSON(res, 200, { ok: true });
+  }
+
+  // ─── API: Toggle pin contato ──────────────────────────────────────────────
+  if (method === 'POST' && pathname.match(/^\/api\/contato\/\d+\/pin$/)) {
+    const id = pathname.split('/')[3];
+    const current = db.prepare('SELECT pinado FROM contatos WHERE id = ?').get(id);
+    if (!current) return sendJSON(res, 404, { error: 'Not found' });
+    const newVal = current.pinado ? 0 : 1;
+    db.prepare('UPDATE contatos SET pinado = ? WHERE id = ?').run(newVal, id);
+    return sendJSON(res, 200, { ok: true, pinado: newVal });
+  }
+
+  // POST /api/contato/:id/favorito (toggle)
+  if (method === 'POST' && pathname.match(/^\/api\/contato\/\d+\/favorito$/)) {
+    const id = pathname.split('/')[3];
+    const current = db.prepare('SELECT favorito FROM contatos WHERE id = ?').get(id);
+    if (!current) return sendJSON(res, 404, { error: 'Not found' });
+    const newVal = current.favorito ? 0 : 1;
+    db.prepare('UPDATE contatos SET favorito = ? WHERE id = ?').run(newVal, id);
+    return sendJSON(res, 200, { ok: true, favorito: newVal });
+  }
+
+  // ─── API: Contatos (conversas view - all contacts) ────────────────────────
+  if (method === 'GET' && pathname === '/api/contatos/conversas') {
+    const rows = db.prepare(`
+      SELECT c.*,
+        (SELECT texto FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg,
+        (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id AND direcao = 'in' AND created_at > COALESCE(NULLIF(c.last_read_at,''), '1970-01-01')) as nao_lidas,
+        (SELECT direcao FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_dir,
+        (SELECT created_at FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_at,
+        (SELECT tipo FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_tipo
+      FROM contatos c
+      WHERE NOT (c.etapa = 'finalizado' AND c.updated_at < datetime('now','localtime','-2 days'))
+      ORDER BY c.pinado DESC, c.last_message_at DESC
+    `).all();
+    const getEtiquetas = db.prepare('SELECT e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id WHERE ce.contato_id = ?');
+    for (const row of rows) { row.etiquetas = getEtiquetas.all(row.id); }
+    return sendJSON(res, 200, rows);
   }
 
   // ─── API: Delete contato ──────────────────────────────────────────────────
@@ -806,17 +862,33 @@ async function handleRequest(req, res) {
   // Get contacts for a specific tab
   if (method === 'GET' && pathname.match(/^\/api\/aba\/\d+\/contatos$/)) {
     const abaId = pathname.split('/')[3];
-    const rows = db.prepare(`
-      SELECT c.*, ca.pinado,
-        (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id) as total_msgs,
-        (SELECT texto FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg,
-        (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id AND direcao = 'in' AND created_at > COALESCE(NULLIF(c.last_read_at,''), '1970-01-01')) as nao_lidas,
-        (SELECT direcao FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_dir,
-        (SELECT created_at FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_at
-      FROM contatos c
-      JOIN contato_abas ca ON ca.contato_id = c.id
-      WHERE ca.aba_id = ? ORDER BY ca.pinado DESC, c.last_message_at DESC
-    `).all(abaId);
+    // Check if this is the "Favoritos" tab — use favorito field instead of contato_abas
+    const aba = db.prepare('SELECT nome FROM abas_custom WHERE id = ?').get(abaId);
+    let rows;
+    if (aba && aba.nome === 'Favoritos') {
+      rows = db.prepare(`
+        SELECT c.*, c.pinado,
+          (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id) as total_msgs,
+          (SELECT texto FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg,
+          (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id AND direcao = 'in' AND created_at > COALESCE(NULLIF(c.last_read_at,''), '1970-01-01')) as nao_lidas,
+          (SELECT direcao FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_dir,
+          (SELECT created_at FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_at
+        FROM contatos c
+        WHERE c.favorito = 1 ORDER BY c.pinado DESC, c.last_message_at DESC
+      `).all();
+    } else {
+      rows = db.prepare(`
+        SELECT c.*, ca.pinado,
+          (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id) as total_msgs,
+          (SELECT texto FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg,
+          (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id AND direcao = 'in' AND created_at > COALESCE(NULLIF(c.last_read_at,''), '1970-01-01')) as nao_lidas,
+          (SELECT direcao FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_dir,
+          (SELECT created_at FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_at
+        FROM contatos c
+        JOIN contato_abas ca ON ca.contato_id = c.id
+        WHERE ca.aba_id = ? ORDER BY ca.pinado DESC, c.last_message_at DESC
+      `).all(abaId);
+    }
     const getEtiquetas = db.prepare('SELECT e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id WHERE ce.contato_id = ?');
     for (const row of rows) { row.etiquetas = getEtiquetas.all(row.id); }
     return sendJSON(res, 200, rows);
