@@ -403,7 +403,6 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
     <h1>CRM</h1>
   </div>
   <div class="header-actions">
-    <span id="paradosBadge" class="badge" style="display:none"></span>
     <button class="btn btn-ghost btn-sm" onclick="openConfig()" style="font-size:18px;padding:6px 10px">&#x2699;&#xFE0F;</button>
     <button class="btn btn-primary btn-sm" onclick="openNewModal()">+ Novo</button>
   </div>
@@ -703,6 +702,7 @@ async function loadStats() {
   try {
     const stats = await api('GET', '/api/stats');
     const badge = document.getElementById('paradosBadge');
+    if (!badge) return;
     if (stats.parados_3dias > 0) {
       badge.textContent = stats.parados_3dias + ' parado' + (stats.parados_3dias > 1 ? 's' : '');
       badge.style.display = '';
