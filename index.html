@@ -404,7 +404,6 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
   </div>
   <div class="header-actions">
     <span id="paradosBadge" class="badge" style="display:none"></span>
-    <button class="btn btn-ghost btn-sm" onclick="openMetricas()" style="font-size:16px;padding:6px 10px">&#x1F4CA;</button>
     <button class="btn btn-ghost btn-sm" onclick="openConfig()" style="font-size:18px;padding:6px 10px">&#x2699;&#xFE0F;</button>
     <button class="btn btn-primary btn-sm" onclick="openNewModal()">+ Novo</button>
   </div>
@@ -413,7 +412,6 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 <!-- Tabs -->
 <div class="crm-tabs" id="crmTabs">
   <button class="crm-tab active" id="tabBtnConversas" onclick="switchTab('conversas')">Conversas</button>
-  <button class="crm-tab" id="tabBtnKanban" onclick="switchTab('kanban')">Kanban</button>
   <button class="crm-tab" id="tabBtnGrupos" onclick="switchTab('grupos')">Grupos</button>
   <!-- custom tabs inserted here dynamically -->
 </div>
@@ -455,6 +453,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
         <div class="slash-popup" id="chatSlashPopup"></div>
         <button class="attach-btn" onclick="document.getElementById('chatFileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
         <button class="attach-btn" onclick="abrirOrcamentoChat()" title="Criar orcamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
+        <button class="attach-btn" onclick="agendarChat()" title="Marcar como agendado" style="font-size:16px;padding:2px 4px">&#x1F4C5;</button>
         <input type="file" id="chatFileInput" style="display:none" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onchange="sendFileChat(this)">
         <input type="text" id="chatComposeInput" placeholder="Mensagem... ( / para atalhos)" onkeydown="handleChatComposeKey(event)" oninput="checkChatSlashTrigger(this)" style="min-width:0">
         <button class="btn btn-primary btn-sm" onclick="sendChatMessage()" style="padding:7px 10px;font-size:12px;white-space:nowrap">Enviar</button>
@@ -468,7 +467,6 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
   <div class="conversa-context-item" onclick="conversaMarkUnread()">&#x1F4E9; Marcar como nao lido</div>
   <div class="conversa-context-item" onclick="conversaTogglePin()">&#x1F4CC; Fixar/Desafixar</div>
   <div class="conversa-context-item" onclick="conversaOpenTag()">&#x1F3F7;&#xFE0F; Etiquetar</div>
-  <div class="conversa-context-item" onclick="conversaOpenKanban()">&#x1F4CB; Ver no Kanban</div>
 </div>
 
 <!-- Tab: Kanban -->
@@ -2348,6 +2346,16 @@ function abrirOrcamentoChat() {
   }).catch(() => {});
 }
 
+function agendarChat() {
+  if (!currentChatContato) return;
+  api('POST', '/api/contato/' + currentChatContato.id + '/agendar').then(() => {
+    currentChatContato.etapa = 'agendado';
+    renderConversaChat();
+    loadConversas();
+    loadBoard();
+  }).catch(() => {});
+}
+
 // Slash commands for chat
 let chatSlashOpen = false;
 
@@ -2495,7 +2503,7 @@ function conversaOpenTag() {
 
 function conversaOpenKanban() {
   hideConversaContext();
-  switchTab('kanban');
+  switchTab('conversas');
 }
 
 // Close conversa context on click elsewhere
