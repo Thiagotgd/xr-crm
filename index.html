@@ -444,13 +444,10 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
     </div>
     <div id="chatActivePanel" style="display:none;flex-direction:column;height:100%">
       <div class="chat-header" id="chatHeader"></div>
-      <div class="chat-etapa-bar" id="chatEtapaBar"></div>
       <div class="messages-area" id="chatMessagesArea"></div>
       <div class="compose-bar" style="position:relative">
         <div class="slash-popup" id="chatSlashPopup"></div>
         <button class="attach-btn" onclick="document.getElementById('chatFileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
-        <button class="attach-btn" onclick="abrirOrcamentoChat()" title="Criar orcamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
-        <button class="attach-btn" onclick="agendarChat()" title="Marcar como agendado" style="font-size:16px;padding:2px 4px">&#x1F4C5;</button>
         <input type="file" id="chatFileInput" style="display:none" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onchange="sendFileChat(this)">
         <input type="text" id="chatComposeInput" placeholder="Mensagem... ( / para atalhos)" onkeydown="handleChatComposeKey(event)" oninput="checkChatSlashTrigger(this)" style="min-width:0">
         <button class="btn btn-primary btn-sm" onclick="sendChatMessage()" style="padding:7px 10px;font-size:12px;white-space:nowrap">Enviar</button>
@@ -2245,7 +2242,8 @@ function renderConversaChat() {
     '</div>';
 
   // Etapa bar
-  document.getElementById('chatEtapaBar').innerHTML = etapas.map(e =>
+  var _ceb = document.getElementById('chatEtapaBar');
+  if (_ceb) _ceb.innerHTML = etapas.map(e =>
     '<button class="etapa-btn' + (c.etapa === e.id ? ' current' : '') + '" style="' + (c.etapa === e.id ? 'border-color:' + e.cor + ';color:' + e.cor : '') + '" onclick="moveChatContato(\'' + e.id + '\')">' + e.label + '</button>'
   ).join('');
 
