@@ -137,6 +137,20 @@ function initFollowup(db) {
   try { db.exec("ALTER TABLE contatos ADD COLUMN orcamento_modalidade TEXT DEFAULT ''"); } catch {}
   try { db.exec("ALTER TABLE contatos ADD COLUMN followup_snooze_ate TEXT DEFAULT ''"); } catch {}
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_contatos_followup ON contatos(followup_nivel)"); } catch {}
+  // Histórico do follow-up (pra métricas: quem foi cobrado, quem recuperou, por que perdeu)
+  try { db.exec(`CREATE TABLE IF NOT EXISTS followup_eventos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contato_id INTEGER NOT NULL,
+    tipo TEXT NOT NULL,          -- 'nivel' | 'encerrado' | 'comando'
+    valor TEXT DEFAULT '',       -- nivel: '1','2','3' · encerrado: motivo · comando: marcou/desistiu/ok
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`); } catch {}
+  try { db.exec("CREATE INDEX IF NOT EXISTS idx_fu_eventos_contato ON followup_eventos(contato_id)"); } catch {}
+  try { db.exec("CREATE INDEX IF NOT EXISTS idx_fu_eventos_tipo ON followup_eventos(tipo, created_at)"); } catch {}
+}
+
+function registrarEvento(db, contatoId, tipo, valor) {
+  try { db.prepare("INSERT INTO followup_eventos (contato_id, tipo, valor) VALUES (?, ?, ?)").run(contatoId, tipo, String(valor == null ? '' : valor)); } catch (e) { console.error('[CRM] evento:', e.message); }
 }
 
 // ─── Correção do bug do laudo ──────────────────────────────────────────────────
@@ -224,7 +238,9 @@ function encerrarPerdidos(db) {
       if (porLuto || porDesist || porLaudo) {
         finalizar.run(c.id);
         logar.run(c.id);
-        encerrados.push({ id: c.id, nome: c.nome, telefone: c.telefone, motivo: porLuto ? 'luto' : porDesist ? 'desistiu' : 'exame já feito: ' + porLaudo });
+        const motivo = porLuto ? 'luto' : porDesist ? 'desistiu' : 'exame já feito: ' + porLaudo;
+        encerrados.push({ id: c.id, nome: c.nome, telefone: c.telefone, motivo });
+        registrarEvento(db, c.id, 'encerrado', motivo);
       }
     }
   })();
@@ -350,7 +366,7 @@ function iniciarVigia(db, opts = {}) {
       const mudancas = avaliar(db);
       const subiram = mudancas.filter(m => m.para > m.de);
       const icone = n => n === 1 ? '🔴' : n === 2 ? '🟡' : '⚪';
-      for (const m of subiram) console.log(`[CRM] Follow-up ${icone(m.para)} ${m.nome || m.telefone}: ${m.motivo}`);
+      for (const m of subiram) { console.log(`[CRM] Follow-up ${icone(m.para)} ${m.nome || m.telefone}: ${m.motivo}`); registrarEvento(db, m.id, 'nivel', m.para); }
       if (aoMudar && subiram.length) aoMudar(subiram);
     } catch (e) {
       console.error('[CRM] Follow-up erro na rodada:', e.message);
@@ -377,6 +393,7 @@ function executarComando(db, cmd, id) {
   const c = db.prepare('SELECT id, nome, telefone, pet_nome, etapa FROM contatos WHERE id = ?').get(id);
   if (!c) return `Não achei o contato *#${id}*. Confere o número no alerta.`;
   const quem = (c.nome || c.telefone) + (c.pet_nome ? ` · ${c.pet_nome}` : '');
+  registrarEvento(db, id, 'comando', cmd);
 
   if (cmd === 'desistiu' || cmd === 'desistiram' || cmd === 'perdeu' || cmd === 'perdido') {
     db.prepare("UPDATE contatos SET etapa = 'finalizado', followup_nivel = 0, followup_desde = '', followup_motivo = '', updated_at = datetime('now','localtime') WHERE id = ?").run(id);
@@ -401,5 +418,5 @@ module.exports = {
   REGRAS, ABERTURA, FECHAMENTO,
   emHorarioUtil, proximaAbertura, quandoAlertar, minutosUteisEntre,
   initFollowup, corrigirLaudos, encerrarPerdidos, decidir, avaliar, iniciarVigia,
-  PALAVRAS_LUTO, PALAVRAS_DESISTENCIA, ATHENA_MARCA, ehFechamento,
+  PALAVRAS_LUTO, PALAVRAS_DESISTENCIA, ATHENA_MARCA, ehFechamento, registrarEvento,
 };

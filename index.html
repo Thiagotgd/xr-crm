@@ -129,6 +129,41 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .fu-card .fu-actions { margin: 8px 0 0 42px; justify-content: flex-start; }
 .fu-card .fu-btn { font-size: 11px; padding: 4px 8px; }
 @media (max-width: 1000px) { .fu-board { grid-template-columns: 1fr; } }
+/* Métricas — paleta validada pro fundo escuro (#111b21): série 1 azul, série 2 laranja */
+.viz-root { --s1: #3987e5; --s2: #d95926; }
+.mt-periodo { display: flex; gap: 6px; }
+.mt-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; padding: 14px 18px 4px; }
+.mt-tile { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.mt-v { font-size: 26px; font-weight: 700; line-height: 1.1; }
+.mt-l { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.mt-s { font-size: 11px; color: var(--text-muted); opacity: .8; margin-top: 4px; }
+.mt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; padding: 10px 18px 0; }
+.mt-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin: 10px 18px 0; }
+.mt-grid .mt-card { margin: 0; }
+.mt-h { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+.mt-h small { font-weight: 400; color: var(--text-muted); }
+.mt-row { display: grid; grid-template-columns: minmax(140px, 200px) 1fr 90px; gap: 10px; align-items: center; padding: 4px 0; font-size: 13px; }
+.mt-lbl { color: var(--text); }
+.mt-bar-wrap { height: 12px; background: rgba(255,255,255,0.05); border-radius: 0 4px 4px 0; overflow: hidden; }
+.mt-bar { height: 100%; background: var(--s1); border-radius: 0 4px 4px 0; min-width: 2px; transition: width .3s; }
+.mt-bar-muted { background: #8696a0; }
+.mt-val { text-align: right; font-variant-numeric: tabular-nums; }
+.mt-val small { color: var(--text-muted); }
+.mt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.mt-table th { text-align: left; font-weight: 600; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; padding: 6px 6px; border-bottom: 1px solid var(--border); }
+.mt-table td { padding: 6px 6px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.mt-mini { display: inline-block; width: 70px; height: 8px; background: rgba(255,255,255,0.05); border-radius: 0 4px 4px 0; vertical-align: middle; overflow: hidden; }
+.mt-mini-bar { height: 100%; background: var(--s1); border-radius: 0 4px 4px 0; }
+.mt-legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-muted); font-weight: 400; }
+.mt-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.mt-chart { display: flex; align-items: flex-end; gap: 2px; height: 150px; padding: 4px 0 0; }
+.mt-day { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; height: 100%; cursor: default; }
+.mt-day:hover .mt-col { filter: brightness(1.25); }
+.mt-cols { flex: 1; display: flex; align-items: flex-end; gap: 2px; border-bottom: 1px solid var(--border); }
+.mt-col { flex: 1 1 0; border-radius: 4px 4px 0 0; min-height: 0; }
+.mt-x { font-size: 10px; color: var(--text-muted); text-align: center; height: 14px; white-space: nowrap; overflow: visible; }
+.mt-details { margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+.mt-details summary { cursor: pointer; }
 @media (max-width: 800px) {
   .fu-row { grid-template-columns: 34px 1fr; }
   .fu-row .fu-tel, .fu-row .fu-why { grid-column: 2; }
@@ -467,6 +502,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 <div class="crm-tabs" id="crmTabs">
   <button class="crm-tab active" id="tabBtnConversas" onclick="switchTab('conversas')">Conversas</button>
   <button class="crm-tab" id="tabBtnFollowup" onclick="switchTab('followup')">🔔 Follow-up</button>
+  <button class="crm-tab" id="tabBtnMetricas" onclick="switchTab('metricas')">📊 Métricas</button>
   <!-- custom tabs inserted here dynamically -->
 </div>
 
@@ -534,6 +570,22 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
     </div>
   </div>
   <div id="fuList"></div>
+</div>
+
+<!-- Tab: Métricas (visão do gestor) -->
+<div id="tabMetricas" style="display:none;flex:1;overflow-y:auto" class="viz-root">
+  <div class="fu-top">
+    <div>
+      <h2 style="font-size:16px;font-weight:700;margin:0">Métricas de vendas</h2>
+      <div class="fu-sub" id="mtSub">carregando…</div>
+    </div>
+    <div class="mt-periodo" id="mtPeriodo">
+      <button class="fu-btn" data-d="7" onclick="loadMetricas(7)">7 dias</button>
+      <button class="fu-btn primary" data-d="30" onclick="loadMetricas(30)">30 dias</button>
+      <button class="fu-btn" data-d="90" onclick="loadMetricas(90)">90 dias</button>
+    </div>
+  </div>
+  <div id="mtBody"></div>
 </div>
 
 <!-- Tab: Kanban -->
@@ -859,6 +911,72 @@ function renderKanban() {
       '</div>' +
     '</div>';
   }).join('');
+}
+
+// ─── Aba Métricas (visão do gestor) ──────────────────────────────────────────
+let mtDias = 30;
+async function loadMetricas(dias) {
+  mtDias = dias || mtDias;
+  document.querySelectorAll('#mtPeriodo .fu-btn').forEach(b => b.classList.toggle('primary', Number(b.dataset.d) === mtDias));
+  try {
+    const r = await api('GET', '/api/metricas?dias=' + mtDias);
+    renderMetricas(r);
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+function renderMetricas(r) {
+  const f = r.funil, rs = r.resposta, fu = r.followup;
+  const fmtMin = m => m == null ? '—' : m < 60 ? m + ' min' : (m / 60).toFixed(1).replace('.0', '') + ' h';
+  document.getElementById('mtSub').textContent = 'de ' + r.periodo.desde.split('-').reverse().join('/') + ' a ' + r.periodo.ate.split('-').reverse().join('/') + ' · orçamentos que o motor reconheceu como laudo ficam fora da conta';
+
+  // KPIs
+  const tile = (v, l, s) => '<div class="mt-tile"><div class="mt-v">' + v + '</div><div class="mt-l">' + l + '</div>' + (s ? '<div class="mt-s">' + s + '</div>' : '') + '</div>';
+  const kpis = '<div class="mt-tiles">' +
+    tile(f.orcados, 'orçamentos enviados', '') +
+    tile(f.taxa_fechamento + '%', 'viraram exame', f.agendados + ' agendados de ' + f.orcados) +
+    tile(f.taxa_decididos + '%', 'fechamento dos decididos', f.agendados + ' ganhos · ' + f.perdidos + ' perdidos · ' + f.abertos + ' em aberto') +
+    tile(r.tempo_fechar_dias.mediana != null ? r.tempo_fechar_dias.mediana + ' d' : '—', 'do orçamento ao agendamento', 'mediana · ' + r.tempo_fechar_dias.amostras + ' casos') +
+    tile(fmtMin(rs.mediana_min), 'tempo de resposta ao cliente', rs.amostras ? rs.pct_ate_30min + '% em até 30 min · ' + rs.pct_ate_2h + '% em até 2 h · ' + rs.amostras + ' respostas' : 'sem amostra') +
+    tile(fu.cobrados ? fu.taxa_recuperacao + '%' : '—', 'recuperados pelo follow-up', fu.cobrados ? fu.recuperados + ' marcaram de ' + fu.cobrados + ' cobrados' : 'começa a contar a partir de hoje') +
+  '</div>';
+
+  // Funil (uma série, cor única; largura = proporção)
+  const etapas = [['Orçamentos enviados', f.orcados], ['Aceitaram (pré-anestésicos)', f.aceitos], ['Agendaram', f.agendados]];
+  const maxF = Math.max(1, f.orcados);
+  const funil = '<div class="mt-card"><div class="mt-h">Funil do período</div>' +
+    etapas.map(([l, v], i) => '<div class="mt-row"><div class="mt-lbl">' + l + '</div><div class="mt-bar-wrap"><div class="mt-bar" style="width:' + (100 * v / maxF) + '%" title="' + l + ': ' + v + '"></div></div><div class="mt-val">' + v + (i ? ' <small>(' + Math.round(100 * v / maxF) + '%)</small>' : '') + '</div></div>').join('') +
+    '<div class="mt-row"><div class="mt-lbl" style="color:var(--text-muted)">Perdidos · em aberto</div><div class="mt-bar-wrap"></div><div class="mt-val" style="color:var(--text-muted)">' + f.perdidos + ' · ' + f.abertos + '</div></div>' +
+  '</div>';
+
+  // Modalidade (tabela com barra de taxa)
+  const mods = '<div class="mt-card"><div class="mt-h">Por modalidade' + (r.modalidades_estimadas ? ' <small>(' + r.modalidades_estimadas + ' estimadas pelo texto — o nome do PDF passa a valer daqui pra frente)</small>' : '') + '</div>' +
+    '<table class="mt-table"><thead><tr><th>Modalidade</th><th>Orçados</th><th>Agendados</th><th>Perdidos</th><th>Em aberto</th><th>Fechamento</th></tr></thead><tbody>' +
+    (r.modalidades.length ? r.modalidades.map(m => '<tr><td><b>' + esc(m.mod) + '</b></td><td>' + m.orcados + '</td><td>' + m.agendados + '</td><td>' + m.perdidos + '</td><td>' + m.abertos + '</td><td><div class="mt-mini"><div class="mt-mini-bar" style="width:' + m.taxa + '%"></div></div> ' + m.taxa + '%</td></tr>').join('') : '<tr><td colspan="6" style="color:var(--text-muted)">sem dados</td></tr>') +
+    '</tbody></table></div>';
+
+  // Por dia (2 séries, legenda, hover com valores)
+  const dias = r.por_dia;
+  const maxD = Math.max(1, ...dias.map(d => Math.max(d.orcados, d.agendados)));
+  const passo = dias.length > 45 ? 7 : dias.length > 20 ? 3 : 1;
+  const porDia = '<div class="mt-card"><div class="mt-h" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span>Por dia</span>' +
+    '<span class="mt-legend"><span><i style="background:var(--s1)"></i>orçamentos</span><span><i style="background:var(--s2)"></i>agendamentos</span></span></div>' +
+    '<div class="mt-chart">' + dias.map((d, i) => {
+      const lbl = d.dia.slice(8, 10) + '/' + d.dia.slice(5, 7);
+      return '<div class="mt-day" title="' + lbl + ' · ' + d.orcados + ' orçamento' + (d.orcados !== 1 ? 's' : '') + ' · ' + d.agendados + ' agendamento' + (d.agendados !== 1 ? 's' : '') + '">' +
+        '<div class="mt-cols"><div class="mt-col" style="height:' + (100 * d.orcados / maxD) + '%;background:var(--s1)"></div><div class="mt-col" style="height:' + (100 * d.agendados / maxD) + '%;background:var(--s2)"></div></div>' +
+        '<div class="mt-x">' + (i % passo === 0 ? lbl : '') + '</div></div>';
+    }).join('') + '</div>' +
+    '<details class="mt-details"><summary>ver tabela</summary><table class="mt-table"><thead><tr><th>Dia</th><th>Orçamentos</th><th>Agendamentos</th></tr></thead><tbody>' +
+      dias.slice().reverse().map(d => '<tr><td>' + d.dia.split('-').reverse().join('/') + '</td><td>' + d.orcados + '</td><td>' + d.agendados + '</td></tr>').join('') + '</tbody></table></details>' +
+  '</div>';
+
+  // Motivos de perda
+  const maxM = Math.max(1, ...r.motivos_perda.map(m => m.n));
+  const motivos = '<div class="mt-card"><div class="mt-h">Por que perdemos <small>(' + f.perdidos + ' no período)</small></div>' +
+    (r.motivos_perda.length ? r.motivos_perda.map(m => '<div class="mt-row"><div class="mt-lbl">' + esc(m.motivo) + '</div><div class="mt-bar-wrap"><div class="mt-bar mt-bar-muted" style="width:' + (100 * m.n / maxM) + '%"></div></div><div class="mt-val">' + m.n + '</div></div>').join('') : '<div style="color:var(--text-muted);font-size:13px">nenhuma perda registrada no período</div>') +
+  '</div>';
+
+  document.getElementById('mtBody').innerHTML = kpis + '<div class="mt-grid">' + funil + mods + '</div>' + porDia + motivos;
 }
 
 // ─── Aba Follow-up (lista de gestão) ─────────────────────────────────────────
@@ -1484,11 +1602,13 @@ function switchTab(tab, abaId) {
   }
   document.getElementById('tabConversas').style.display = tab === 'conversas' ? '' : 'none';
   document.getElementById('tabFollowup').style.display = tab === 'followup' ? '' : 'none';
+  document.getElementById('tabMetricas').style.display = tab === 'metricas' ? '' : 'none';
   document.getElementById('tabKanban').style.display = tab === 'kanban' ? '' : 'none';
   document.getElementById('tabGrupos').style.display = tab === 'grupos' ? '' : 'none';
   document.getElementById('tabCustom').style.display = tab === 'custom' ? '' : 'none';
   if (tab === 'conversas') loadConversas();
   if (tab === 'followup') loadFollowup();
+  if (tab === 'metricas') loadMetricas(mtDias);
   if (tab === 'kanban') loadBoard();
   if (tab === 'grupos') loadGrupos();
   if (tab === 'custom') { currentCustomAba = abaId; loadCustomTab(abaId); }

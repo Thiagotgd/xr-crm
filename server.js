@@ -7,6 +7,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const followup = require('./followup');
 const alerta = require('./alerta');
+const metricas = require('./metricas');
 
 const PORT = process.env.PORT || 8095;
 const EVO_BASE = process.env.EVO_BASE || 'http://172.18.0.1:8085';
@@ -1349,6 +1350,13 @@ async function handleRequest(req, res) {
     `).all();
 
     return sendJSON(res, 200, { funil, tempoMedio, novosPorDia, taxaConversao, totalNovos, totalFinalizados, parados, periodo: dias });
+  }
+
+  // ─── API: Métricas de vendas (visão do gestor) ─────────────────────────────
+  if (method === 'GET' && pathname === '/api/metricas') {
+    const dias = Number(urlObj.searchParams.get('dias')) || 30;
+    try { return sendJSON(res, 200, metricas.calcular(db, dias)); }
+    catch (e) { console.error('[CRM] metricas:', e.message); return sendJSON(res, 500, { error: e.message }); }
   }
 
   // ─── API: Follow-up — ações pela tela (mesmos comandos do WhatsApp) ────────
