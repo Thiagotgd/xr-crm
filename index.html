@@ -420,6 +420,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 <!-- Tabs -->
 <div class="crm-tabs" id="crmTabs">
   <button class="crm-tab active" id="tabBtnConversas" onclick="switchTab('conversas')">Conversas</button>
+  <button class="crm-tab" id="tabBtnKanban" onclick="switchTab('kanban')">🔔 Funil</button>
   <!-- custom tabs inserted here dynamically -->
 </div>
 
@@ -1690,6 +1691,17 @@ function posGhost(t) { if (dragGhost) { dragGhost.style.left = (t.clientX - 140)
 
 // ─── Tab badges ──────────────────────────────────────────────────────────────
 async function refreshTabBadges() {
+  // Badge do Funil: quantos estão na fila de follow-up agora (🔴 conta em vermelho)
+  try {
+    const fu = await api('GET', '/api/followup');
+    const kBtn = document.getElementById('tabBtnKanban');
+    if (kBtn && fu && fu.resumo) {
+      const ex = kBtn.querySelector('.tab-badge');
+      if (ex) ex.remove();
+      const total = (fu.resumo.urgente || 0) + (fu.resumo.followup || 0) + (fu.resumo.segunda || 0);
+      if (total > 0) kBtn.insertAdjacentHTML('beforeend', '<span class="tab-badge"' + (fu.resumo.urgente ? ' style="background:#ef4444;color:#fff"' : '') + '>' + total + '</span>');
+    }
+  } catch(e) {}
   try {
     const badges = await api('GET', '/api/badges');
     // Grupos tab badge
