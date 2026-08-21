@@ -5,6 +5,8 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const followup = require('./followup');
+const alerta = require('./alerta');
 
 const PORT = process.env.PORT || 8095;
 const EVO_BASE = process.env.EVO_BASE || 'http://172.18.0.1:8085';
@@ -139,6 +141,19 @@ try { db.exec("ALTER TABLE contatos ADD COLUMN pinado INTEGER DEFAULT 0"); } cat
 try { db.exec("ALTER TABLE contatos ADD COLUMN favorito INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN orcamento_enviado_at TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN ultima_resposta_cliente_at TEXT DEFAULT ''"); } catch {}
+followup.initFollowup(db);
+
+// Migrate etapas: remove aguardando_exame, confirmado; rename agendamento→agendado; add diversos
+try {
+  db.exec("UPDATE contatos SET etapa = 'agendado' WHERE etapa = 'agendamento'");
+  db.exec("UPDATE contatos SET etapa = 'agendado' WHERE etapa = 'confirmado'");
+  db.exec("UPDATE contatos SET etapa = 'novo' WHERE etapa = 'aguardando_exame'");
+  db.exec("DELETE FROM etapas_config WHERE id IN ('aguardando_exame', 'confirmado', 'agendamento')");
+  db.exec("INSERT OR IGNORE INTO etapas_config (id, label, ordem, cor) VALUES ('agendado', 'Agendado', 3, '#3b82f6')");
+  db.exec("INSERT OR IGNORE INTO etapas_config (id, label, ordem, cor) VALUES ('diversos', 'Diversos', 5, '#8b5cf6')");
+  db.exec("UPDATE etapas_config SET ordem = 4 WHERE id = 'resultado'");
+  db.exec("UPDATE etapas_config SET ordem = 6 WHERE id = 'finalizado'");
+} catch {}
 
 // Seed etapa_historico from existing contacts (one-time migration)
 try {
@@ -182,11 +197,10 @@ if (etapasCount === 0) {
   const etapas = [
     ['novo', 'Novo', 1, '#6366f1'],
     ['orcamento', 'Orçamento', 2, '#f59e0b'],
-    ['aguardando_exame', 'Aguardando Exame', 3, '#8b5cf6'],
-    ['agendamento', 'Agendamento', 4, '#3b82f6'],
-    ['confirmado', 'Confirmado', 5, '#10b981'],
-    ['resultado', 'Resultado', 6, '#f97316'],
-    ['finalizado', 'Finalizado', 7, '#6b7280'],
+    ['agendado', 'Agendado', 3, '#3b82f6'],
+    ['resultado', 'Resultado', 4, '#f97316'],
+    ['diversos', 'Diversos', 5, '#8b5cf6'],
+    ['finalizado', 'Finalizado', 6, '#6b7280'],
   ];
   db.transaction(() => { for (const e of etapas) insertEtapa.run(...e); })();
 }
@@ -237,6 +251,22 @@ function evoSendText(phone, text) {
     req.write(payload);
     req.end();
   });
+}
+
+// Mark messages as read on WhatsApp (sync CRM → WhatsApp)
+function evoMarkAsRead(phone) {
+  const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
+  const payload = JSON.stringify({ readMessages: [{ remoteJid: jid, fromMe: false, id: 'all' }] });
+  const url = new URL(`${EVO_BASE}/chat/markMessageAsRead/${EVO_INSTANCE}`);
+  const req = http.request({
+    hostname: url.hostname, port: url.port, path: url.pathname,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY, 'Content-Length': Buffer.byteLength(payload) }
+  }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => {}); });
+  req.on('error', () => {});
+  req.setTimeout(5000, () => req.destroy());
+  req.write(payload);
+  req.end();
 }
 
 function evoDownloadMedia(messageKey) {
@@ -449,6 +479,8 @@ async function handleRequest(req, res) {
     contato.etiquetas = db.prepare('SELECT e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id WHERE ce.contato_id = ?').all(id);
     // Mark as read + reset manual_unread
     db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(id);
+    // Sync: mark as read on real WhatsApp too
+    if (contato.telefone) evoMarkAsRead(contato.telefone);
     return sendJSON(res, 200, contato);
   }
 
@@ -541,12 +573,25 @@ async function handleRequest(req, res) {
     const id = pathname.split('/')[3];
     const contato = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(id);
     if (!contato) return sendJSON(res, 404, { error: 'Not found' });
-    const etapasAntes = ['novo', 'aguardando_exame', 'agendamento'];
+    const etapasAntes = ['novo', 'agendado'];
     if (etapasAntes.includes(contato.etapa)) {
       db.prepare("UPDATE contatos SET etapa = 'orcamento', orcamento_enviado_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(id);
       db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'orcamento')").run(id, contato.etapa);
     } else {
       db.prepare("UPDATE contatos SET orcamento_enviado_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(id);
+    }
+    return sendJSON(res, 200, { ok: true });
+  }
+
+  // POST /api/contato/:id/agendar — mark as scheduled + auto-move
+  if (method === 'POST' && pathname.match(/^\/api\/contato\/\d+\/agendar$/)) {
+    const id = pathname.split('/')[3];
+    const contato = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(id);
+    if (!contato) return sendJSON(res, 404, { error: 'Not found' });
+    const etapasAntes = ['novo', 'orcamento'];
+    if (etapasAntes.includes(contato.etapa)) {
+      db.prepare("UPDATE contatos SET etapa = 'agendado', updated_at = datetime('now','localtime') WHERE id = ?").run(id);
+      db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'agendado')").run(id, contato.etapa);
     }
     return sendJSON(res, 200, { ok: true });
   }
@@ -639,7 +684,32 @@ async function handleRequest(req, res) {
     console.log('[CRM] Webhook:', JSON.stringify(body).substring(0, 300));
 
     const event = body.event;
+
+    // Handle messages.update — sync read status from WhatsApp
+    if (event === 'messages.update' || event === 'MESSAGES_UPDATE') {
+      const updates = Array.isArray(body.data) ? body.data : [body.data || body];
+      for (const upd of updates) {
+        const updKey = upd.key || {};
+        const updStatus = upd.update?.status;
+        // Status 3 = READ (on WhatsApp), 4 = PLAYED (audio)
+        if ((updStatus === 3 || updStatus === 4 || updStatus === 'READ' || updStatus === 'PLAYED') && !updKey.fromMe) {
+          const updJid = updKey.remoteJid || '';
+          if (updJid.includes('@g.us')) continue;
+          const updPhone = phoneFromJid(updJid);
+          if (updPhone) {
+            const contato = db.prepare('SELECT id FROM contatos WHERE telefone = ?').get(updPhone);
+            if (contato) {
+              db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(contato.id);
+              console.log(`[CRM] WhatsApp read sync: ${updPhone} marked as read`);
+            }
+          }
+        }
+      }
+      return sendJSON(res, 200, { ok: true });
+    }
+
     if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') {
+      console.log(`[CRM] Non-upsert event: ${event}`);
       return sendJSON(res, 200, { ok: true, ignored: true });
     }
 
@@ -670,6 +740,21 @@ async function handleRequest(req, res) {
 
     const phone = phoneFromJid(jid);
     if (!phone) return sendJSON(res, 200, { ok: true, ignored: true });
+
+    // ─── Comandos do follow-up ─────────────────────────────────────────────
+    // A recepção responde na conversa "Prevenvets" (o número que manda os
+    // alertas). Pra instância da recepção isso é uma mensagem ENVIADA pro
+    // prevenvet — e cai aqui. Ex.: "perdeu 123", "ok 123", "fechou 123".
+    if (isFromMe && phone.replace(/\D/g, '').endsWith(alerta.ORIGEM.slice(-11))) {
+      const msgCmd = data.message || {};
+      const txt = (msgCmd.conversation || (msgCmd.extendedTextMessage && msgCmd.extendedTextMessage.text) || '').trim();
+      const m = txt.match(/^(perdeu|perdido|ok|feito|resolvido|fechou|agendou|ajuda|\?)\s*#?(\d+)?\s*$/i);
+      if (m) {
+        const resposta = followup.executarComando(db, m[1].toLowerCase(), m[2] ? Number(m[2]) : null);
+        if (resposta) alerta.enviarRecepcao(resposta);
+        return sendJSON(res, 200, { ok: true, comando: m[1] });
+      }
+    }
 
     // Handle status updates (no actual message content)
     const status = data.status || '';
@@ -729,6 +814,11 @@ async function handleRequest(req, res) {
       } else {
         db.prepare("UPDATE contatos SET last_message_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
       }
+      // If I'm sending a message, mark as read (I must have read the conversation)
+      if (isFromMe) {
+        db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(contato.id);
+        console.log(`[CRM] fromMe read sync: ${phone} marked as read`);
+      }
     }
 
     // Save incoming message + download media
@@ -759,22 +849,69 @@ async function handleRequest(req, res) {
       const direcao = isFromMe ? 'out' : 'in';
       const waMsgId = (key && key.id) || '';
       const waJid = jid || '';
+      const docName = (tipo === 'document' && msg.documentMessage && msg.documentMessage.fileName) ? String(msg.documentMessage.fileName) : '';
+      const docCaption = (tipo === 'document' && msg.documentMessage && msg.documentMessage.caption) ? String(msg.documentMessage.caption) : '';
       db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-        contato.id, direcao, texto || caption || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid
+        contato.id, direcao, texto || caption || docName || docCaption || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid
       );
     }
 
     // ─── Auto-move to Orçamento when PDF sent outgoing ───────────────────
     if (isFromMe && tipo === 'document') {
-      const etapasAntes = ['novo', 'aguardando_exame', 'agendamento'];
-      const currentEtapa = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(contato.id);
-      if (currentEtapa && etapasAntes.includes(currentEtapa.etapa)) {
-        db.prepare("UPDATE contatos SET etapa = 'orcamento', orcamento_enviado_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
+      // É orçamento mesmo? O gerador nomeia "Orçamento Tomografia - Pet (Tutor).pdf".
+      // Se o nome não disser, vale o que o time escreveu nos últimos 10 min
+      // ("segue o orçamento..."). Nota fiscal pro contador NÃO é orçamento.
+      const dn = (msg.documentMessage && msg.documentMessage.fileName) ? String(msg.documentMessage.fileName) : '';
+      const dc = (msg.documentMessage && msg.documentMessage.caption) ? String(msg.documentMessage.caption) : '';
+      const reOrc = /or[cç]amento/i;
+      const textoRecente = db.prepare("SELECT texto FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND tipo = 'text' AND created_at >= datetime('now','localtime','-10 minutes') ORDER BY id DESC LIMIT 3").all(contato.id).map(r => r.texto).filter(t => !String(t).includes(followup.ATHENA_MARCA)).join(' ');
+      const ehOrcamento = reOrc.test(dn) || reOrc.test(dc) || reOrc.test(textoRecente);
+
+      // Modalidade e pet saem do nome do arquivo, quando houver.
+      const modalidade = /tomograf/i.test(dn) ? 'TC' : /resson/i.test(dn) ? 'RM' : /radiograf|raio/i.test(dn) ? 'RX' : /ultrass/i.test(dn) ? 'US' : '';
+      const petMatch = dn.match(/-\s*([^()]+?)\s*\(/);
+      const petDoArquivo = petMatch ? petMatch[1].trim().replace(/\.pdf$/i, '') : '';
+
+      // Só 'novo'. Quem está em 'agendado' recebe PDF de LAUDO, não de orçamento.
+      const etapasAntes = ['novo'];
+      const currentEtapa = db.prepare('SELECT etapa, pet_nome FROM contatos WHERE id = ?').get(contato.id);
+      if (!ehOrcamento) {
+        console.log(`[CRM] PDF ignorado (não é orçamento): ${contato.nome || phone} "${dn.slice(0, 40)}"`);
+      } else if (currentEtapa && etapasAntes.includes(currentEtapa.etapa)) {
+        db.prepare("UPDATE contatos SET etapa = 'orcamento', orcamento_enviado_at = datetime('now','localtime'), orcamento_modalidade = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(modalidade, contato.id);
+        if (petDoArquivo && !currentEtapa.pet_nome) db.prepare("UPDATE contatos SET pet_nome = ? WHERE id = ?").run(petDoArquivo, contato.id);
         db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'orcamento')").run(contato.id, currentEtapa.etapa);
-        console.log(`[CRM] Auto-move para Orçamento: ${contato.nome || phone} (PDF enviado)`);
+        console.log(`[CRM] Auto-move para Orçamento: ${contato.nome || phone} (${modalidade || 'PDF'}${petDoArquivo ? ' · ' + petDoArquivo : ''})`);
+      } else if (currentEtapa && currentEtapa.etapa === 'orcamento') {
+        // Orçamento novo pra quem já estava em orçamento: renova o relógio e a modalidade.
+        db.prepare("UPDATE contatos SET orcamento_enviado_at = datetime('now','localtime'), orcamento_modalidade = COALESCE(NULLIF(?, ''), orcamento_modalidade), updated_at = datetime('now','localtime') WHERE id = ?").run(modalidade, contato.id);
+        if (petDoArquivo && !currentEtapa.pet_nome) db.prepare("UPDATE contatos SET pet_nome = ? WHERE id = ?").run(petDoArquivo, contato.id);
       } else if (currentEtapa && currentEtapa.etapa === 'orcamento' && !db.prepare('SELECT orcamento_enviado_at FROM contatos WHERE id = ?').get(contato.id).orcamento_enviado_at) {
         // Already in orcamento but no timestamp — set it now
         db.prepare("UPDATE contatos SET orcamento_enviado_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
+      }
+    }
+
+    // ─── Auto-move to Agendado when scheduling message sent ──────────────
+    if (isFromMe && tipo === 'text' && texto && !texto.includes(followup.ATHENA_MARCA)) {
+      const lower = texto.toLowerCase();
+      const agendaKeywords = ['agendado', 'agendamos', 'agendada', 'confirmado para', 'confirmada para', 'marcado para', 'marcada para', 'exame agendado', 'exame marcado'];
+      const hasAgenda = agendaKeywords.some(kw => lower.includes(kw));
+      if (hasAgenda) {
+        const currentEtapa = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(contato.id);
+        const etapasAntes = ['novo', 'orcamento'];
+        if (currentEtapa && etapasAntes.includes(currentEtapa.etapa)) {
+          db.prepare("UPDATE contatos SET etapa = 'agendado', updated_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
+          db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'agendado')").run(contato.id, currentEtapa.etapa);
+          console.log(`[CRM] Auto-move para Agendado: ${contato.nome || phone} (mensagem: "${texto.substring(0, 40)}")`);
+        }
+        // Extrair nome do animal entre parênteses na mensagem de agendamento
+        const parenMatch = texto.match(/\(([^)]+)\)/);
+        if (parenMatch) {
+          const petNome = parenMatch[1].trim();
+          db.prepare("UPDATE contatos SET pet_nome = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(petNome, contato.id);
+          console.log(`[CRM] Pet nome extraído: "${petNome}" para ${contato.nome || phone}`);
+        }
       }
     }
 
@@ -1214,6 +1351,23 @@ async function handleRequest(req, res) {
     return sendJSON(res, 200, { funil, tempoMedio, novosPorDia, taxaConversao, totalNovos, totalFinalizados, parados, periodo: dias });
   }
 
+  // ─── API: Follow-up (fila de orçamentos a cobrar) ─────────────────────────
+  if (method === 'GET' && pathname === '/api/followup') {
+    const fila = db.prepare(`
+      SELECT c.id, c.nome, c.telefone, c.pet_nome, c.foto_url, c.etapa,
+        c.followup_nivel, c.followup_desde, c.followup_motivo, c.orcamento_enviado_at,
+        (SELECT texto FROM mensagens WHERE contato_id = c.id ORDER BY id DESC LIMIT 1) as ultima_msg,
+        (SELECT direcao FROM mensagens WHERE contato_id = c.id ORDER BY id DESC LIMIT 1) as ultima_msg_dir,
+        (SELECT created_at FROM mensagens WHERE contato_id = c.id ORDER BY id DESC LIMIT 1) as ultima_msg_at
+      FROM contatos c
+      WHERE c.followup_nivel > 0
+      ORDER BY c.followup_nivel ASC, c.followup_desde ASC
+    `).all();
+    const resumo = { urgente: 0, followup: 0, segunda: 0 };
+    for (const f of fila) { if (f.followup_nivel === 1) resumo.urgente++; else if (f.followup_nivel === 2) resumo.followup++; else resumo.segunda++; }
+    return sendJSON(res, 200, { resumo, regras: followup.REGRAS, fila });
+  }
+
   // ─── API: Stats ───────────────────────────────────────────────────────────
   if (method === 'GET' && pathname === '/api/stats') {
     const stats = db.prepare(`
@@ -1240,4 +1394,35 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => console.log(`[XR-CRM] Running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`[XR-CRM] Running on port ${PORT}`);
+
+  // ─── Follow-up de orçamentos ─────────────────────────────────────────────────
+  // Uma vez: devolve para Agendado quem caiu em Orçamento por causa do PDF do laudo.
+  try { followup.corrigirLaudos(db); } catch (e) { console.error('[CRM] corrigirLaudos:', e.message); }
+  // A cada 5 min: encerra desistências/luto e recalcula os níveis 🔴🟡⚪.
+  followup.iniciarVigia(db, {
+    intervaloMs: 5 * 60 * 1000,
+    // 🔴 novos avisam a recepção na hora (só em horário útil). 🟡/⚪ vão no digest.
+    aoMudar: subiram => alerta.notificarNovos(db, subiram, followup.emHorarioUtil),
+  });
+  // Digest 08:05 (sempre — é o heartbeat) e 13:05 (só se tiver pendência).
+  alerta.iniciarDigest(db, followup.emHorarioUtil);
+  console.log(`[ALERTA] canal ativo → recepção ${alerta.DESTINO} via ${process.env.ALERTA_INSTANCE || 'xr-prevenvet'}`);
+
+  // ─── Auto-finalize: contacts in "agendado" for 10+ days (once per hour) ────
+  setInterval(() => {
+    try {
+      const stale = db.prepare(`
+        SELECT id, nome, telefone, etapa FROM contatos
+        WHERE etapa = 'agendado'
+        AND updated_at < datetime('now', '-10 days', 'localtime')
+      `).all();
+      for (const c of stale) {
+        db.prepare("UPDATE contatos SET etapa = 'finalizado', updated_at = datetime('now','localtime') WHERE id = ?").run(c.id);
+        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, 'agendado', 'finalizado')").run(c.id);
+        console.log(`[CRM] Auto-finalizado: ${c.nome || c.telefone} (10 dias em Agendado)`);
+      }
+    } catch {}
+  }, 3600000); // Once per hour
+});

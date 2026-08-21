@@ -79,6 +79,15 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .contact-card .cc-ind-parado { background: rgba(239,68,68,0.15); color: var(--danger); }
 .contact-card .cc-ind-followup { background: rgba(245,158,11,0.15); color: #f59e0b; }
 .contact-card .cc-ind-urgente { background: rgba(239,68,68,0.2); color: var(--danger); }
+.column.col-followup { background: rgba(245,158,11,0.07); border-color: rgba(245,158,11,0.35); }
+.column.col-followup .col-header { background: rgba(245,158,11,0.12); }
+.fu-card { border-left-width: 4px; }
+.fu-card .fu-motivo { font-size: 11px; color: var(--text-muted, #9ca3af); margin-top: 3px; line-height: 1.3; }
+.fu-card .fu-nivel { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 8px; white-space: nowrap; }
+.fu-n1 { background: rgba(239,68,68,0.2); color: #ef4444; }
+.fu-n2 { background: rgba(245,158,11,0.2); color: #f59e0b; }
+.fu-n3 { background: rgba(156,163,175,0.2); color: #9ca3af; }
+.fu-sep { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; font-weight: 700; opacity: .7; padding: 6px 4px 2px; }
 .contact-card .cc-ind-time { color: var(--text-muted); font-size: 10px; margin-left: auto; }
 .contact-card .unread-badge { background: var(--wa-badge-bg); color: var(--wa-badge-text); font-size: 11px; font-weight: 500; min-width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; padding: 0 4px; flex-shrink: 0; }
 .contact-card.has-unread { background: rgba(37,211,102,0.06); }
@@ -710,7 +719,38 @@ function renderKanban() {
   const board = document.getElementById('kanban');
   const now = new Date();
 
-  board.innerHTML = etapas.map(etapa => {
+  // ─── Coluna Follow-up: quem recebeu orçamento e precisa de um toque ────────
+  const fuCards = contatos.filter(c => (c.followup_nivel || 0) > 0)
+    .sort((a, b) => (a.followup_nivel - b.followup_nivel) || String(a.followup_desde || '').localeCompare(String(b.followup_desde || '')));
+  const fuLabel = { 1: '🔴 Urgente', 2: '🟡 Follow-up', 3: '⚪ 2ª tentativa' };
+  const fuCor = { 1: '#ef4444', 2: '#f59e0b', 3: '#9ca3af' };
+  let fuHtml = '';
+  let lastN = 0;
+  for (const c of fuCards) {
+    if (c.followup_nivel !== lastN) { fuHtml += '<div class="fu-sep">' + fuLabel[c.followup_nivel] + '</div>'; lastN = c.followup_nivel; }
+    const avatar = c.foto_url
+      ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">' +
+        '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
+      : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+    fuHtml += '<div class="contact-card fu-card" style="border-left-color:' + fuCor[c.followup_nivel] + '" data-id="' + c.id + '" draggable="true" onclick="openDetail(' + c.id + ')">' +
+      '<div class="cc-header-row">' + avatar +
+        '<div class="cc-header-info">' +
+          '<div class="cc-name">' + esc(c.nome || formatPhone(c.telefone)) + (c.pet_nome ? ' <span style="opacity:.6;font-weight:400">· ' + esc(c.pet_nome) + '</span>' : '') + '</div>' +
+          '<div class="fu-motivo">' + esc(c.followup_motivo || '') + '</div>' +
+        '</div>' +
+        '<span class="fu-nivel fu-n' + c.followup_nivel + '">' + (c.followup_nivel === 1 ? 'AGORA' : c.followup_nivel === 2 ? '12h' : '48h') + '</span>' +
+      '</div>' +
+    '</div>';
+  }
+  const fuColumn = '<div class="column col-followup">' +
+    '<div class="col-header">' +
+      '<div class="col-title"><span class="col-dot" style="background:#f59e0b"></span>🔔 Follow-up</div>' +
+      '<span class="col-count">' + fuCards.length + '</span>' +
+    '</div>' +
+    '<div class="col-body">' + (fuCards.length ? fuHtml : '<div class="col-empty">Ninguém pra cobrar 🎉</div>') + '</div>' +
+  '</div>';
+
+  board.innerHTML = fuColumn + etapas.map(etapa => {
     const cards = contatos.filter(c => c.etapa === etapa.id);
     return '<div class="column">' +
       '<div class="col-header">' +
