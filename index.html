@@ -111,6 +111,24 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .fu-btn.good { border-color: rgba(16,185,129,.5); color: #10b981; }
 .fu-btn.bad { border-color: rgba(239,68,68,.5); color: #ef4444; }
 .fu-empty { padding: 48px 18px; text-align: center; color: var(--text-muted, #9ca3af); font-size: 14px; }
+/* Três colunas do Follow-up */
+.fu-board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 12px 18px 24px; align-items: start; }
+.fu-col { background: rgba(255,255,255,0.025); border: 1px solid var(--border); border-top: 3px solid transparent; border-radius: 10px; overflow: hidden; }
+.fu-col-h { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: 10px 12px; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid var(--border); }
+.fu-col-sub { font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-muted, #9ca3af); margin-top: 2px; }
+.fu-col-empty { padding: 28px 12px; text-align: center; font-size: 12px; color: var(--text-muted, #9ca3af); }
+.fu-card { padding: 10px 12px; border-left: 3px solid transparent; border-bottom: 1px solid var(--border); }
+.fu-card:last-child { border-bottom: none; }
+.fu-card:hover { background: rgba(255,255,255,0.03); }
+.fu-card-top { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.fu-card .cc-avatar { width: 32px; height: 32px; flex-shrink: 0; }
+.fu-card .fu-name { font-size: 13px; }
+.fu-card .fu-tel { font-size: 11px; }
+.fu-ha { font-size: 12px; font-weight: 700; white-space: nowrap; }
+.fu-card .fu-last { font-size: 11px; color: var(--text-muted, #9ca3af); font-style: italic; margin: 6px 0 0 42px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fu-card .fu-actions { margin: 8px 0 0 42px; justify-content: flex-start; }
+.fu-card .fu-btn { font-size: 11px; padding: 4px 8px; }
+@media (max-width: 1000px) { .fu-board { grid-template-columns: 1fr; } }
 @media (max-width: 800px) {
   .fu-row { grid-template-columns: 34px 1fr; }
   .fu-row .fu-tel, .fu-row .fu-why { grid-column: 2; }
@@ -872,30 +890,37 @@ function renderFollowup(r) {
   const el = document.getElementById('fuList');
   if (!total) { el.innerHTML = '<div class="fu-empty">🎉 Nenhum orçamento parado.</div>'; return; }
 
-  el.innerHTML = grupos.filter(g => g.itens.length).map(g =>
-    '<div class="fu-group" style="color:' + g.cor + '">' + g.titulo + ' <span class="fu-count">' + g.itens.length + '</span></div>' +
-    g.itens.map(c => {
-      const avatar = c.foto_url
-        ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=&quot;none&quot;;this.nextElementSibling.style.display=&quot;flex&quot;">' +
-          '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
-        : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
-      const last = c.ultima_msg ? (c.ultima_msg_dir === 'in' ? '🗨️ ' : '↩️ ') + esc(String(c.ultima_msg).slice(0, 90)) : '';
-      const quando = c.ultima_msg_at ? formatTime(new Date(c.ultima_msg_at)) : '';
-      return '<div class="fu-row" style="border-left-color:' + g.cor + '" data-id="' + c.id + '">' +
-        avatar +
-        '<div><div class="fu-name">' + esc(c.nome || formatPhone(c.telefone)) + (c.pet_nome ? ' <small>· ' + esc(c.pet_nome) + '</small>' : '') + ' <small>#' + c.id + '</small></div>' +
-          '<div class="fu-tel">' + formatPhone(c.telefone) + (c.orcamento_modalidade ? ' · ' + esc(c.orcamento_modalidade) : '') + '</div></div>' +
-        '<div class="fu-why">' + esc(c.followup_motivo || '') + (quando ? '<br><span style="opacity:.7">última msg ' + quando + '</span>' : '') + '</div>' +
-        '<div class="fu-why"><span class="fu-last">' + last + '</span></div>' +
-        '<div class="fu-actions">' +
-          '<button class="fu-btn primary" onclick="openDetail(' + c.id + ')">Abrir</button>' +
-          '<button class="fu-btn good" onclick="fuAcao(' + c.id + ',\'marcou\',this)" title="Marcou o exame → Agendado">Marcou</button>' +
-          '<button class="fu-btn bad" onclick="fuAcao(' + c.id + ',\'desistiu\',this)" title="Não vai fazer → sai da fila">Desistiu</button>' +
-          '<button class="fu-btn" onclick="fuAcao(' + c.id + ',\'ok\',this)" title="Já resolvi por fora → silencia 24h">OK 24h</button>' +
-        '</div>' +
-      '</div>';
-    }).join('')
-  ).join('');
+  // Três colunas lado a lado: 🔴 | 🟡 | ⚪ — triagem por posição, não por leitura.
+  const subt = { 1: 'falou por último, ninguém respondeu', 2: 'recebeu orçamento e sumiu', 3: 'já cobrado uma vez, segue mudo' };
+  el.innerHTML = '<div class="fu-board">' + grupos.map(g =>
+    '<div class="fu-col" style="border-top-color:' + g.cor + '">' +
+      '<div class="fu-col-h"><div><div style="color:' + g.cor + '">' + g.titulo + '</div><div class="fu-col-sub">' + subt[g.n] + '</div></div><span class="fu-count">' + g.itens.length + '</span></div>' +
+      (g.itens.length ? g.itens.map(c => {
+        const avatar = c.foto_url
+          ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=&quot;none&quot;;this.nextElementSibling.style.display=&quot;flex&quot;">' +
+            '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
+          : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+        const last = c.ultima_msg ? (c.ultima_msg_dir === 'in' ? '🗨️ ' : '↩️ ') + esc(String(c.ultima_msg).slice(0, 80)) : '';
+        const ha = (String(c.followup_motivo || '').match(/há \S+/) || [''])[0];
+        return '<div class="fu-card" style="border-left-color:' + g.cor + '" data-id="' + c.id + '">' +
+          '<div class="fu-card-top" onclick="openDetail(' + c.id + ')">' + avatar +
+            '<div style="min-width:0;flex:1">' +
+              '<div class="fu-name">' + esc(c.nome || formatPhone(c.telefone)) + (c.pet_nome ? ' <small>· ' + esc(c.pet_nome) + '</small>' : '') + '</div>' +
+              '<div class="fu-tel">' + formatPhone(c.telefone) + (c.orcamento_modalidade ? ' · ' + esc(c.orcamento_modalidade) : '') + ' <span style="opacity:.55">#' + c.id + '</span></div>' +
+            '</div>' +
+            '<span class="fu-ha" style="color:' + g.cor + '">' + ha + '</span>' +
+          '</div>' +
+          (last ? '<div class="fu-last">' + last + '</div>' : '') +
+          '<div class="fu-actions">' +
+            '<button class="fu-btn primary" onclick="openDetail(' + c.id + ')">Abrir</button>' +
+            '<button class="fu-btn good" onclick="fuAcao(' + c.id + ',\'marcou\',this)" title="Marcou o exame → Agendado">Marcou</button>' +
+            '<button class="fu-btn bad" onclick="fuAcao(' + c.id + ',\'desistiu\',this)" title="Não vai fazer → sai da fila">Desistiu</button>' +
+            '<button class="fu-btn" onclick="fuAcao(' + c.id + ',\'ok\',this)" title="Já resolvi por fora → silencia 24h">OK 24h</button>' +
+          '</div>' +
+        '</div>';
+      }).join('') : '<div class="fu-col-empty">nada aqui 👌</div>') +
+    '</div>'
+  ).join('') + '</div>';
 }
 
 async function fuAcao(id, cmd, btn) {
