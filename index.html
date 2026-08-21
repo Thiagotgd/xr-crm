@@ -918,10 +918,17 @@ let mtDias = 30;
 async function loadMetricas(dias) {
   mtDias = dias || mtDias;
   document.querySelectorAll('#mtPeriodo .fu-btn').forEach(b => b.classList.toggle('primary', Number(b.dataset.d) === mtDias));
+  const sub = document.getElementById('mtSub');
   try {
+    sub.textContent = 'calculando…';
     const r = await api('GET', '/api/metricas/vendas?dias=' + mtDias);
-    renderMetricas(r);
-  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+    try { renderMetricas(r); }
+    catch (e2) { sub.textContent = 'Erro ao desenhar: ' + e2.message; console.error('[metricas] render', e2); }
+  } catch(e) {
+    sub.textContent = 'Erro ao buscar: ' + e.message;
+    console.error('[metricas] fetch', e);
+    toast('Erro: ' + e.message, 'err');
+  }
 }
 
 function renderMetricas(r) {
