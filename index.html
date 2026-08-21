@@ -729,7 +729,7 @@ function renderKanban() {
   for (const c of fuCards) {
     if (c.followup_nivel !== lastN) { fuHtml += '<div class="fu-sep">' + fuLabel[c.followup_nivel] + '</div>'; lastN = c.followup_nivel; }
     const avatar = c.foto_url
-      ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">' +
+      ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
         '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
       : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
     fuHtml += '<div class="contact-card fu-card" style="border-left-color:' + fuCor[c.followup_nivel] + '" data-id="' + c.id + '" draggable="true" onclick="openDetail(' + c.id + ')">' +
