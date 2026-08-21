@@ -277,12 +277,12 @@ function decidir(contato, ultimaMsg, agora = new Date()) {
   const realMin = Math.floor((agora - ref) / 60000); // tempo real, pra leitura
   // Se o time já mandou o questionário pré-anestésico, o orçamento foi aceito:
   // o que falta é o cliente mandar os exames / escolher a data.
-  const base = contato.preAnest ? 'aceitou, falta pré-anestésicos/data' : 'orçamento sem resposta';
+  const rotulo = contato.preAnest ? 'aceitou, falta pré-anestésicos/data' : 'orçamento sem resposta';
   return {
     nivel,
     motivo: nivel === 3
-      ? `${base} há ${humano(realMin)} — segunda tentativa`
-      : `${base} há ${humano(realMin)}`,
+      ? `${rotulo} há ${humano(realMin)} — segunda tentativa`
+      : `${rotulo} há ${humano(realMin)}`,
     desde: alvo,
     ignoradoPor: '',
   };
