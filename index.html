@@ -95,14 +95,15 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .fu-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
 .fu-group { padding: 12px 18px 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; display: flex; align-items: center; gap: 8px; }
 .fu-group .fu-count { background: rgba(255,255,255,0.08); padding: 1px 8px; border-radius: 10px; font-size: 11px; }
-.fu-row { display: grid; grid-template-columns: 40px minmax(160px, 1.2fr) minmax(130px, .9fr) minmax(180px, 1.6fr) auto; gap: 12px; align-items: center; padding: 10px 18px; border-left: 4px solid transparent; border-bottom: 1px solid var(--border); }
+.fu-row { display: grid; grid-template-columns: 40px minmax(0, 1.2fr) minmax(0, .9fr) minmax(0, 1.4fr) max-content; gap: 12px; align-items: center; padding: 10px 18px; border-left: 4px solid transparent; border-bottom: 1px solid var(--border); }
+.fu-row > div { min-width: 0; }
 .fu-row:hover { background: rgba(255,255,255,0.03); }
 .fu-row .cc-avatar { width: 34px; height: 34px; }
 .fu-name { font-weight: 600; font-size: 14px; }
 .fu-name small { font-weight: 400; opacity: .65; }
 .fu-tel { font-size: 12px; color: var(--text-muted, #9ca3af); }
 .fu-why { font-size: 12px; color: var(--text-muted, #9ca3af); line-height: 1.35; }
-.fu-why .fu-last { display: block; opacity: .75; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; }
+.fu-why .fu-last { display: block; opacity: .75; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fu-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .fu-btn { font-size: 12px; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); cursor: pointer; white-space: nowrap; }
 .fu-btn:hover { filter: brightness(1.15); }

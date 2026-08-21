@@ -44,7 +44,26 @@ const PALAVRAS_DESISTENCIA = [
   'vou deixar pra depois', 'vou deixar para depois', 'deixa pra outra hora',
   'nao tenho condicoes', 'não tenho condições', 'muito caro pra mim',
   'nao vai ser possivel', 'não vai ser possível',
+  'no momento nao', 'no momento não', 'agora nao', 'agora não',
+  'por enquanto nao', 'por enquanto não', 'nao por enquanto', 'não por enquanto',
 ];
+
+// Cliente ENCERRANDO a conversa (não está esperando nada): agradecimento,
+// "ok", "vou pensar", "te retorno". Não vira 🔴 — cai na régua de 12h.
+// Regex por radical (sem \b no fim), sobre texto sem acento e minúsculo.
+const RE_FECHAMENTO = /(^|\W)(obrigad|obg|agrade|valeu|blz|beleza|combinado|perfeito|certo|entendi|ok|okay|ta bom|tabom|tudo bem|show|otimo|joia|top|vou pensar|vou conversar|vou ver|vou verificar|vou confirmar|vou so |vou ja |verificando|confirmando|conversando|analisando|conferindo|te retorno|retorno depois|entro em contato|volto a falar|volto falar|qualquer coisa|bom dia|boa tarde|boa noite|ate mais|abraco|bjs|beijo|grata|grato)/;
+const RE_PERGUNTA = /\?|quanto|qual |quando|como |pode |consegue|teria|gostaria|preciso|queria|valor|preco|horario|agend|marcar/;
+const normalizar = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+// É mensagem de encerramento? Curta, ou bate no radical, e NÃO tem cara de pergunta.
+function ehFechamento(texto, tamanho) {
+  const t = normalizar(texto);
+  if (!t) return false;
+  if ((tamanho || t.length) <= REGRAS.tamanhoCortesia) return true;
+  if (RE_PERGUNTA.test(t)) return false;
+  if (t.length > 120) return false;
+  return RE_FECHAMENTO.test(t);
+}
 
 // A Athena (atendente virtual fora do horário) responde pelo MESMO número da
 // recepção, então as mensagens dela entram como 'out'. Para a régua, Athena
@@ -168,15 +187,32 @@ function encerrarPerdidos(db) {
   const finalizar = db.prepare("UPDATE contatos SET etapa = 'finalizado', followup_nivel = 0, followup_desde = '', followup_motivo = '', updated_at = datetime('now','localtime') WHERE id = ?");
   const logar = db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, 'orcamento', 'finalizado')");
 
+  // Laudo legado: PDF de antes do filtro de nome (texto '[document]'). Se o time
+  // tinha mandado "Exame agendado" antes do PDF, ou fala em laudo depois dele,
+  // o PDF era laudo — exame feito, não orçamento. Só vale pra PDF sem nome;
+  // PDF novo já passa pelo filtro do webhook.
+  const ultimoPdf = db.prepare("SELECT texto FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND tipo = 'document' ORDER BY id DESC LIMIT 1");
+  const agendadoAntes = db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at < ? AND created_at >= datetime(?, '-45 days') AND LOWER(texto) LIKE '%exame agendado%' LIMIT 1");
+  const falaLaudoDepois = db.prepare("SELECT texto FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at >= ? AND LOWER(texto) LIKE '%laudo%' LIMIT 5");
+  const RE_LAUDO = /segue.{0,30}laudo|laudo.{0,20}(anexo|pronto|liberad|dispon|finaliz)|envi\w+.{0,15}laudo|laudo (do|da) /i;
+  const ehLaudoLegado = c => {
+    const p = ultimoPdf.get(c.id);
+    if (!p || p.texto !== '[document]') return false;
+    const ref = c.orcamento_enviado_at || c.created_at || '';
+    if (agendadoAntes.get(c.id, ref, ref)) return true;
+    return falaLaudoDepois.all(c.id, ref).some(r => RE_LAUDO.test(String(r.texto || '')));
+  };
+
   const encerrados = [];
   db.transaction(() => {
     for (const c of alvos) {
       const porLuto = acha(c, luto);
       const porDesist = !porLuto && acha(c, desist);
-      if (porLuto || porDesist) {
+      const porLaudo = !porLuto && !porDesist && ehLaudoLegado(c);
+      if (porLuto || porDesist || porLaudo) {
         finalizar.run(c.id);
         logar.run(c.id);
-        encerrados.push({ id: c.id, nome: c.nome, telefone: c.telefone, motivo: porLuto ? 'luto' : 'desistiu' });
+        encerrados.push({ id: c.id, nome: c.nome, telefone: c.telefone, motivo: porLuto ? 'luto' : porDesist ? 'desistiu' : 'laudo (exame já feito)' });
       }
     }
   })();
@@ -204,7 +240,7 @@ function decidir(contato, ultimaMsg, agora = new Date()) {
   if (ultimaMsg.direcao === 'in') {
     // Cliente falou por último. A bola é nossa — a menos que tenha sido só cortesia.
     if (!quandoUltima) return nada('data inválida');
-    const cortesia = ultimaMsg.tipo === 'text' && (ultimaMsg.tamanho || 0) <= REGRAS.tamanhoCortesia;
+    const cortesia = ultimaMsg.tipo === 'text' && ehFechamento(ultimaMsg.texto, ultimaMsg.tamanho);
     if (!cortesia) {
       const min = minutosUteisEntre(quandoUltima, agora);
       if (min < REGRAS.minutosClienteEsperando) return nada('dentro do prazo');
@@ -251,7 +287,7 @@ function avaliar(db, agora = new Date()) {
 
   // Última mensagem HUMANA da conversa: ignora o que a Athena mandou.
   const ultimaMsg = db.prepare(`
-    SELECT direcao, created_at, tipo, LENGTH(texto) AS tamanho FROM mensagens
+    SELECT direcao, created_at, tipo, LENGTH(texto) AS tamanho, SUBSTR(texto, 1, 200) AS texto FROM mensagens
     WHERE contato_id = ? AND NOT (direcao = 'out' AND texto LIKE ?)
     ORDER BY id DESC LIMIT 1`);
   const athenaLike = '%' + ATHENA_MARCA + '%';
@@ -348,5 +384,5 @@ module.exports = {
   REGRAS, ABERTURA, FECHAMENTO,
   emHorarioUtil, proximaAbertura, quandoAlertar, minutosUteisEntre,
   initFollowup, corrigirLaudos, encerrarPerdidos, decidir, avaliar, iniciarVigia,
-  PALAVRAS_LUTO, PALAVRAS_DESISTENCIA, ATHENA_MARCA,
+  PALAVRAS_LUTO, PALAVRAS_DESISTENCIA, ATHENA_MARCA, ehFechamento,
 };
