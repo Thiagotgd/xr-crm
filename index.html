@@ -920,8 +920,19 @@ async function loadMetricas(dias) {
   document.querySelectorAll('#mtPeriodo .fu-btn').forEach(b => b.classList.toggle('primary', Number(b.dataset.d) === mtDias));
   const sub = document.getElementById('mtSub');
   try {
-    sub.textContent = 'calculando…';
-    const r = await api('GET', '/api/metricas/vendas?dias=' + mtDias);
+    const t0 = Date.now();
+    sub.textContent = 'calculando… (1/3 pedindo ao servidor)';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 20000);
+    let r;
+    try {
+      const resp = await fetch('/api/metricas/vendas?dias=' + mtDias, { signal: ctrl.signal, headers: { 'Accept': 'application/json' } });
+      sub.textContent = 'calculando… (2/3 resposta HTTP ' + resp.status + ' em ' + (Date.now() - t0) + ' ms)';
+      const txt = await resp.text();
+      try { r = JSON.parse(txt); } catch (ej) { throw new Error('resposta não é JSON (HTTP ' + resp.status + '): ' + txt.slice(0, 80)); }
+      if (!resp.ok) throw new Error(r.error || ('HTTP ' + resp.status));
+    } finally { clearTimeout(timer); }
+    sub.textContent = 'calculando… (3/3 desenhando)';
     try { renderMetricas(r); }
     catch (e2) { sub.textContent = 'Erro ao desenhar: ' + e2.message; console.error('[metricas] render', e2); }
   } catch(e) {
