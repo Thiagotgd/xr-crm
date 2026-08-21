@@ -208,7 +208,9 @@ function decidir(contato, ultimaMsg, agora = new Date()) {
     if (!cortesia) {
       const min = minutosUteisEntre(quandoUltima, agora);
       if (min < REGRAS.minutosClienteEsperando) return nada('dentro do prazo');
-      return { nivel: 1, motivo: `cliente esperando resposta há ${humano(min)}`, desde: quandoUltima, ignoradoPor: '' };
+      // O prazo é em minutos úteis, mas o texto mostra tempo real ("há 2d" = 2 dias de relógio).
+      const realMin = Math.floor((agora - quandoUltima) / 60000);
+      return { nivel: 1, motivo: `cliente esperando resposta há ${humano(realMin)}`, desde: quandoUltima, ignoradoPor: '' };
     }
     // Cortesia curta: segue para a régua de 12h abaixo, sem urgência.
   }
@@ -224,12 +226,12 @@ function decidir(contato, ultimaMsg, agora = new Date()) {
 
   const alvo2 = new Date(alvo.getTime() + REGRAS.horasSegundaTentativa * 3600000);
   const nivel = agora >= alvo2 ? 3 : 2;
-  const min = minutosUteisEntre(ref, agora);
+  const realMin = Math.floor((agora - ref) / 60000); // tempo real, pra leitura
   return {
     nivel,
     motivo: nivel === 3
-      ? `sem resposta há ${humano(min)} — segunda tentativa`
-      : `orçamento sem resposta há ${humano(min)}`,
+      ? `sem resposta há ${humano(realMin)} — segunda tentativa`
+      : `orçamento sem resposta há ${humano(realMin)}`,
     desde: alvo,
     ignoradoPor: '',
   };
@@ -240,7 +242,7 @@ function decidir(contato, ultimaMsg, agora = new Date()) {
 // sem estado acumulado, sem risco de o contador desandar com o tempo.
 function avaliar(db, agora = new Date()) {
   // Números internos da XR nunca entram na fila (recepção falando com ela mesma etc.).
-  const internos = ['553182043117', '553183283626', '553183746380'];
+  const internos = ['553182043117', '553183283626', '553183746380', '553184505939' /* Xrfinanceiro */];
   const alvos = db.prepare(`
     SELECT id, nome, telefone, orcamento_enviado_at, followup_nivel, followup_snooze_ate
     FROM contatos
@@ -310,8 +312,8 @@ function iniciarVigia(db, opts = {}) {
 function executarComando(db, cmd, id) {
   if (cmd === 'ajuda' || cmd === '?') {
     return '🤖 *Comandos do follow-up*\n\n' +
-      '• *perdeu 123* — cliente desistiu / não vai fazer → sai da fila\n' +
-      '• *fechou 123* — marcou o exame → vai pra Agendado\n' +
+      '• *marcou 123* — marcou o exame → vai pra Agendado\n' +
+      '• *desistiu 123* — não vai fazer → sai da fila\n' +
       '• *ok 123* — já resolvi por fora (liguei etc.) → silencia por 24h\n\n' +
       'O número é o *#id* que aparece no alerta.';
   }
@@ -323,17 +325,17 @@ function executarComando(db, cmd, id) {
   if (!c) return `Não achei o contato *#${id}*. Confere o número no alerta.`;
   const quem = (c.nome || c.telefone) + (c.pet_nome ? ` · ${c.pet_nome}` : '');
 
-  if (cmd === 'perdeu' || cmd === 'perdido') {
+  if (cmd === 'desistiu' || cmd === 'desistiram' || cmd === 'perdeu' || cmd === 'perdido') {
     db.prepare("UPDATE contatos SET etapa = 'finalizado', followup_nivel = 0, followup_desde = '', followup_motivo = '', updated_at = datetime('now','localtime') WHERE id = ?").run(id);
     db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'finalizado')").run(id, c.etapa);
     console.log(`[CRM] Comando perdeu #${id} (${quem})`);
-    return `✔️ *${quem}* (#${id}) marcado como perdido. Saiu da fila.`;
+    return `✔️ *${quem}* (#${id}) desistiu. Saiu da fila.`;
   }
-  if (cmd === 'fechou' || cmd === 'agendou') {
+  if (cmd === 'marcou' || cmd === 'fechou' || cmd === 'agendou') {
     db.prepare("UPDATE contatos SET etapa = 'agendado', followup_nivel = 0, followup_desde = '', followup_motivo = '', updated_at = datetime('now','localtime') WHERE id = ?").run(id);
     db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'agendado')").run(id, c.etapa);
     console.log(`[CRM] Comando fechou #${id} (${quem})`);
-    return `🎉 *${quem}* (#${id}) foi pra Agendado. Boa!`;
+    return `🎉 *${quem}* (#${id}) marcou! Foi pra Agendado.`;
   }
   const ate = new Date(Date.now() + 24 * 3600000);
   db.prepare("UPDATE contatos SET followup_snooze_ate = ?, followup_nivel = 0, followup_desde = '', followup_motivo = '' WHERE id = ?").run(sql(ate), id);

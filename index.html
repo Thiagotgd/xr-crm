@@ -888,8 +888,8 @@ function renderFollowup(r) {
         '<div class="fu-why"><span class="fu-last">' + last + '</span></div>' +
         '<div class="fu-actions">' +
           '<button class="fu-btn primary" onclick="openDetail(' + c.id + ')">Abrir</button>' +
-          '<button class="fu-btn good" onclick="fuAcao(' + c.id + ',\'fechou\',this)" title="Marcou o exame → Agendado">Fechou</button>' +
-          '<button class="fu-btn bad" onclick="fuAcao(' + c.id + ',\'perdeu\',this)" title="Desistiu / não vai fazer → sai da fila">Perdeu</button>' +
+          '<button class="fu-btn good" onclick="fuAcao(' + c.id + ',\'marcou\',this)" title="Marcou o exame → Agendado">Marcou</button>' +
+          '<button class="fu-btn bad" onclick="fuAcao(' + c.id + ',\'desistiu\',this)" title="Não vai fazer → sai da fila">Desistiu</button>' +
           '<button class="fu-btn" onclick="fuAcao(' + c.id + ',\'ok\',this)" title="Já resolvi por fora → silencia 24h">OK 24h</button>' +
         '</div>' +
       '</div>';
@@ -898,7 +898,7 @@ function renderFollowup(r) {
 }
 
 async function fuAcao(id, cmd, btn) {
-  const rotulo = { fechou: 'marcar como FECHOU (vai pra Agendado)', perdeu: 'marcar como PERDEU (sai da fila)', ok: 'silenciar por 24h' }[cmd];
+  const rotulo = { marcou: 'MARCOU o exame (vai pra Agendado)', desistiu: 'DESISTIU (sai da fila)', ok: 'silenciar por 24h' }[cmd];
   if (!confirm('#' + id + ': ' + rotulo + '?')) return;
   try {
     if (btn) btn.disabled = true;

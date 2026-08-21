@@ -748,7 +748,7 @@ async function handleRequest(req, res) {
     if (isFromMe && phone.replace(/\D/g, '').endsWith(alerta.ORIGEM.slice(-11))) {
       const msgCmd = data.message || {};
       const txt = (msgCmd.conversation || (msgCmd.extendedTextMessage && msgCmd.extendedTextMessage.text) || '').trim();
-      const m = txt.match(/^(perdeu|perdido|ok|feito|resolvido|fechou|agendou|ajuda|\?)\s*#?(\d+)?\s*$/i);
+      const m = txt.match(/^(marcou|desistiu|desistiram|perdeu|perdido|ok|feito|resolvido|fechou|agendou|ajuda|\?)\s*#?(\d+)?\s*$/i);
       if (m) {
         const resposta = followup.executarComando(db, m[1].toLowerCase(), m[2] ? Number(m[2]) : null);
         if (resposta) alerta.enviarRecepcao(resposta);
@@ -1352,7 +1352,7 @@ async function handleRequest(req, res) {
   }
 
   // ─── API: Follow-up — ações pela tela (mesmos comandos do WhatsApp) ────────
-  if (method === 'POST' && pathname.match(/^\/api\/followup\/\d+\/(fechou|perdeu|ok)$/)) {
+  if (method === 'POST' && pathname.match(/^\/api\/followup\/\d+\/(marcou|desistiu|fechou|perdeu|ok)$/)) {
     const parts = pathname.split('/');
     const id = Number(parts[3]);
     const cmd = parts[4];

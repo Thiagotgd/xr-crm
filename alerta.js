@@ -105,22 +105,44 @@ function montarDigest(db) {
 
   const hoje = new Date().toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
 
+  // Devolve uma LISTA de mensagens: uma por nível (🔴 primeiro), cada uma com
+  // no máximo LINHAS_POR_MSG contatos — o resto vai em "(continuação)".
+  // Cada linha tem telefone (tocável no WhatsApp) e #id (pros comandos).
   if (!fila.length) {
-    return `✅ *Follow-up ${hoje}*\n\nNenhum orçamento parado. Fila limpa! 🎉\n\n_${CRM_URL}_`;
+    return [`✅ *Follow-up ${hoje}*\n\nNenhum orçamento parado. Fila limpa! 🎉\n\n_${CRM_URL}_`];
   }
 
-  const bloco = (n, titulo, max) => {
-    if (!por[n].length) return '';
-    const itens = por[n].slice(0, max).map(c => `${ICONE[n]} ${nomeDe(c)} — _${c.followup_motivo}_  #${c.id}`);
-    const resto = por[n].length > max ? `\n   … e mais ${por[n].length - max}` : '';
-    return `*${titulo} (${por[n].length})*\n${itens.join('\n')}${resto}\n\n`;
+  const LINHAS_POR_MSG = 15;
+  const haQuanto = c => { const m = String(c.followup_motivo || '').match(/há \S+/); return m ? m[0] : ''; };
+  const linha = c => `• *${nomeDe(c)}* — ${fmtTel(c.telefone)} — ${haQuanto(c)}  #${c.id}`;
+
+  const titulos = {
+    1: '🔴 *CLIENTE ESPERANDO RESPOSTA*',
+    2: '🟡 *ORÇAMENTO SEM RETORNO (12h+)*',
+    3: '⚪ *SEGUNDA TENTATIVA (48h+)*',
   };
 
-  return `📋 *Follow-up ${hoje}* — ${fila.length} na fila\n\n` +
-    bloco(1, 'Cliente esperando resposta', 12) +
-    bloco(2, 'Orçamento sem retorno (12h+)', 10) +
-    bloco(3, 'Segunda tentativa (48h+)', 8) +
-    `Respondeu o cliente? O card some sozinho.\nPor aqui: *perdeu 123* · *fechou 123* · *ok 123* (ou *ajuda*)\n${CRM_URL}`;
+  const msgs = [];
+  for (const n of [1, 2, 3]) {
+    const lista = por[n];
+    if (!lista.length) continue;
+    for (let i = 0; i < lista.length; i += LINHAS_POR_MSG) {
+      const pedaco = lista.slice(i, i + LINHAS_POR_MSG);
+      const cont = i > 0 ? ` (continuação ${Math.floor(i / LINHAS_POR_MSG) + 1})` : '';
+      const cab = msgs.length === 0 ? `📋 *Follow-up ${hoje}* — ${fila.length} na fila\n\n` : '';
+      msgs.push(`${cab}${titulos[n]} (${lista.length})${cont}\n${pedaco.map(linha).join('\n')}`);
+    }
+  }
+  msgs[msgs.length - 1] += `\n\nRespondeu o cliente? Some sozinho.\nPor aqui: *marcou 123* · *desistiu 123* · *ok 123* · *ajuda*\n${CRM_URL}`;
+  return msgs;
+}
+
+// Envia uma lista de mensagens em sequência, com um respiro entre elas.
+async function enviarSequencia(msgs) {
+  for (let i = 0; i < msgs.length; i++) {
+    await enviarRecepcao(msgs[i]);
+    if (i < msgs.length - 1) await new Promise(r => setTimeout(r, 2500));
+  }
 }
 
 function iniciarDigest(db, emHorarioUtil) {
@@ -138,14 +160,14 @@ function iniciarDigest(db, emHorarioUtil) {
     if (chave === ultimoEnvio) return;
     ultimoEnvio = chave;
 
-    const texto = montarDigest(db);
-    const vazio = texto.startsWith('✅');
+    const msgs = montarDigest(db);
+    const vazio = msgs.length === 1 && msgs[0].startsWith('✅');
     if (slot === 'tarde' && vazio) return; // à tarde só se tiver o que cobrar
-    enviarRecepcao(texto);                 // de manhã sempre — é o heartbeat
+    enviarSequencia(msgs);                 // de manhã sempre — é o heartbeat
   };
 
   tick();
   return setInterval(tick, 60 * 1000);
 }
 
-module.exports = { DESTINO, ORIGEM, enviarRecepcao, notificarNovos, montarDigest, iniciarDigest };
+module.exports = { DESTINO, ORIGEM, enviarRecepcao, enviarSequencia, notificarNovos, montarDigest, iniciarDigest };
