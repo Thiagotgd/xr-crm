@@ -62,9 +62,12 @@ async function enviarRecepcao(texto) {
 }
 
 // ─── Formatação ────────────────────────────────────────────────────────────────
+// Formato que o WhatsApp reconhece como número tocável. Muitos JIDs vêm sem o 9º dígito.
 const fmtTel = t => {
   const d = String(t || '').replace(/\D/g, '').replace(/^55/, '');
-  return d.length === 11 ? `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}` : d;
+  if (d.length === 11) return `+55 (${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `+55 (${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return d ? `+55 ${d}` : '';
 };
 const nomeDe = c => (c.nome || fmtTel(c.telefone)) + (c.pet_nome ? ` · ${c.pet_nome}` : '');
 const ICONE = { 1: '🔴', 2: '🟡', 3: '⚪' };
