@@ -1351,6 +1351,15 @@ async function handleRequest(req, res) {
     return sendJSON(res, 200, { funil, tempoMedio, novosPorDia, taxaConversao, totalNovos, totalFinalizados, parados, periodo: dias });
   }
 
+  // ─── API: Follow-up — ações pela tela (mesmos comandos do WhatsApp) ────────
+  if (method === 'POST' && pathname.match(/^\/api\/followup\/\d+\/(fechou|perdeu|ok)$/)) {
+    const parts = pathname.split('/');
+    const id = Number(parts[3]);
+    const cmd = parts[4];
+    const msg = followup.executarComando(db, cmd, id);
+    return sendJSON(res, 200, { ok: true, msg: msg || '' });
+  }
+
   // ─── API: Follow-up (fila de orçamentos a cobrar) ─────────────────────────
   if (method === 'GET' && pathname === '/api/followup') {
     const fila = db.prepare(`

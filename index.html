@@ -88,6 +88,33 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .fu-n2 { background: rgba(245,158,11,0.2); color: #f59e0b; }
 .fu-n3 { background: rgba(156,163,175,0.2); color: #9ca3af; }
 .fu-sep { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; font-weight: 700; opacity: .7; padding: 6px 4px 2px; }
+/* Aba Follow-up (lista de gestão) */
+.fu-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; padding: 14px 18px 10px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+.fu-sub { font-size: 12px; color: var(--text-muted, #9ca3af); margin-top: 3px; }
+.fu-legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-muted, #9ca3af); flex-wrap: wrap; }
+.fu-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.fu-group { padding: 12px 18px 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; display: flex; align-items: center; gap: 8px; }
+.fu-group .fu-count { background: rgba(255,255,255,0.08); padding: 1px 8px; border-radius: 10px; font-size: 11px; }
+.fu-row { display: grid; grid-template-columns: 40px minmax(160px, 1.2fr) minmax(130px, .9fr) minmax(180px, 1.6fr) auto; gap: 12px; align-items: center; padding: 10px 18px; border-left: 4px solid transparent; border-bottom: 1px solid var(--border); }
+.fu-row:hover { background: rgba(255,255,255,0.03); }
+.fu-row .cc-avatar { width: 34px; height: 34px; }
+.fu-name { font-weight: 600; font-size: 14px; }
+.fu-name small { font-weight: 400; opacity: .65; }
+.fu-tel { font-size: 12px; color: var(--text-muted, #9ca3af); }
+.fu-why { font-size: 12px; color: var(--text-muted, #9ca3af); line-height: 1.35; }
+.fu-why .fu-last { display: block; opacity: .75; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; }
+.fu-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.fu-btn { font-size: 12px; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); cursor: pointer; white-space: nowrap; }
+.fu-btn:hover { filter: brightness(1.15); }
+.fu-btn.primary { background: var(--primary, #00a884); border-color: transparent; color: #fff; }
+.fu-btn.good { border-color: rgba(16,185,129,.5); color: #10b981; }
+.fu-btn.bad { border-color: rgba(239,68,68,.5); color: #ef4444; }
+.fu-empty { padding: 48px 18px; text-align: center; color: var(--text-muted, #9ca3af); font-size: 14px; }
+@media (max-width: 800px) {
+  .fu-row { grid-template-columns: 34px 1fr; }
+  .fu-row .fu-tel, .fu-row .fu-why { grid-column: 2; }
+  .fu-row .fu-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}
 .contact-card .cc-ind-time { color: var(--text-muted); font-size: 10px; margin-left: auto; }
 .contact-card .unread-badge { background: var(--wa-badge-bg); color: var(--wa-badge-text); font-size: 11px; font-weight: 500; min-width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center; padding: 0 4px; flex-shrink: 0; }
 .contact-card.has-unread { background: rgba(37,211,102,0.06); }
@@ -420,7 +447,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 <!-- Tabs -->
 <div class="crm-tabs" id="crmTabs">
   <button class="crm-tab active" id="tabBtnConversas" onclick="switchTab('conversas')">Conversas</button>
-  <button class="crm-tab" id="tabBtnKanban" onclick="switchTab('kanban')">🔔 Funil</button>
+  <button class="crm-tab" id="tabBtnFollowup" onclick="switchTab('followup')">🔔 Follow-up</button>
   <!-- custom tabs inserted here dynamically -->
 </div>
 
@@ -472,6 +499,22 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
   <div class="conversa-context-item" onclick="conversaMarkUnread()">&#x1F4E9; Marcar como nao lido</div>
   <div class="conversa-context-item" onclick="conversaTogglePin()">&#x1F4CC; Fixar/Desafixar</div>
   <div class="conversa-context-item" onclick="conversaOpenTag()">&#x1F3F7;&#xFE0F; Etiquetar</div>
+</div>
+
+<!-- Tab: Follow-up (visão de gestão — lista limpa, só quem precisa de um toque) -->
+<div id="tabFollowup" style="display:none;flex:1;overflow-y:auto">
+  <div class="fu-top">
+    <div>
+      <h2 style="font-size:16px;font-weight:700;margin:0">Follow-up de orçamentos</h2>
+      <div class="fu-sub" id="fuSub">carregando…</div>
+    </div>
+    <div class="fu-legend">
+      <span><b class="fu-dot" style="background:#ef4444"></b> cliente esperando resposta</span>
+      <span><b class="fu-dot" style="background:#f59e0b"></b> orçamento sem retorno 12h+</span>
+      <span><b class="fu-dot" style="background:#9ca3af"></b> 2ª tentativa 48h+</span>
+    </div>
+  </div>
+  <div id="fuList"></div>
 </div>
 
 <!-- Tab: Kanban -->
@@ -797,6 +840,73 @@ function renderKanban() {
       '</div>' +
     '</div>';
   }).join('');
+}
+
+// ─── Aba Follow-up (lista de gestão) ─────────────────────────────────────────
+let fuTimer = null;
+async function loadFollowup() {
+  try {
+    const r = await api('GET', '/api/followup');
+    renderFollowup(r);
+    // Auto-atualiza enquanto a aba estiver aberta
+    if (fuTimer) clearInterval(fuTimer);
+    fuTimer = setInterval(() => { if (currentTab === 'followup') loadFollowup(); else { clearInterval(fuTimer); fuTimer = null; } }, 60000);
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+function renderFollowup(r) {
+  const fila = (r && r.fila) || [];
+  const res = (r && r.resumo) || { urgente: 0, followup: 0, segunda: 0 };
+  const total = fila.length;
+  document.getElementById('fuSub').textContent = total
+    ? total + ' contato' + (total > 1 ? 's' : '') + ' na fila · ' + res.urgente + ' urgente' + (res.urgente !== 1 ? 's' : '') + ' · atualiza sozinho a cada minuto'
+    : 'Fila limpa. Ninguém pra cobrar agora.';
+
+  const grupos = [
+    { n: 1, titulo: '🔴 Cliente esperando resposta', cor: '#ef4444', itens: fila.filter(c => c.followup_nivel === 1) },
+    { n: 2, titulo: '🟡 Orçamento sem retorno (12h+)', cor: '#f59e0b', itens: fila.filter(c => c.followup_nivel === 2) },
+    { n: 3, titulo: '⚪ Segunda tentativa (48h+)', cor: '#9ca3af', itens: fila.filter(c => c.followup_nivel === 3) },
+  ];
+
+  const el = document.getElementById('fuList');
+  if (!total) { el.innerHTML = '<div class="fu-empty">🎉 Nenhum orçamento parado.</div>'; return; }
+
+  el.innerHTML = grupos.filter(g => g.itens.length).map(g =>
+    '<div class="fu-group" style="color:' + g.cor + '">' + g.titulo + ' <span class="fu-count">' + g.itens.length + '</span></div>' +
+    g.itens.map(c => {
+      const avatar = c.foto_url
+        ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=&quot;none&quot;;this.nextElementSibling.style.display=&quot;flex&quot;">' +
+          '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
+        : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+      const last = c.ultima_msg ? (c.ultima_msg_dir === 'in' ? '🗨️ ' : '↩️ ') + esc(String(c.ultima_msg).slice(0, 90)) : '';
+      const quando = c.ultima_msg_at ? formatTime(new Date(c.ultima_msg_at)) : '';
+      return '<div class="fu-row" style="border-left-color:' + g.cor + '" data-id="' + c.id + '">' +
+        avatar +
+        '<div><div class="fu-name">' + esc(c.nome || formatPhone(c.telefone)) + (c.pet_nome ? ' <small>· ' + esc(c.pet_nome) + '</small>' : '') + ' <small>#' + c.id + '</small></div>' +
+          '<div class="fu-tel">' + formatPhone(c.telefone) + (c.orcamento_modalidade ? ' · ' + esc(c.orcamento_modalidade) : '') + '</div></div>' +
+        '<div class="fu-why">' + esc(c.followup_motivo || '') + (quando ? '<br><span style="opacity:.7">última msg ' + quando + '</span>' : '') + '</div>' +
+        '<div class="fu-why"><span class="fu-last">' + last + '</span></div>' +
+        '<div class="fu-actions">' +
+          '<button class="fu-btn primary" onclick="openDetail(' + c.id + ')">Abrir</button>' +
+          '<button class="fu-btn good" onclick="fuAcao(' + c.id + ',\'fechou\',this)" title="Marcou o exame → Agendado">Fechou</button>' +
+          '<button class="fu-btn bad" onclick="fuAcao(' + c.id + ',\'perdeu\',this)" title="Desistiu / não vai fazer → sai da fila">Perdeu</button>' +
+          '<button class="fu-btn" onclick="fuAcao(' + c.id + ',\'ok\',this)" title="Já resolvi por fora → silencia 24h">OK 24h</button>' +
+        '</div>' +
+      '</div>';
+    }).join('')
+  ).join('');
+}
+
+async function fuAcao(id, cmd, btn) {
+  const rotulo = { fechou: 'marcar como FECHOU (vai pra Agendado)', perdeu: 'marcar como PERDEU (sai da fila)', ok: 'silenciar por 24h' }[cmd];
+  if (!confirm('#' + id + ': ' + rotulo + '?')) return;
+  try {
+    if (btn) btn.disabled = true;
+    const r = await api('POST', '/api/followup/' + id + '/' + cmd);
+    toast(r && r.msg ? r.msg.replace(/\*/g, '') : 'Feito', 'ok');
+    loadFollowup();
+    refreshTabBadges();
+  } catch(e) { toast('Erro: ' + e.message, 'err'); if (btn) btn.disabled = false; }
 }
 
 // ─── Move to next etapa ──────────────────────────────────────────────────────
@@ -1347,10 +1457,12 @@ function switchTab(tab, abaId) {
     if (btn) btn.classList.add('active');
   }
   document.getElementById('tabConversas').style.display = tab === 'conversas' ? '' : 'none';
+  document.getElementById('tabFollowup').style.display = tab === 'followup' ? '' : 'none';
   document.getElementById('tabKanban').style.display = tab === 'kanban' ? '' : 'none';
   document.getElementById('tabGrupos').style.display = tab === 'grupos' ? '' : 'none';
   document.getElementById('tabCustom').style.display = tab === 'custom' ? '' : 'none';
   if (tab === 'conversas') loadConversas();
+  if (tab === 'followup') loadFollowup();
   if (tab === 'kanban') loadBoard();
   if (tab === 'grupos') loadGrupos();
   if (tab === 'custom') { currentCustomAba = abaId; loadCustomTab(abaId); }
@@ -1694,7 +1806,7 @@ async function refreshTabBadges() {
   // Badge do Funil: quantos estão na fila de follow-up agora (🔴 conta em vermelho)
   try {
     const fu = await api('GET', '/api/followup');
-    const kBtn = document.getElementById('tabBtnKanban');
+    const kBtn = document.getElementById('tabBtnFollowup');
     if (kBtn && fu && fu.resumo) {
       const ex = kBtn.querySelector('.tab-badge');
       if (ex) ex.remove();
