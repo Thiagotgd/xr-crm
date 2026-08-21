@@ -919,7 +919,7 @@ async function loadMetricas(dias) {
   mtDias = dias || mtDias;
   document.querySelectorAll('#mtPeriodo .fu-btn').forEach(b => b.classList.toggle('primary', Number(b.dataset.d) === mtDias));
   try {
-    const r = await api('GET', '/api/metricas?dias=' + mtDias);
+    const r = await api('GET', '/api/metricas/vendas?dias=' + mtDias);
     renderMetricas(r);
   } catch(e) { toast('Erro: ' + e.message, 'err'); }
 }

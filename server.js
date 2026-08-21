@@ -1353,7 +1353,8 @@ async function handleRequest(req, res) {
   }
 
   // ─── API: Métricas de vendas (visão do gestor) ─────────────────────────────
-  if (method === 'GET' && pathname === '/api/metricas') {
+  // (/api/metricas sem sufixo já existe mais acima — é a tela antiga de etapas)
+  if (method === 'GET' && pathname === '/api/metricas/vendas') {
     const dias = Number(urlObj.searchParams.get('dias')) || 30;
     try { return sendJSON(res, 200, metricas.calcular(db, dias)); }
     catch (e) { console.error('[CRM] metricas:', e.message); return sendJSON(res, 500, { error: e.message }); }
