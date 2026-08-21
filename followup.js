@@ -1,5 +1,9 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const MEDIA_DIR = path.join(__dirname, 'media');
+
 // ─── Motor de follow-up do funil de orçamentos ─────────────────────────────────
 // Vigia quem recebeu orçamento (PDF) e não fechou. Marca nível no banco.
 // FASE 1: só marca. Não envia mensagem para ninguém. O envio mora em alerta.js.
@@ -191,16 +195,24 @@ function encerrarPerdidos(db) {
   // tinha mandado "Exame agendado" antes do PDF, ou fala em laudo depois dele,
   // o PDF era laudo — exame feito, não orçamento. Só vale pra PDF sem nome;
   // PDF novo já passa pelo filtro do webhook.
-  const ultimoPdf = db.prepare("SELECT texto FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND tipo = 'document' ORDER BY id DESC LIMIT 1");
+  const ultimoPdf = db.prepare("SELECT texto, media_path FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND tipo = 'document' ORDER BY id DESC LIMIT 1");
   const agendadoAntes = db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at < ? AND created_at >= datetime(?, '-45 days') AND LOWER(texto) LIKE '%exame agendado%' LIMIT 1");
   const falaLaudoDepois = db.prepare("SELECT texto FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at >= ? AND LOWER(texto) LIKE '%laudo%' LIMIT 5");
+  // Time falando como quem acabou de fazer o exame, até 10 dias antes do PDF.
+  const posExameAntes = db.prepare("SELECT texto FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at < ? AND created_at >= datetime(?, '-10 days') ORDER BY id DESC LIMIT 25");
   const RE_LAUDO = /segue.{0,30}laudo|laudo.{0,20}(anexo|pronto|liberad|dispon|finaliz)|envi\w+.{0,15}laudo|laudo (do|da) /i;
+  const RE_POS_EXAME = /(ja|já) (esta|está) liberad|liberad[ao] (pra|para) (ir|buscar|casa)|recupera[cç][aã]o anest|acordou|acordando|pode (vir )?buscar|correu (tudo )?bem|terminou o exame|saiu do exame|exame (foi|ja foi|já foi) (feito|realizad)|(ja|já) (esta|está) pront[ao]/i;
+  const PDF_GRANDE = 2.5 * 1024 * 1024; // orçamento do gerador tem ~680KB; laudo com imagens passa fácil de 2,5MB
+  const tamanhoPdf = p => { try { return p && p.media_path ? fs.statSync(path.join(MEDIA_DIR, p.media_path)).size : 0; } catch { return 0; } };
   const ehLaudoLegado = c => {
     const p = ultimoPdf.get(c.id);
-    if (!p || p.texto !== '[document]') return false;
+    if (!p || p.texto !== '[document]') return false;   // PDF novo já tem nome e passou pelo filtro
     const ref = c.orcamento_enviado_at || c.created_at || '';
-    if (agendadoAntes.get(c.id, ref, ref)) return true;
-    return falaLaudoDepois.all(c.id, ref).some(r => RE_LAUDO.test(String(r.texto || '')));
+    if (agendadoAntes.get(c.id, ref, ref)) return 'exame agendado antes do PDF';
+    if (falaLaudoDepois.all(c.id, ref).some(r => RE_LAUDO.test(String(r.texto || '')))) return 'fala em laudo depois do PDF';
+    if (posExameAntes.all(c.id, ref, ref).some(r => RE_POS_EXAME.test(String(r.texto || '')))) return 'pós-exame antes do PDF';
+    if (tamanhoPdf(p) > PDF_GRANDE) return 'PDF grande (laudo com imagens)';
+    return false;
   };
 
   const encerrados = [];
@@ -212,7 +224,7 @@ function encerrarPerdidos(db) {
       if (porLuto || porDesist || porLaudo) {
         finalizar.run(c.id);
         logar.run(c.id);
-        encerrados.push({ id: c.id, nome: c.nome, telefone: c.telefone, motivo: porLuto ? 'luto' : porDesist ? 'desistiu' : 'laudo (exame já feito)' });
+        encerrados.push({ id: c.id, nome: c.nome, telefone: c.telefone, motivo: porLuto ? 'luto' : porDesist ? 'desistiu' : 'exame já feito: ' + porLaudo });
       }
     }
   })();
@@ -263,11 +275,14 @@ function decidir(contato, ultimaMsg, agora = new Date()) {
   const alvo2 = new Date(alvo.getTime() + REGRAS.horasSegundaTentativa * 3600000);
   const nivel = agora >= alvo2 ? 3 : 2;
   const realMin = Math.floor((agora - ref) / 60000); // tempo real, pra leitura
+  // Se o time já mandou o questionário pré-anestésico, o orçamento foi aceito:
+  // o que falta é o cliente mandar os exames / escolher a data.
+  const base = contato.preAnest ? 'aceitou, falta pré-anestésicos/data' : 'orçamento sem resposta';
   return {
     nivel,
     motivo: nivel === 3
-      ? `sem resposta há ${humano(realMin)} — segunda tentativa`
-      : `orçamento sem resposta há ${humano(realMin)}`,
+      ? `${base} há ${humano(realMin)} — segunda tentativa`
+      : `${base} há ${humano(realMin)}`,
     desde: alvo,
     ignoradoPor: '',
   };
@@ -291,6 +306,7 @@ function avaliar(db, agora = new Date()) {
     WHERE contato_id = ? AND NOT (direcao = 'out' AND texto LIKE ?)
     ORDER BY id DESC LIMIT 1`);
   const athenaLike = '%' + ATHENA_MARCA + '%';
+  const temPreAnest = db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at >= ? AND (LOWER(texto) LIKE '%pré-anestésico%' OR LOWER(texto) LIKE '%pre-anestesico%' OR LOWER(texto) LIKE '%pré anestésico%' OR LOWER(texto) LIKE '%pre anestesico%') LIMIT 1");
   const condLuto = PALAVRAS_LUTO.map(() => "LOWER(texto) LIKE ?").join(" OR ");
   const temLuto = db.prepare(`SELECT 1 FROM mensagens WHERE contato_id = ? AND (${condLuto}) LIMIT 1`);
   const argsLuto = PALAVRAS_LUTO.map(p => `%${p}%`);
@@ -301,6 +317,7 @@ function avaliar(db, agora = new Date()) {
   for (const c of alvos) {
     const m = ultimaMsg.get(c.id, athenaLike);
     c.luto = !!temLuto.get(c.id, ...argsLuto);
+    c.preAnest = !!temPreAnest.get(c.id, c.orcamento_enviado_at || '');
     let { nivel, motivo, desde } = decidir(c, m, agora);
     // "ok 123" pela recepção: silencia por um tempo (já ligaram, já resolveram por fora).
     if (nivel > 0 && c.followup_snooze_ate && dt(c.followup_snooze_ate) && agora < dt(c.followup_snooze_ate)) { nivel = 0; motivo = ''; desde = null; }
