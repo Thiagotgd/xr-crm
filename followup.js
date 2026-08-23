@@ -16,6 +16,7 @@ const REGRAS = {
   minutosClienteEsperando: 30,   // 🔴 cliente falou por último e ninguém respondeu
   horasSemResposta: 12,          // 🟡 mandamos e o cliente sumiu
   horasSegundaTentativa: 48,     // ⚪ segunda tentativa depois do 🟡
+  diasArquivarSegundaTentativa: 5, // 5 dias em ⚪ sem resposta → arquiva (Finalizado "sumiu"). Decisão do Thiago 23/08.
 
   // Nada anterior a esta data é cobrado. O histórico velho fica visível no CRM,
   // mas em silêncio: orçamento de meses atrás pode ser paciente que já morreu.
@@ -362,6 +363,10 @@ function avaliar(db, agora = new Date()) {
   const temLuto = db.prepare(`SELECT 1 FROM mensagens WHERE contato_id = ? AND (${condLuto}) LIMIT 1`);
   const argsLuto = PALAVRAS_LUTO.map(p => `%${p}%`);
   const gravar = db.prepare("UPDATE contatos SET followup_nivel = ?, followup_desde = ?, followup_motivo = ? WHERE id = ?");
+  // Arquivamento: ⚪ há N dias (duas cobranças feitas, cliente mudo) → Finalizado. Se ele voltar a falar, reabre sozinho.
+  const arquivar = db.prepare("UPDATE contatos SET etapa = 'finalizado', followup_nivel = 0, followup_desde = '', followup_motivo = '', updated_at = datetime('now','localtime') WHERE id = ?");
+  const logArquivo = db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, 'orcamento', 'finalizado')");
+  const msArquivar = (REGRAS.horasSegundaTentativa * 3600 + REGRAS.diasArquivarSegundaTentativa * 86400) * 1000; // desde o início do 🟡
 
   const mudancas = [];
 
@@ -369,6 +374,12 @@ function avaliar(db, agora = new Date()) {
     const m = ultimaMsg.get(c.id, athenaLike, saudacaoLike);
     c.luto = !!temLuto.get(c.id, ...argsLuto);
     let { nivel, motivo, desde } = decidir(c, m, agora);
+    if (nivel === 3 && desde && (agora - desde) >= msArquivar) {
+      arquivar.run(c.id); logArquivo.run(c.id);
+      registrarEvento(db, c.id, 'encerrado', `arquivado: sem resposta após 2 cobranças (${REGRAS.diasArquivarSegundaTentativa}d em ⚪)`);
+      console.log(`[CRM] Follow-up: ${c.nome || c.telefone} arquivado (sem resposta após 2 cobranças)`);
+      continue;
+    }
     // "ok 123" pela recepção: silencia por um tempo (já ligaram, já resolveram por fora).
     if (nivel > 0 && c.followup_snooze_ate && dt(c.followup_snooze_ate) && agora < dt(c.followup_snooze_ate)) { nivel = 0; motivo = ''; desde = null; }
 
