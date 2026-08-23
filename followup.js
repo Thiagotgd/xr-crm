@@ -75,6 +75,9 @@ function ehFechamento(texto, tamanho) {
 // com ela continua "esperando resposta" e vira 🔴 na primeira meia hora útil.
 // Toda mensagem dela começa com este marcador (athena-bot/server.js → enviar()).
 const ATHENA_MARCA = 'Assistente virtual Athena';
+// Saudação automática do WhatsApp Business da recepção ("XR Diagnóstico agradece seu
+// contato. Como podemos ajudar?") — também sai como 'out' e também NÃO é resposta humana.
+const SAUDACAO_MARCA = 'agradece seu contato';
 
 // ─── Horário útil ──────────────────────────────────────────────────────────────
 const ehDiaUtil = d => d.getDay() >= 1 && d.getDay() <= 6;
@@ -291,9 +294,9 @@ function decidir(contato, ultimaMsg, agora = new Date()) {
   const alvo2 = new Date(alvo.getTime() + REGRAS.horasSegundaTentativa * 3600000);
   const nivel = agora >= alvo2 ? 3 : 2;
   const realMin = Math.floor((agora - ref) / 60000); // tempo real, pra leitura
-  // Se o time já mandou o questionário pré-anestésico, o orçamento foi aceito:
-  // o que falta é o cliente mandar os exames / escolher a data.
-  const rotulo = contato.preAnest ? 'aceitou, falta pré-anestésicos/data' : 'orçamento sem resposta';
+  // (Auditado 23/08: o questionário pré-anestésico vai junto do PDF em 97% dos casos —
+  // é template, não sinal de aceite. O rótulo "aceitou" foi removido por isso.)
+  const rotulo = 'orçamento sem resposta';
   return {
     nivel,
     motivo: nivel === 3
@@ -319,10 +322,10 @@ function avaliar(db, agora = new Date()) {
   // Última mensagem HUMANA da conversa: ignora o que a Athena mandou.
   const ultimaMsg = db.prepare(`
     SELECT direcao, created_at, tipo, LENGTH(texto) AS tamanho, SUBSTR(texto, 1, 200) AS texto FROM mensagens
-    WHERE contato_id = ? AND NOT (direcao = 'out' AND texto LIKE ?)
+    WHERE contato_id = ? AND NOT (direcao = 'out' AND (texto LIKE ? OR texto LIKE ?))
     ORDER BY id DESC LIMIT 1`);
   const athenaLike = '%' + ATHENA_MARCA + '%';
-  const temPreAnest = db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at >= ? AND (LOWER(texto) LIKE '%pré-anestésico%' OR LOWER(texto) LIKE '%pre-anestesico%' OR LOWER(texto) LIKE '%pré anestésico%' OR LOWER(texto) LIKE '%pre anestesico%') LIMIT 1");
+  const saudacaoLike = '%' + SAUDACAO_MARCA + '%';
   const condLuto = PALAVRAS_LUTO.map(() => "LOWER(texto) LIKE ?").join(" OR ");
   const temLuto = db.prepare(`SELECT 1 FROM mensagens WHERE contato_id = ? AND (${condLuto}) LIMIT 1`);
   const argsLuto = PALAVRAS_LUTO.map(p => `%${p}%`);
@@ -331,9 +334,8 @@ function avaliar(db, agora = new Date()) {
   const mudancas = [];
 
   for (const c of alvos) {
-    const m = ultimaMsg.get(c.id, athenaLike);
+    const m = ultimaMsg.get(c.id, athenaLike, saudacaoLike);
     c.luto = !!temLuto.get(c.id, ...argsLuto);
-    c.preAnest = !!temPreAnest.get(c.id, c.orcamento_enviado_at || '');
     let { nivel, motivo, desde } = decidir(c, m, agora);
     // "ok 123" pela recepção: silencia por um tempo (já ligaram, já resolveram por fora).
     if (nivel > 0 && c.followup_snooze_ate && dt(c.followup_snooze_ate) && agora < dt(c.followup_snooze_ate)) { nivel = 0; motivo = ''; desde = null; }
@@ -418,5 +420,5 @@ module.exports = {
   REGRAS, ABERTURA, FECHAMENTO,
   emHorarioUtil, proximaAbertura, quandoAlertar, minutosUteisEntre,
   initFollowup, corrigirLaudos, encerrarPerdidos, decidir, avaliar, iniciarVigia,
-  PALAVRAS_LUTO, PALAVRAS_DESISTENCIA, ATHENA_MARCA, ehFechamento, registrarEvento,
+  PALAVRAS_LUTO, PALAVRAS_DESISTENCIA, ATHENA_MARCA, SAUDACAO_MARCA, ehFechamento, registrarEvento,
 };

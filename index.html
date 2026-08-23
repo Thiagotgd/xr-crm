@@ -947,7 +947,7 @@ async function loadMetricasVendas(dias) {
 function renderMetricasVendas(r) {
   const f = r.funil, rs = r.resposta, fu = r.followup;
   const fmtMin = m => m == null ? '—' : m < 60 ? m + ' min' : (m / 60).toFixed(1).replace('.0', '') + ' h';
-  document.getElementById('mtSub').textContent = 'de ' + r.periodo.desde.split('-').reverse().join('/') + ' a ' + r.periodo.ate.split('-').reverse().join('/') + ' · orçamentos que o motor reconheceu como laudo ficam fora da conta';
+  document.getElementById('mtSub').textContent = 'de ' + r.periodo.desde.split('-').reverse().join('/') + ' a ' + r.periodo.ate.split('-').reverse().join('/') + ' · "agendou" = saiu a mensagem "Exame agendado" (ou a recepção marcou) · laudos reconhecidos como tal ficam fora · saudação automática e Athena não contam como resposta';
 
   // KPIs
   const tile = (v, l, s) => '<div class="mt-tile"><div class="mt-v">' + v + '</div><div class="mt-l">' + l + '</div>' + (s ? '<div class="mt-s">' + s + '</div>' : '') + '</div>';
@@ -961,7 +961,7 @@ function renderMetricasVendas(r) {
   '</div>';
 
   // Funil (uma série, cor única; largura = proporção)
-  const etapas = [['Orçamentos enviados', f.orcados], ['Aceitaram (pré-anestésicos)', f.aceitos], ['Agendaram', f.agendados]];
+  const etapas = [['Orçamentos enviados', f.orcados], ['Cliente respondeu depois do orçamento', f.responderam], ['Agendaram (mensagem "Exame agendado")', f.agendados]];
   const maxF = Math.max(1, f.orcados);
   const funil = '<div class="mt-card"><div class="mt-h">Funil do período</div>' +
     etapas.map(([l, v], i) => '<div class="mt-row"><div class="mt-lbl">' + l + '</div><div class="mt-bar-wrap"><div class="mt-bar" style="width:' + (100 * v / maxF) + '%" title="' + l + ': ' + v + '"></div></div><div class="mt-val">' + v + (i ? ' <small>(' + Math.round(100 * v / maxF) + '%)</small>' : '') + '</div></div>').join('') +
@@ -969,7 +969,7 @@ function renderMetricasVendas(r) {
   '</div>';
 
   // Modalidade (tabela com barra de taxa)
-  const mods = '<div class="mt-card"><div class="mt-h">Por modalidade' + (r.modalidades_estimadas ? ' <small>(' + r.modalidades_estimadas + ' estimadas pelo texto — o nome do PDF passa a valer daqui pra frente)</small>' : '') + '</div>' +
+  const mods = '<div class="mt-card"><div class="mt-h">Por modalidade <small>(pelo nome do PDF do orçamento — registrado desde 21/08/2026; cresce com o tempo)</small></div>' +
     '<table class="mt-table"><thead><tr><th>Modalidade</th><th>Orçados</th><th>Agendados</th><th>Perdidos</th><th>Em aberto</th><th>Fechamento</th></tr></thead><tbody>' +
     (r.modalidades.length ? r.modalidades.map(m => '<tr><td><b>' + esc(m.mod) + '</b></td><td>' + m.orcados + '</td><td>' + m.agendados + '</td><td>' + m.perdidos + '</td><td>' + m.abertos + '</td><td><div class="mt-mini"><div class="mt-mini-bar" style="width:' + m.taxa + '%"></div></div> ' + m.taxa + '%</td></tr>').join('') : '<tr><td colspan="6" style="color:var(--text-muted)">sem dados</td></tr>') +
     '</tbody></table></div>';

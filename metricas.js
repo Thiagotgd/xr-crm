@@ -19,29 +19,42 @@ function calcular(db, dias) {
   const desde = `${sqlDate(desdeD)} 00:00:00`;
 
   // ── Cohorte ────────────────────────────────────────────────────────────────
-  const laudoIds = new Set(db.prepare("SELECT DISTINCT contato_id FROM followup_eventos WHERE tipo = 'encerrado' AND valor LIKE 'exame já feito%'").all().map(r => r.contato_id));
+  // Fora da conta: quem o motor reconheceu como laudo (exame já feito) e quem foi
+  // devolvido de Orçamento para Agendado na correção em lote de 21/08/2026 16:10
+  // (PDF era laudo). Sem isso, "agendados" infla com 64 correções que não são venda.
+  const laudoIds = new Set([
+    ...db.prepare("SELECT DISTINCT contato_id FROM followup_eventos WHERE tipo = 'encerrado' AND valor LIKE 'exame já feito%'").all().map(r => r.contato_id),
+    ...db.prepare("SELECT DISTINCT contato_id FROM etapa_historico WHERE etapa_de = 'orcamento' AND etapa_para = 'agendado' AND created_at BETWEEN '2026-08-21 16:10:00' AND '2026-08-21 16:11:00'").all().map(r => r.contato_id),
+  ]);
   const internos = ['553182043117', '553183283626', '553183746380', '553184505939'];
   const cohorte = db.prepare(`
     SELECT id, nome, telefone, etapa, orcamento_enviado_at AS orc, orcamento_modalidade AS mod
     FROM contatos WHERE orcamento_enviado_at >= ?
   `).all(desde).filter(c => !laudoIds.has(c.id) && !internos.includes(String(c.telefone).replace(/\D/g, '')));
 
-  const histAgendadoDepois = db.prepare("SELECT MIN(created_at) AS t FROM etapa_historico WHERE contato_id = ? AND etapa_para = 'agendado' AND created_at >= ?");
-  const temPreAnest = db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at >= ? AND (LOWER(texto) LIKE '%pré-anestésico%' OR LOWER(texto) LIKE '%pre-anestesico%' OR LOWER(texto) LIKE '%pré anestésico%' OR LOWER(texto) LIKE '%pre anestesico%') LIMIT 1");
-  const textoPerto = db.prepare("SELECT LOWER(texto) AS t FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at BETWEEN datetime(?, '-2 days') AND datetime(?, '+2 days')");
+  // "Fechou" = a mensagem de agendamento saiu (mesmas palavras que movem pra Agendado no webhook)
+  // OU a recepção marcou pela tela/WhatsApp. O etapa_historico sozinho mistura arrasto manual e correções.
+  const msgAgendado = db.prepare(`SELECT MIN(created_at) AS t FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at >= ?
+    AND texto NOT LIKE '%${followup.ATHENA_MARCA}%'
+    AND (LOWER(texto) LIKE '%exame agendado%' OR LOWER(texto) LIKE '%exame marcado%' OR LOWER(texto) LIKE '%agendamos%'
+      OR LOWER(texto) LIKE '%agendado para%' OR LOWER(texto) LIKE '%agendada para%' OR LOWER(texto) LIKE '%marcado para%'
+      OR LOWER(texto) LIKE '%marcada para%' OR LOWER(texto) LIKE '%confirmado para%' OR LOWER(texto) LIKE '%confirmada para%')`);
+  const cmdMarcou = db.prepare("SELECT MIN(created_at) AS t FROM followup_eventos WHERE contato_id = ? AND tipo = 'comando' AND valor IN ('marcou','fechou','agendou') AND created_at >= ?");
+  const histAgendadoDepois = { get: (id, orc) => { const a = msgAgendado.get(id, orc), b = cmdMarcou.get(id, orc); const ts = [a && a.t, b && b.t].filter(Boolean).sort(); return { t: ts[0] || null }; } };
+  // "Respondeu": o cliente mandou qualquer mensagem depois do orçamento (engajou).
+  // (O questionário pré-anestésico foi auditado: vai junto do PDF em 97% dos casos — é template, não aceite.)
+  const clienteRespondeu = db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'in' AND created_at > ? LIMIT 1");
   const motivoEnc = db.prepare("SELECT valor FROM followup_eventos WHERE contato_id = ? AND tipo IN ('encerrado','comando') ORDER BY id DESC LIMIT 1");
 
-  let aceitos = 0, agendados = 0, perdidos = 0, abertos = 0;
+  let responderam = 0, agendados = 0, perdidos = 0, abertos = 0;
   const diasFechar = [];
   const porMod = {};
   const motivos = {};
-  let modEstimados = 0;
 
   for (const c of cohorte) {
     const ag = histAgendadoDepois.get(c.id, c.orc);
     const fechou = !!(ag && ag.t);
-    const aceitou = fechou || !!temPreAnest.get(c.id, c.orc);
-    if (aceitou) aceitos++;
+    if (fechou || clienteRespondeu.get(c.id, c.orc)) responderam++;
 
     let status;
     if (fechou) {
@@ -56,15 +69,9 @@ function calcular(db, dias) {
       motivos[chave] = (motivos[chave] || 0) + 1;
     } else { status = 'aberto'; abertos++; }
 
-    // Modalidade: do nome do PDF; se vazio, estima pelo que o time escreveu perto do orçamento.
-    let mod = c.mod || '';
-    if (!mod) {
-      const ts = textoPerto.all(c.id, c.orc, c.orc).map(r => r.t).join(' ');
-      const tc = /tomograf/.test(ts), rm = /resson/.test(ts);
-      mod = tc && rm ? 'TC+RM' : tc ? 'TC' : rm ? 'RM' : '';
-      if (mod) modEstimados++;
-    }
-    const k = mod || 'não identificada';
+    // Modalidade: SÓ do nome do PDF (desde 21/08/2026). A estimativa por texto foi
+    // auditada e errava 6 em 10 (o template de horário cita TC e RM) — removida.
+    const k = c.mod || 'sem registro (PDF anterior a 21/08)';
     porMod[k] = porMod[k] || { orcados: 0, agendados: 0, perdidos: 0, abertos: 0 };
     porMod[k].orcados++;
     porMod[k][status === 'agendado' ? 'agendados' : status === 'perdido' ? 'perdidos' : 'abertos']++;
@@ -75,13 +82,16 @@ function calcular(db, dias) {
     .sort((a, b) => b.orcados - a.orcados);
 
   // ── Tempo de resposta ao cliente (minutos úteis até a 1ª resposta humana) ──
-  const msgs = db.prepare("SELECT contato_id, direcao, created_at, SUBSTR(texto,1,40) AS t FROM mensagens WHERE created_at >= ? ORDER BY contato_id, id").all(desde);
+  // Só conversas com clientes (fora números internos). Athena e a saudação automática
+  // do WhatsApp Business não contam como resposta humana (auditado: 10% das "respostas" eram a saudação).
+  const msgs = db.prepare("SELECT m.contato_id, m.direcao, m.created_at, SUBSTR(m.texto,1,60) AS t, c.telefone FROM mensagens m JOIN contatos c ON c.id = m.contato_id WHERE m.created_at >= ? ORDER BY m.contato_id, m.id").all(desde)
+    .filter(m => !internos.includes(String(m.telefone).replace(/\D/g, '')));
   const esperas = [];
   let aguardandoDesde = null, ultimoContato = null;
   for (const m of msgs) {
     if (m.contato_id !== ultimoContato) { ultimoContato = m.contato_id; aguardandoDesde = null; }
     if (m.direcao === 'in') { if (!aguardandoDesde) aguardandoDesde = dt(m.created_at); }
-    else if (aguardandoDesde && !String(m.t || '').includes(followup.ATHENA_MARCA)) {
+    else if (aguardandoDesde && !String(m.t || '').includes(followup.ATHENA_MARCA) && !String(m.t || '').includes(followup.SAUDACAO_MARCA)) {
       const fim = dt(m.created_at);
       if (fim) esperas.push(followup.minutosUteisEntre(aguardandoDesde, fim));
       aguardandoDesde = null;
@@ -111,13 +121,13 @@ function calcular(db, dias) {
   return {
     periodo: { dias, desde: desde.slice(0, 10), ate: sqlDate(agora) },
     funil: {
-      orcados: cohorte.length, aceitos, agendados, perdidos, abertos,
+      orcados: cohorte.length, responderam, agendados, perdidos, abertos,
       taxa_fechamento: pct(agendados, cohorte.length),
       taxa_decididos: pct(agendados, agendados + perdidos),
-      taxa_aceite: pct(aceitos, cohorte.length),
+      taxa_resposta: pct(responderam, cohorte.length),
     },
     tempo_fechar_dias: { mediana: diasFechar.length ? Math.round(mediana(diasFechar) * 10) / 10 : null, amostras: diasFechar.length },
-    modalidades, modalidades_estimadas: modEstimados,
+    modalidades, modalidades_estimadas: 0,
     resposta,
     followup: { cobrados: cobrados.length, recuperados, taxa_recuperacao: pct(recuperados, cobrados.length), urgentes_no_periodo: urgentesResolvidos },
     motivos_perda: Object.entries(motivos).map(([motivo, n]) => ({ motivo, n })).sort((a, b) => b.n - a.n),
