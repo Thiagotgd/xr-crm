@@ -580,9 +580,9 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
       <div class="fu-sub" id="mtSub">carregando…</div>
     </div>
     <div class="mt-periodo" id="mtPeriodo">
-      <button class="fu-btn" data-d="7" onclick="loadMetricas(7)">7 dias</button>
-      <button class="fu-btn primary" data-d="30" onclick="loadMetricas(30)">30 dias</button>
-      <button class="fu-btn" data-d="90" onclick="loadMetricas(90)">90 dias</button>
+      <button class="fu-btn" data-d="7" onclick="loadMetricasVendas(7)">7 dias</button>
+      <button class="fu-btn primary" data-d="30" onclick="loadMetricasVendas(30)">30 dias</button>
+      <button class="fu-btn" data-d="90" onclick="loadMetricasVendas(90)">90 dias</button>
     </div>
   </div>
   <div id="mtBody"></div>
@@ -914,10 +914,11 @@ function renderKanban() {
 }
 
 // ─── Aba Métricas (visão do gestor) ──────────────────────────────────────────
-let mtDias = 30;
-async function loadMetricas(dias) {
-  mtDias = dias || mtDias;
-  document.querySelectorAll('#mtPeriodo .fu-btn').forEach(b => b.classList.toggle('primary', Number(b.dataset.d) === mtDias));
+// (nomes com sufixo Vendas: o CRM já tinha um loadMetricas antigo mais abaixo, e o último vence)
+let mvDias = 30;
+async function loadMetricasVendas(dias) {
+  mvDias = dias || mvDias;
+  document.querySelectorAll('#mtPeriodo .fu-btn').forEach(b => b.classList.toggle('primary', Number(b.dataset.d) === mvDias));
   const sub = document.getElementById('mtSub');
   try {
     const t0 = Date.now();
@@ -926,14 +927,14 @@ async function loadMetricas(dias) {
     const timer = setTimeout(() => ctrl.abort(), 20000);
     let r;
     try {
-      const resp = await fetch('/api/metricas/vendas?dias=' + mtDias, { signal: ctrl.signal, headers: { 'Accept': 'application/json' } });
+      const resp = await fetch('/api/metricas/vendas?dias=' + mvDias, { signal: ctrl.signal, headers: { 'Accept': 'application/json' } });
       sub.textContent = 'calculando… (2/3 resposta HTTP ' + resp.status + ' em ' + (Date.now() - t0) + ' ms)';
       const txt = await resp.text();
       try { r = JSON.parse(txt); } catch (ej) { throw new Error('resposta não é JSON (HTTP ' + resp.status + '): ' + txt.slice(0, 80)); }
       if (!resp.ok) throw new Error(r.error || ('HTTP ' + resp.status));
     } finally { clearTimeout(timer); }
     sub.textContent = 'calculando… (3/3 desenhando)';
-    try { renderMetricas(r); }
+    try { renderMetricasVendas(r); }
     catch (e2) { sub.textContent = 'Erro ao desenhar: ' + e2.message; console.error('[metricas] render', e2); }
   } catch(e) {
     sub.textContent = 'Erro ao buscar: ' + e.message;
@@ -942,7 +943,7 @@ async function loadMetricas(dias) {
   }
 }
 
-function renderMetricas(r) {
+function renderMetricasVendas(r) {
   const f = r.funil, rs = r.resposta, fu = r.followup;
   const fmtMin = m => m == null ? '—' : m < 60 ? m + ' min' : (m / 60).toFixed(1).replace('.0', '') + ' h';
   document.getElementById('mtSub').textContent = 'de ' + r.periodo.desde.split('-').reverse().join('/') + ' a ' + r.periodo.ate.split('-').reverse().join('/') + ' · orçamentos que o motor reconheceu como laudo ficam fora da conta';
@@ -1626,7 +1627,7 @@ function switchTab(tab, abaId) {
   document.getElementById('tabCustom').style.display = tab === 'custom' ? '' : 'none';
   if (tab === 'conversas') loadConversas();
   if (tab === 'followup') loadFollowup();
-  if (tab === 'metricas') loadMetricas(mtDias);
+  if (tab === 'metricas') loadMetricasVendas(mvDias);
   if (tab === 'kanban') loadBoard();
   if (tab === 'grupos') loadGrupos();
   if (tab === 'custom') { currentCustomAba = abaId; loadCustomTab(abaId); }
