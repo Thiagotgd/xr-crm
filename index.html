@@ -927,7 +927,8 @@ async function loadMetricasVendas(dias) {
     const timer = setTimeout(() => ctrl.abort(), 20000);
     let r;
     try {
-      const resp = await fetch('/api/metricas/vendas?dias=' + mvDias, { signal: ctrl.signal, headers: { 'Accept': 'application/json' } });
+      // URL sem "metric" no nome: bloqueadores de anúncio/privacidade barram esse padrão.
+      const resp = await fetch('/api/painel/vendas?dias=' + mvDias, { signal: ctrl.signal, cache: 'no-store' });
       sub.textContent = 'calculando… (2/3 resposta HTTP ' + resp.status + ' em ' + (Date.now() - t0) + ' ms)';
       const txt = await resp.text();
       try { r = JSON.parse(txt); } catch (ej) { throw new Error('resposta não é JSON (HTTP ' + resp.status + '): ' + txt.slice(0, 80)); }

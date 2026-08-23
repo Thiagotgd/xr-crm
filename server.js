@@ -1354,7 +1354,8 @@ async function handleRequest(req, res) {
 
   // ─── API: Métricas de vendas (visão do gestor) ─────────────────────────────
   // (/api/metricas sem sufixo já existe mais acima — é a tela antiga de etapas)
-  if (method === 'GET' && pathname === '/api/metricas/vendas') {
+  // Dois caminhos pro mesmo dado: bloqueadores de anúncio costumam barrar URLs com "metric".
+  if (method === 'GET' && (pathname === '/api/metricas/vendas' || pathname === '/api/painel/vendas')) {
     const dias = Number(urlObj.searchParams.get('dias')) || 30;
     const t0 = Date.now();
     console.log(`[METRICAS] pedido dias=${dias} de ${req.headers['x-forwarded-for'] || req.socket.remoteAddress} ua=${String(req.headers['user-agent'] || '').slice(0, 40)}`);
