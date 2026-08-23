@@ -83,7 +83,9 @@ const SAUDACAO_MARCA = 'agradece seu contato';
 // "confirmado", "anotado", "combinado" sozinhos na mensagem (≤ 40 chars).
 // Caso real: vet pede "reservar consultório dia 26/8 9h", time responde "marcado",
 // cliente "mt obg" — estava virando 🟡 "orçamento sem resposta".
-const RE_CONFIRMACAO_CURTA = /^\W*(ok[,.!\s]*|certo[,.!\s]*|pronto[,.!\s]*)?(marcad[oa]|agendad[oa]|reservad[oa]|confirmad[oa]|anotad[oa]|combinado|fechado)[\s!.👍✅]*$/i;
+// Só palavras que significam AGENDAMENTO feito. "Combinado"/"anotado"/"fechado" ficaram
+// de fora: o time usa "Combinado" como "ok" depois de "vou pensar e te retorno" (auditado: 10 falsos).
+const RE_CONFIRMACAO_CURTA = /^\W*(ok[,.!\s]*|certo[,.!\s]*|pronto[,.!\s]*)?(marcad[oa]|agendad[oa]|reservad[oa]|confirmad[oa])[\s!.👍✅]*$/i;
 const ehConfirmacaoCurta = t => { const s = String(t || '').trim(); return s.length <= 40 && RE_CONFIRMACAO_CURTA.test(s); };
 
 // ─── Horário útil ──────────────────────────────────────────────────────────────
