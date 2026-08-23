@@ -79,6 +79,13 @@ const ATHENA_MARCA = 'Assistente virtual Athena';
 // contato. Como podemos ajudar?") — também sai como 'out' e também NÃO é resposta humana.
 const SAUDACAO_MARCA = 'agradece seu contato';
 
+// Confirmação curta do time = fechou. "marcado", "agendado!", "ok, reservado",
+// "confirmado", "anotado", "combinado" sozinhos na mensagem (≤ 40 chars).
+// Caso real: vet pede "reservar consultório dia 26/8 9h", time responde "marcado",
+// cliente "mt obg" — estava virando 🟡 "orçamento sem resposta".
+const RE_CONFIRMACAO_CURTA = /^\W*(ok[,.!\s]*|certo[,.!\s]*|pronto[,.!\s]*)?(marcad[oa]|agendad[oa]|reservad[oa]|confirmad[oa]|anotad[oa]|combinado|fechado)[\s!.👍✅]*$/i;
+const ehConfirmacaoCurta = t => { const s = String(t || '').trim(); return s.length <= 40 && RE_CONFIRMACAO_CURTA.test(s); };
+
 // ─── Horário útil ──────────────────────────────────────────────────────────────
 const ehDiaUtil = d => d.getDay() >= 1 && d.getDay() <= 6;
 const emHorarioUtil = d => ehDiaUtil(d) && d.getHours() >= ABERTURA && d.getHours() < FECHAMENTO;
@@ -252,6 +259,29 @@ function encerrarPerdidos(db) {
   return encerrados;
 }
 
+// ─── Fechamento por confirmação curta do time ──────────────────────────────────
+// Quem está em Orçamento e recebeu do time, depois do orçamento, um "marcado"/
+// "agendado"/"reservado" seco → vai pra Agendado (saiu da fila). Roda no vigia.
+function fecharConfirmados(db) {
+  const alvos = db.prepare("SELECT id, nome, telefone, etapa, orcamento_enviado_at, created_at FROM contatos WHERE etapa = 'orcamento'").all();
+  const outsDepois = db.prepare("SELECT texto, created_at FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at >= ? AND LENGTH(texto) <= 40 ORDER BY id");
+  const mover = db.prepare("UPDATE contatos SET etapa = 'agendado', followup_nivel = 0, followup_desde = '', followup_motivo = '', updated_at = datetime('now','localtime') WHERE id = ?");
+  const logar = db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, 'orcamento', 'agendado')");
+  const fechados = [];
+  db.transaction(() => {
+    for (const c of alvos) {
+      const ref = c.orcamento_enviado_at || c.created_at || '';
+      const hit = outsDepois.all(c.id, ref).find(m => ehConfirmacaoCurta(m.texto));
+      if (!hit) continue;
+      mover.run(c.id); logar.run(c.id);
+      registrarEvento(db, c.id, 'encerrado', 'agendado (confirmação curta: "' + String(hit.texto).trim().slice(0, 20) + '")');
+      fechados.push({ id: c.id, nome: c.nome, telefone: c.telefone, texto: hit.texto });
+    }
+  })();
+  for (const f of fechados) console.log(`[CRM] Follow-up: ${f.nome || f.telefone} → Agendado (time confirmou: "${String(f.texto).trim().slice(0, 20)}")`);
+  return fechados;
+}
+
 // ─── Decisão ───────────────────────────────────────────────────────────────────
 // Função pura: dado o contato e a última mensagem da conversa, qual é o nível.
 // Separada do banco de propósito — é isso que permite simular em cima do
@@ -365,6 +395,7 @@ function iniciarVigia(db, opts = {}) {
   const rodada = () => {
     try {
       encerrarPerdidos(db);
+      fecharConfirmados(db);
       const mudancas = avaliar(db);
       const subiram = mudancas.filter(m => m.para > m.de);
       const icone = n => n === 1 ? '🔴' : n === 2 ? '🟡' : '⚪';
@@ -419,6 +450,6 @@ module.exports = {
   executarComando,
   REGRAS, ABERTURA, FECHAMENTO,
   emHorarioUtil, proximaAbertura, quandoAlertar, minutosUteisEntre,
-  initFollowup, corrigirLaudos, encerrarPerdidos, decidir, avaliar, iniciarVigia,
+  initFollowup, corrigirLaudos, encerrarPerdidos, fecharConfirmados, ehConfirmacaoCurta, decidir, avaliar, iniciarVigia,
   PALAVRAS_LUTO, PALAVRAS_DESISTENCIA, ATHENA_MARCA, SAUDACAO_MARCA, ehFechamento, registrarEvento,
 };

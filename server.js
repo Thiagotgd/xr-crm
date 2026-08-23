@@ -897,7 +897,8 @@ async function handleRequest(req, res) {
     if (isFromMe && tipo === 'text' && texto && !texto.includes(followup.ATHENA_MARCA)) {
       const lower = texto.toLowerCase();
       const agendaKeywords = ['agendado', 'agendamos', 'agendada', 'confirmado para', 'confirmada para', 'marcado para', 'marcada para', 'exame agendado', 'exame marcado'];
-      const hasAgenda = agendaKeywords.some(kw => lower.includes(kw));
+      // "marcado" / "reservado" / "confirmado" secos também fecham (confirmação curta do time).
+      const hasAgenda = agendaKeywords.some(kw => lower.includes(kw)) || followup.ehConfirmacaoCurta(texto);
       if (hasAgenda) {
         const currentEtapa = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(contato.id);
         const etapasAntes = ['novo', 'orcamento'];

@@ -39,8 +39,11 @@ function calcular(db, dias) {
     AND (LOWER(texto) LIKE '%exame agendado%' OR LOWER(texto) LIKE '%exame marcado%' OR LOWER(texto) LIKE '%agendamos%'
       OR LOWER(texto) LIKE '%agendado para%' OR LOWER(texto) LIKE '%agendada para%' OR LOWER(texto) LIKE '%marcado para%'
       OR LOWER(texto) LIKE '%marcada para%' OR LOWER(texto) LIKE '%confirmado para%' OR LOWER(texto) LIKE '%confirmada para%')`);
-  const cmdMarcou = db.prepare("SELECT MIN(created_at) AS t FROM followup_eventos WHERE contato_id = ? AND tipo = 'comando' AND valor IN ('marcou','fechou','agendou') AND created_at >= ?");
-  const histAgendadoDepois = { get: (id, orc) => { const a = msgAgendado.get(id, orc), b = cmdMarcou.get(id, orc); const ts = [a && a.t, b && b.t].filter(Boolean).sort(); return { t: ts[0] || null }; } };
+  const cmdMarcou = db.prepare("SELECT MIN(created_at) AS t FROM followup_eventos WHERE contato_id = ? AND created_at >= ? AND ((tipo = 'comando' AND valor IN ('marcou','fechou','agendou')) OR (tipo = 'encerrado' AND valor LIKE 'agendado (confirma%'))");
+  // Confirmação curta do time ("marcado", "reservado"…) depois do orçamento também é fechamento.
+  const outsCurtos = db.prepare("SELECT texto, created_at FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at >= ? AND LENGTH(texto) <= 40 ORDER BY id");
+  const confirmacaoCurta = (id, orc) => { const m = outsCurtos.all(id, orc).find(r => followup.ehConfirmacaoCurta(r.texto)); return m ? m.created_at : null; };
+  const histAgendadoDepois = { get: (id, orc) => { const a = msgAgendado.get(id, orc), b = cmdMarcou.get(id, orc), c = confirmacaoCurta(id, orc); const ts = [a && a.t, b && b.t, c].filter(Boolean).sort(); return { t: ts[0] || null }; } };
   // "Respondeu": o cliente mandou qualquer mensagem depois do orçamento (engajou).
   // (O questionário pré-anestésico foi auditado: vai junto do PDF em 97% dos casos — é template, não aceite.)
   const clienteRespondeu = db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'in' AND created_at > ? LIMIT 1");
