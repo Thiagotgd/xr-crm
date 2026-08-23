@@ -1356,8 +1356,13 @@ async function handleRequest(req, res) {
   // (/api/metricas sem sufixo já existe mais acima — é a tela antiga de etapas)
   if (method === 'GET' && pathname === '/api/metricas/vendas') {
     const dias = Number(urlObj.searchParams.get('dias')) || 30;
-    try { return sendJSON(res, 200, metricas.calcular(db, dias)); }
-    catch (e) { console.error('[CRM] metricas:', e.message); return sendJSON(res, 500, { error: e.message }); }
+    const t0 = Date.now();
+    console.log(`[METRICAS] pedido dias=${dias} de ${req.headers['x-forwarded-for'] || req.socket.remoteAddress} ua=${String(req.headers['user-agent'] || '').slice(0, 40)}`);
+    try {
+      const out = metricas.calcular(db, dias);
+      console.log(`[METRICAS] ok em ${Date.now() - t0}ms`);
+      return sendJSON(res, 200, out);
+    } catch (e) { console.error('[METRICAS] erro:', e.message); return sendJSON(res, 500, { error: e.message }); }
   }
 
   // ─── API: Follow-up — ações pela tela (mesmos comandos do WhatsApp) ────────
