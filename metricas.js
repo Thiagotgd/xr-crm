@@ -29,7 +29,7 @@ function calcular(db, dias) {
   const internos = ['553182043117', '553183283626', '553183746380', '553184505939'];
   const cohorte = db.prepare(`
     SELECT id, nome, telefone, etapa, orcamento_enviado_at AS orc, orcamento_modalidade AS mod
-    FROM contatos WHERE orcamento_enviado_at >= ?
+    FROM contatos WHERE orcamento_enviado_at >= ? AND COALESCE(followup_ignorar, 0) = 0
   `).all(desde).filter(c => !laudoIds.has(c.id) && !internos.includes(String(c.telefone).replace(/\D/g, '')));
 
   // "Fechou" = a mensagem de agendamento saiu (mesmas palavras que movem pra Agendado no webhook)

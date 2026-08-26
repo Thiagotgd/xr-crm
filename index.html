@@ -1054,6 +1054,7 @@ function renderFollowup(r) {
             '<button class="fu-btn good" onclick="fuAcao(' + c.id + ',\'marcou\',this)" title="Marcou o exame → Agendado">Marcou</button>' +
             '<button class="fu-btn bad" onclick="fuAcao(' + c.id + ',\'desistiu\',this)" title="Não vai fazer → sai da fila">Desistiu</button>' +
             '<button class="fu-btn" onclick="fuAcao(' + c.id + ',\'ok\',this)" title="Já resolvi por fora → silencia 24h">OK 24h</button>' +
+            '<button class="fu-btn" style="opacity:.75" onclick="fuAcao(' + c.id + ',\'ignorar\',this)" title="Laboratório, fornecedor, parceiro → nunca mais entra no follow-up">Ñ é cliente</button>' +
           '</div>' +
         '</div>';
       }).join('') : '<div class="fu-col-empty">nada aqui 👌</div>') +
@@ -1062,7 +1063,7 @@ function renderFollowup(r) {
 }
 
 async function fuAcao(id, cmd, btn) {
-  const rotulo = { marcou: 'MARCOU o exame (vai pra Agendado)', desistiu: 'DESISTIU (sai da fila)', ok: 'silenciar por 24h' }[cmd];
+  const rotulo = { marcou: 'MARCOU o exame (vai pra Agendado)', desistiu: 'DESISTIU (sai da fila)', ok: 'silenciar por 24h', ignorar: 'marcar como NÃO É CLIENTE (lab/fornecedor — sai pra sempre)' }[cmd];
   if (!confirm('#' + id + ': ' + rotulo + '?')) return;
   try {
     if (btn) btn.disabled = true;

@@ -56,7 +56,7 @@ const PALAVRAS_DESISTENCIA = [
 // Cliente ENCERRANDO a conversa (não está esperando nada): agradecimento,
 // "ok", "vou pensar", "te retorno". Não vira 🔴 — cai na régua de 12h.
 // Regex por radical (sem \b no fim), sobre texto sem acento e minúsculo.
-const RE_FECHAMENTO = /(^|\W)(obrigad|obg|agrade|valeu|blz|beleza|combinado|perfeito|certo|entendi|ok|okay|ta bom|tabom|tudo bem|show|otimo|joia|top|vou pensar|vou conversar|vou ver|vou verificar|vou confirmar|vou so |vou ja |verificando|confirmando|conversando|analisando|conferindo|te retorno|retorno depois|entro em contato|volto a falar|volto falar|qualquer coisa|bom dia|boa tarde|boa noite|ate mais|abraco|bjs|beijo|grata|grato)/;
+const RE_FECHAMENTO = /(^|\W)(obrigad|obg|agrade|valeu|blz|beleza|combinado|perfeito|certo|entendi|ok|okay|ta bom|tabom|tudo bem|show|otimo|joia|top|vou pensar|vou conversar|vou ver|vou verificar|vou confirmar|vou so |vou ja |verificando|confirmando|conversando|analisando|conferindo|te retorno|retorno depois|entro em contato|volto a falar|volto falar|qualquer coisa|bom dia|boa tarde|boa noite|ate mais|abraco|bjs|beijo|grata|grato|finalizamos o seu atendimento|finalizamos seu atendimento|atendimento encerrado|atendimento finalizado|pesquisa de satisfacao|protocolo de atendimento)/;
 const RE_PERGUNTA = /\?|quanto|qual |quando|como |pode |consegue|teria|gostaria|preciso|queria|valor|preco|horario|agend|marcar/;
 const normalizar = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
@@ -64,6 +64,8 @@ const normalizar = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
 function ehFechamento(texto, tamanho) {
   const t = normalizar(texto);
   if (!t) return false;
+  // Robô de OUTRA empresa encerrando ("Finalizamos o seu atendimento...") — qualquer tamanho.
+  if (/finalizamos (o )?seu atendimento|atendimento (encerrado|finalizado)|pesquisa de satisfacao|protocolo de atendimento/.test(t)) return true;
   if ((tamanho || t.length) <= REGRAS.tamanhoCortesia) return true;
   if (RE_PERGUNTA.test(t)) return false;
   if (t.length > 120) return false;
@@ -149,6 +151,7 @@ function initFollowup(db) {
   try { db.exec("ALTER TABLE contatos ADD COLUMN followup_alertado_em TEXT DEFAULT ''"); } catch {}
   try { db.exec("ALTER TABLE contatos ADD COLUMN orcamento_modalidade TEXT DEFAULT ''"); } catch {}
   try { db.exec("ALTER TABLE contatos ADD COLUMN followup_snooze_ate TEXT DEFAULT ''"); } catch {}
+  try { db.exec("ALTER TABLE contatos ADD COLUMN followup_ignorar INTEGER DEFAULT 0"); } catch {} // labs, fornecedores, parceiros: nunca entram no funil
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_contatos_followup ON contatos(followup_nivel)"); } catch {}
   // Histórico do follow-up (pra métricas: quem foi cobrado, quem recuperou, por que perdeu)
   try { db.exec(`CREATE TABLE IF NOT EXISTS followup_eventos (
@@ -349,7 +352,7 @@ function avaliar(db, agora = new Date()) {
   const alvos = db.prepare(`
     SELECT id, nome, telefone, orcamento_enviado_at, followup_nivel, followup_snooze_ate
     FROM contatos
-    WHERE etapa = 'orcamento' AND orcamento_enviado_at != ''
+    WHERE etapa = 'orcamento' AND orcamento_enviado_at != '' AND COALESCE(followup_ignorar, 0) = 0
   `).all().filter(c => !internos.includes(String(c.telefone).replace(/\D/g, '')));
 
   // Última mensagem HUMANA da conversa: ignora o que a Athena mandou.
@@ -429,7 +432,8 @@ function executarComando(db, cmd, id) {
     return '🤖 *Comandos do follow-up*\n\n' +
       '• *marcou 123* — marcou o exame → vai pra Agendado\n' +
       '• *desistiu 123* — não vai fazer → sai da fila\n' +
-      '• *ok 123* — já resolvi por fora (liguei etc.) → silencia por 24h\n\n' +
+      '• *ok 123* — já resolvi por fora (liguei etc.) → silencia por 24h\n' +
+      '• *ignorar 123* — não é cliente (lab, fornecedor) → sai pra sempre\n\n' +
       'O número é o *#id* que aparece no alerta.';
   }
   // "ok" / "feito" soltos são conversa normal — ignora em silêncio. "perdeu" solto, avisa.
@@ -440,6 +444,13 @@ function executarComando(db, cmd, id) {
   if (!c) return `Não achei o contato *#${id}*. Confere o número no alerta.`;
   const quem = (c.nome || c.telefone) + (c.pet_nome ? ` · ${c.pet_nome}` : '');
   registrarEvento(db, id, 'comando', cmd);
+
+  if (cmd === 'ignorar') {
+    db.prepare("UPDATE contatos SET followup_ignorar = 1, etapa = 'diversos', followup_nivel = 0, followup_desde = '', followup_motivo = '', updated_at = datetime('now','localtime') WHERE id = ?").run(id);
+    db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'diversos')").run(id, c.etapa);
+    console.log(`[CRM] Comando ignorar #${id} (${quem})`);
+    return `🚫 *${quem}* (#${id}) marcado como "não é cliente" (lab/fornecedor). Foi pra Diversos e nunca mais entra no follow-up.`;
+  }
 
   if (cmd === 'desistiu' || cmd === 'desistiram' || cmd === 'perdeu' || cmd === 'perdido') {
     db.prepare("UPDATE contatos SET etapa = 'finalizado', followup_nivel = 0, followup_desde = '', followup_motivo = '', updated_at = datetime('now','localtime') WHERE id = ?").run(id);
