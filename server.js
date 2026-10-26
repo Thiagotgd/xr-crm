@@ -136,6 +136,7 @@ try { db.exec("ALTER TABLE grupos ADD COLUMN foto_url TEXT DEFAULT ''"); } catch
 try { db.exec("ALTER TABLE contatos ADD COLUMN equipe_xr INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contato_abas ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_msg_id TEXT DEFAULT ''"); } catch {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_mensagens_wa_msg_id ON mensagens(wa_msg_id)"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_remote_jid TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN manual_unread INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
@@ -709,7 +710,19 @@ async function handleRequest(req, res) {
       return sendJSON(res, 200, { ok: true });
     }
 
-    if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') {
+    // send.message = mensagem enviada pela API da Evolution (a Athena, à noite).
+    // Essas NÃO vêm como messages.upsert, então o CRM nunca via as respostas
+    // dela. Só aceitamos as que levam a marca da Athena: o que o próprio CRM
+    // envia já é gravado na hora pela rota /api/contato/:id/mensagem|media e
+    // entraria duplicado (26/10/2026).
+    const ehSendMessage = (event === 'send.message' || event === 'SEND_MESSAGE');
+    if (ehSendMessage) {
+      const sm = (body.data || body).message || {};
+      const smTexto = sm.conversation || (sm.extendedTextMessage && sm.extendedTextMessage.text) || '';
+      if (!smTexto.includes(followup.ATHENA_MARCA)) {
+        return sendJSON(res, 200, { ok: true, ignored: true, motivo: 'send.message sem marca da Athena' });
+      }
+    } else if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') {
       console.log(`[CRM] Non-upsert event: ${event}`);
       return sendJSON(res, 200, { ok: true, ignored: true });
     }
@@ -717,6 +730,11 @@ async function handleRequest(req, res) {
     const data = body.data || body;
     const key = data.key || {};
     const jid = key.remoteJid || '';
+
+    // Mesma mensagem chegando duas vezes (ex.: send.message + upsert) não grava de novo
+    if (key.id && db.prepare('SELECT 1 FROM mensagens WHERE wa_msg_id = ? LIMIT 1').get(key.id)) {
+      return sendJSON(res, 200, { ok: true, ignored: true, motivo: 'wa_msg_id repetido' });
+    }
 
     // Handle group messages
     if (jid.includes('@g.us')) {
