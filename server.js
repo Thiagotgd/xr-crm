@@ -8,6 +8,7 @@ const Database = require('better-sqlite3');
 const followup = require('./followup');
 const alerta = require('./alerta');
 const metricas = require('./metricas');
+const origem = require('./origem');
 
 const PORT = process.env.PORT || 8095;
 const EVO_BASE = process.env.EVO_BASE || 'http://172.18.0.1:8085';
@@ -144,6 +145,7 @@ try { db.exec("ALTER TABLE contatos ADD COLUMN favorito INTEGER DEFAULT 0"); } c
 try { db.exec("ALTER TABLE contatos ADD COLUMN orcamento_enviado_at TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN ultima_resposta_cliente_at TEXT DEFAULT ''"); } catch {}
 followup.initFollowup(db);
+origem.init(db);
 
 // Migrate etapas: remove aguardando_exame, confirmado; rename agendamento→agendado; add diversos
 try {
@@ -873,6 +875,8 @@ async function handleRequest(req, res) {
       db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
         contato.id, direcao, texto || caption || docName || docCaption || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid
       );
+      // De onde o cliente veio (anúncio Meta, Google, direto) — só leitura das primeiras mensagens dele.
+      if (!isFromMe) { try { origem.classificar(db, contato.id, texto || caption); } catch (e) { console.error('[ORIGEM]', e.message); } }
     }
 
     // ─── Auto-move to Orçamento when PDF sent outgoing ───────────────────
@@ -1380,9 +1384,18 @@ async function handleRequest(req, res) {
     console.log(`[METRICAS] pedido dias=${dias} de ${req.headers['x-forwarded-for'] || req.socket.remoteAddress} ua=${String(req.headers['user-agent'] || '').slice(0, 40)}`);
     try {
       const out = metricas.calcular(db, dias);
+      // Por origem (anúncio Meta / Google / direto): quem chegou no período e quanto virou exame.
+      try { out.origens = origem.resumo(db, dias, followup.ATHENA_MARCA); } catch (e) { console.error('[ORIGEM] resumo:', e.message); }
       console.log(`[METRICAS] ok em ${Date.now() - t0}ms`);
       return sendJSON(res, 200, out);
     } catch (e) { console.error('[METRICAS] erro:', e.message); return sendJSON(res, 500, { error: e.message }); }
+  }
+
+  // ─── API: Origem dos contatos (anúncio Meta / Google / direto) — usado pelo relatório da Dani ──
+  if (method === 'GET' && pathname === '/api/painel/origem') {
+    const dias = Number(urlObj.searchParams.get('dias')) || 30;
+    try { return sendJSON(res, 200, origem.resumo(db, dias, followup.ATHENA_MARCA)); }
+    catch (e) { console.error('[ORIGEM] erro:', e.message); return sendJSON(res, 500, { error: e.message }); }
   }
 
   // ─── API: Follow-up — ações pela tela (mesmos comandos do WhatsApp) ────────
@@ -1399,6 +1412,7 @@ async function handleRequest(req, res) {
     const fila = db.prepare(`
       SELECT c.id, c.nome, c.telefone, c.pet_nome, c.foto_url, c.etapa,
         c.followup_nivel, c.followup_desde, c.followup_motivo, c.orcamento_enviado_at,
+        c.orcamento_modalidade, COALESCE(NULLIF(c.origem,''),'direto') AS origem,
         (SELECT texto FROM mensagens WHERE contato_id = c.id ORDER BY id DESC LIMIT 1) as ultima_msg,
         (SELECT direcao FROM mensagens WHERE contato_id = c.id ORDER BY id DESC LIMIT 1) as ultima_msg_dir,
         (SELECT created_at FROM mensagens WHERE contato_id = c.id ORDER BY id DESC LIMIT 1) as ultima_msg_at
@@ -1443,6 +1457,8 @@ server.listen(PORT, () => {
   // ─── Follow-up de orçamentos ─────────────────────────────────────────────────
   // Uma vez: devolve para Agendado quem caiu em Orçamento por causa do PDF do laudo.
   try { followup.corrigirLaudos(db); } catch (e) { console.error('[CRM] corrigirLaudos:', e.message); }
+  // Uma vez: origem (anúncio/Google/direto) de quem já estava no banco, pelas primeiras mensagens.
+  try { origem.backfill(db); } catch (e) { console.error('[ORIGEM] backfill:', e.message); }
   // A cada 5 min: encerra desistências/luto e recalcula os níveis 🔴🟡⚪.
   followup.iniciarVigia(db, {
     intervaloMs: 5 * 60 * 1000,

@@ -124,6 +124,8 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .fu-card .cc-avatar { width: 32px; height: 32px; flex-shrink: 0; }
 .fu-card .fu-name { font-size: 13px; }
 .fu-card .fu-tel { font-size: 11px; }
+/* Origem do contato (anúncio Meta / Google) — etiqueta pequena ao lado do nome */
+.origem-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; color: #fff; vertical-align: middle; margin-left: 6px; white-space: nowrap; }
 .fu-ha { font-size: 12px; font-weight: 700; white-space: nowrap; }
 .fu-card .fu-last { font-size: 11px; color: var(--text-muted, #9ca3af); font-style: italic; margin: 6px 0 0 42px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fu-card .fu-actions { margin: 8px 0 0 42px; justify-content: flex-start; }
@@ -1030,7 +1032,26 @@ function renderMetricasVendas(r) {
     (r.motivos_perda.length ? r.motivos_perda.map(m => '<div class="mt-row"><div class="mt-lbl">' + esc(m.motivo) + '</div><div class="mt-bar-wrap"><div class="mt-bar mt-bar-muted" style="width:' + (100 * m.n / maxM) + '%"></div></div><div class="mt-val">' + m.n + '</div></div>').join('') : '<div style="color:var(--text-muted);font-size:13px">nenhuma perda registrada no período</div>') +
   '</div>';
 
-  document.getElementById('mtBody').innerHTML = kpis + '<div class="mt-grid">' + funil + mods + '</div>' + porDia + motivos;
+  // Por origem (anúncio Meta / Google / direto): quem CHEGOU no período e quanto virou exame.
+  // Cohorte diferente do funil acima (ali é quem recebeu orçamento; aqui é quem entrou em contato).
+  const og = r.origens;
+  const origens = og ? '<div class="mt-card"><div class="mt-h">Por origem <small>(contatos novos no período · ' + og.total + ' no total · "anúncio" = texto pronto do anúncio da Meta, "Google" = "vim do Google")</small></div>' +
+    '<table class="mt-table"><thead><tr><th>Origem</th><th>Chegaram</th><th>Conversaram</th><th>Orçados</th><th>Agendaram</th><th>Viraram exame</th></tr></thead><tbody>' +
+    og.origens.map(o => '<tr><td><b>' + (o.emoji ? o.emoji + ' ' : '') + esc(o.label) + '</b></td><td>' + o.contatos + '</td><td>' + o.conversaram + '</td><td>' + o.orcados + '</td><td>' + o.agendados + '</td><td><div class="mt-mini"><div class="mt-mini-bar" style="width:' + Math.min(100, o.taxa) + '%"></div></div> ' + o.taxa + '%</td></tr>').join('') +
+    '</tbody></table>' +
+    (og.detalhes && og.detalhes.length > 1 ? '<details class="mt-details"><summary>por frase do anúncio</summary><table class="mt-table"><thead><tr><th>Origem</th><th>Frase pronta</th><th>Chegaram</th><th>Agendaram</th></tr></thead><tbody>' +
+      og.detalhes.map(d => '<tr><td>' + esc(d.origem) + '</td><td>' + esc(String(d.detalhe).slice(0, 70)) + '</td><td>' + d.contatos + '</td><td>' + d.agendados + '</td></tr>').join('') + '</tbody></table></details>' : '') +
+  '</div>' : '';
+
+  document.getElementById('mtBody').innerHTML = kpis + '<div class="mt-grid">' + funil + mods + '</div>' + origens + porDia + motivos;
+}
+
+// ─── Origem do contato (anúncio Meta / Google / direto) ──────────────────────
+// Detectada pelo servidor nas primeiras mensagens do cliente. "direto" não ganha etiqueta.
+const ORIGEM_UI = { meta: { t: '📣 Anúncio', cor: '#1877f2', titulo: 'Veio de anúncio da Meta (Instagram/Facebook)' }, google: { t: '🔎 Google', cor: '#34a853', titulo: 'Veio do botão de WhatsApp do perfil no Google' } };
+function origemTag(o) {
+  const u = ORIGEM_UI[o];
+  return u ? '<span class="origem-tag" style="background:' + u.cor + '" title="' + u.titulo + '">' + u.t + '</span>' : '';
 }
 
 // ─── Aba Follow-up (lista de gestão) ─────────────────────────────────────────
@@ -1077,7 +1098,7 @@ function renderFollowup(r) {
         return '<div class="fu-card" style="border-left-color:' + g.cor + '" data-id="' + c.id + '">' +
           '<div class="fu-card-top" onclick="openDetail(' + c.id + ')">' + avatar +
             '<div style="min-width:0;flex:1">' +
-              '<div class="fu-name">' + esc(c.nome || formatPhone(c.telefone)) + (c.pet_nome ? ' <small>· ' + esc(c.pet_nome) + '</small>' : '') + '</div>' +
+              '<div class="fu-name">' + esc(c.nome || formatPhone(c.telefone)) + (c.pet_nome ? ' <small>· ' + esc(c.pet_nome) + '</small>' : '') + origemTag(c.origem) + '</div>' +
               '<div class="fu-tel">' + formatPhone(c.telefone) + (c.orcamento_modalidade ? ' · ' + esc(c.orcamento_modalidade) : '') + ' <span style="opacity:.55">#' + c.id + '</span></div>' +
             '</div>' +
             '<span class="fu-ha" style="color:' + g.cor + '">' + ha + '</span>' +
@@ -1158,6 +1179,7 @@ function renderDetail() {
     '<button class="detail-toggle" onclick="var d=document.getElementById(\'detailInfoInner\');d.classList.toggle(\'expanded\');this.textContent=d.classList.contains(\'expanded\')?\'▲ Ocultar detalhes\':\'▼ Ver detalhes\'">▼ Ver detalhes</button>' +
     '<div class="detail-info-inner" id="detailInfoInner">' +
       '<div><span>Telefone</span><br><strong>' + formatPhone(c.telefone) + '</strong></div>' +
+      '<div><span>Origem</span><br><strong>' + (c.origem === 'meta' ? '📣 Anúncio Meta' : c.origem === 'google' ? '🔎 Google' : 'Direto / indicação') + '</strong>' + (c.origem_detalhe ? '<br><small style="color:var(--text-muted)">“' + esc(String(c.origem_detalhe).slice(0, 60)) + '”</small>' : '') + '</div>' +
       '<div><span>Pet</span><br><strong>' + esc(c.pet_nome || '-') + (c.pet_especie ? ' (' + c.pet_especie + ')' : '') + '</strong></div>' +
       '<div><span>Veterinario</span><br><strong>' + esc(c.veterinario || '-') + '</strong></div>' +
       '<div><span>Desde</span><br><strong>' + (c.created_at || '-') + '</strong></div>' +
