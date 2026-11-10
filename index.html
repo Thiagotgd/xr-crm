@@ -1043,7 +1043,17 @@ function renderMetricasVendas(r) {
       og.detalhes.map(d => '<tr><td>' + esc(d.origem) + '</td><td>' + esc(String(d.detalhe).slice(0, 70)) + '</td><td>' + d.contatos + '</td><td>' + d.agendados + '</td></tr>').join('') + '</tbody></table></details>' : '') +
   '</div>' : '';
 
-  document.getElementById('mtBody').innerHTML = kpis + '<div class="mt-grid">' + funil + mods + '</div>' + origens + porDia + motivos;
+  // Por região (DDD do telefone): até onde a XR alcança e de onde vem o exame avançado (TC/RM).
+  const fb = og && og.fora_bh;
+  const regioes = (og && og.regioes && og.regioes.length) ? '<div class="mt-card"><div class="mt-h">Por região <small>(pelo DDD do telefone · contatos novos no período' +
+      (fb ? ' · fora de BH e entorno: ' + fb.pct_contatos + '% dos contatos e ' + fb.pct_tcrm + '% dos orçamentos de TC/RM' : '') + ')</small></div>' +
+    '<table class="mt-table"><thead><tr><th>Região</th><th>Chegaram</th><th>% do total</th><th>Orçados</th><th>Orç. TC/RM</th><th>Agendaram</th><th>Viraram exame</th><th title="De onde vieram: anúncio Meta · Google · direto">📣 · 🔎 · direto</th></tr></thead><tbody>' +
+    og.regioes.map(g => '<tr><td><b>' + esc(g.label) + '</b></td><td>' + g.contatos + '</td><td>' + g.pct_contatos + '%</td><td>' + g.orcados + '</td><td>' + g.tcrm + '</td><td>' + g.agendados + '</td><td><div class="mt-mini"><div class="mt-mini-bar" style="width:' + Math.min(100, g.taxa) + '%"></div></div> ' + g.taxa + '%</td><td>' + g.meta + ' · ' + g.google + ' · ' + g.direto + '</td></tr>').join('') +
+    '</tbody></table>' +
+    '<div style="font-size:11px;color:var(--text-muted);margin-top:6px">O DDD 31 junta BH, Contagem, Sete Lagoas, Itabira, Ouro Preto e Ipatinga. DDD é onde o chip foi comprado, não necessariamente onde a pessoa mora.</div>' +
+  '</div>' : '';
+
+  document.getElementById('mtBody').innerHTML = kpis + '<div class="mt-grid">' + funil + mods + '</div>' + origens + regioes + porDia + motivos;
 }
 
 // ─── Origem do contato (anúncio Meta / Google / direto) ──────────────────────

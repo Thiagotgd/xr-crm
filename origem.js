@@ -103,6 +103,37 @@ const sqlDate = d => { const p = n => String(n).padStart(2, '0'); return `${d.ge
 const pct = (a, b) => b ? Math.round(1000 * a / b) / 10 : 0;
 const INTERNOS = ['553182043117', '553183283626', '553183746380', '553184505939'];
 
+// ─── Região do cliente (pelo DDD do telefone) ──────────────────────────────────
+// Serve para ver até onde a XR alcança (e se um anúncio aberto para o interior
+// trouxe gente de lá). Limites: o DDD 31 junta BH, Contagem, Sete Lagoas, Itabira,
+// Ouro Preto e Ipatinga; e DDD é onde o chip foi comprado, não onde a pessoa mora.
+const REGIOES = {
+  bh:     { label: 'BH e entorno (31)', ordem: 1 },
+  d37:    { label: 'Divinópolis e centro-oeste (37)', ordem: 2 },
+  d32:    { label: 'Juiz de Fora e Zona da Mata (32)', ordem: 3 },
+  d33:    { label: 'Gov. Valadares e leste (33)', ordem: 4 },
+  d38:    { label: 'Montes Claros e norte (38)', ordem: 5 },
+  d34:    { label: 'Triângulo Mineiro (34)', ordem: 6 },
+  d35:    { label: 'Sul de Minas (35)', ordem: 7 },
+  sp:     { label: 'São Paulo (estado)', ordem: 8 },
+  rj:     { label: 'Rio de Janeiro (estado)', ordem: 9 },
+  es:     { label: 'Espírito Santo', ordem: 10 },
+  outros: { label: 'Outros estados', ordem: 11 },
+  semddd: { label: 'Sem DDD (exterior ou número oculto)', ordem: 12 },
+};
+const DDD_REGIAO = { 31: 'bh', 37: 'd37', 32: 'd32', 33: 'd33', 38: 'd38', 34: 'd34', 35: 'd35', 21: 'rj', 22: 'rj', 24: 'rj', 27: 'es', 28: 'es' };
+for (let d = 11; d <= 19; d++) DDD_REGIAO[d] = 'sp';
+
+// O CRM guarda o telefone como vem do WhatsApp: 55 + DDD + número (12 ou 13 dígitos).
+// Qualquer outra coisa (exterior, identificador oculto do WhatsApp) fica "sem DDD".
+function regiaoDoTelefone(tel) {
+  const t = String(tel || '').replace(/\D/g, '');
+  if (!t.startsWith('55') || (t.length !== 12 && t.length !== 13)) return 'semddd';
+  const ddd = Number(t.slice(2, 4));
+  if (ddd < 11) return 'semddd';
+  return DDD_REGIAO[ddd] || 'outros';
+}
+
 function resumo(db, dias, athenaMarca) {
   dias = Math.max(1, Math.min(365, Number(dias) || 30));
   const agora = new Date();
@@ -110,7 +141,8 @@ function resumo(db, dias, athenaMarca) {
   const marca = '%' + (athenaMarca || 'Assistente virtual Athena') + '%';
 
   const contatos = db.prepare(`
-    SELECT id, telefone, COALESCE(NULLIF(origem,''),'direto') AS origem, origem_detalhe, orcamento_enviado_at
+    SELECT id, telefone, COALESCE(NULLIF(origem,''),'direto') AS origem, origem_detalhe, orcamento_enviado_at,
+      COALESCE(orcamento_modalidade,'') AS modalidade
     FROM contatos WHERE created_at >= ? AND COALESCE(followup_ignorar, 0) = 0
   `).all(desde).filter(c => !INTERNOS.includes(String(c.telefone).replace(/\D/g, '')));
 
@@ -123,6 +155,7 @@ function resumo(db, dias, athenaMarca) {
 
   const por = {};
   const detalhes = {};
+  const reg = {};
   for (const k of Object.keys(ORIGENS)) por[k] = { origem: k, ...ORIGENS[k], contatos: 0, conversaram: 0, orcados: 0, agendados: 0 };
   for (const c of contatos) {
     const o = por[c.origem] || (por[c.origem] = { origem: c.origem, label: c.origem, curto: c.origem, emoji: '', cor: '#6b7280', contatos: 0, conversaram: 0, orcados: 0, agendados: 0 });
@@ -138,15 +171,35 @@ function resumo(db, dias, athenaMarca) {
       detalhes[k].contatos++;
       if (ag) detalhes[k].agendados++;
     }
+    // Região (DDD): quem chegou, quem pediu exame avançado (TC/RM), quem agendou, e por qual origem.
+    const rk = regiaoDoTelefone(c.telefone);
+    const r = reg[rk] || (reg[rk] = { regiao: rk, label: REGIOES[rk].label, ordem: REGIOES[rk].ordem, contatos: 0, orcados: 0, tcrm: 0, agendados: 0, meta: 0, google: 0, direto: 0 });
+    r.contatos++;
+    if (c.orcamento_enviado_at) r.orcados++;
+    if (c.modalidade === 'TC' || c.modalidade === 'RM') r.tcrm++;
+    if (ag) r.agendados++;
+    if (r[c.origem] !== undefined) r[c.origem]++;
   }
   const origens = Object.values(por).map(o => ({ ...o, taxa: pct(o.agendados, o.contatos) }))
     .sort((a, b) => (a.origem === 'direto') - (b.origem === 'direto') || b.contatos - a.contatos);
+  const regioes = Object.values(reg)
+    .map(r => ({ ...r, taxa: pct(r.agendados, r.contatos), pct_contatos: pct(r.contatos, contatos.length) }))
+    .sort((a, b) => a.ordem - b.ordem);
+  const foraBh = regioes.filter(r => r.regiao !== 'bh' && r.regiao !== 'semddd');
+  const soma = (arr, k) => arr.reduce((s, r) => s + r[k], 0);
   return {
     periodo: { dias, desde: desde.slice(0, 10), ate: sqlDate(agora) },
     total: contatos.length,
     origens,
     detalhes: Object.values(detalhes).sort((a, b) => b.contatos - a.contatos),
+    regioes,
+    // Resumo "fora de BH e entorno": quanto da demanda (e do exame avançado) já vem de longe.
+    fora_bh: {
+      contatos: soma(foraBh, 'contatos'), pct_contatos: pct(soma(foraBh, 'contatos'), contatos.length),
+      tcrm: soma(foraBh, 'tcrm'), pct_tcrm: pct(soma(foraBh, 'tcrm'), soma(regioes, 'tcrm')),
+      agendados: soma(foraBh, 'agendados'),
+    },
   };
 }
 
-module.exports = { ORIGENS, PADROES, JANELA_MSGS, detectar, init, classificar, backfill, resumo };
+module.exports = { ORIGENS, PADROES, JANELA_MSGS, REGIOES, detectar, regiaoDoTelefone, init, classificar, backfill, resumo };

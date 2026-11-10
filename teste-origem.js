@@ -25,7 +25,7 @@ console.log('classificar() / backfill() / resumo()');
 const db = new Database(':memory:');
 db.exec(`
   CREATE TABLE contatos (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, telefone TEXT, etapa TEXT DEFAULT 'novo',
-    created_at TEXT DEFAULT (datetime('now','localtime')), orcamento_enviado_at TEXT DEFAULT '', followup_ignorar INTEGER DEFAULT 0);
+    created_at TEXT DEFAULT (datetime('now','localtime')), orcamento_enviado_at TEXT DEFAULT '', orcamento_modalidade TEXT DEFAULT '', followup_ignorar INTEGER DEFAULT 0);
   CREATE TABLE mensagens (id INTEGER PRIMARY KEY AUTOINCREMENT, contato_id INTEGER, direcao TEXT, texto TEXT, tipo TEXT DEFAULT 'text',
     created_at TEXT DEFAULT (datetime('now','localtime')));
   CREATE TABLE followup_eventos (id INTEGER PRIMARY KEY AUTOINCREMENT, contato_id INTEGER, tipo TEXT, valor TEXT, created_at TEXT DEFAULT (datetime('now','localtime')));
@@ -90,6 +90,35 @@ t('resumo() ignora a Athena como "agendou"', () => {
   const r = origem.resumo(db, 30, 'Assistente virtual Athena');
   assert.strictEqual(r.origens.find(o => o.origem === 'direto').agendados, 0);
 });
+
+console.log('regiaoDoTelefone() / regiões no resumo()');
+t('31 com 12 dígitos → BH', () => assert.strictEqual(origem.regiaoDoTelefone('553188887777'), 'bh'));
+t('31 com 13 dígitos (com o 9) → BH', () => assert.strictEqual(origem.regiaoDoTelefone('5531988887777'), 'bh'));
+t('37 → Divinópolis', () => assert.strictEqual(origem.regiaoDoTelefone('553799998888'), 'd37'));
+t('32/33/34/35/38 → regiões de MG', () => assert.deepStrictEqual(['32', '33', '34', '35', '38'].map(d => origem.regiaoDoTelefone('55' + d + '99998888')), ['d32', 'd33', 'd34', 'd35', 'd38']));
+t('11 e 19 → São Paulo; 21 → Rio; 27 → ES', () => assert.deepStrictEqual(['11', '19', '21', '27'].map(d => origem.regiaoDoTelefone('55' + d + '99998888')), ['sp', 'sp', 'rj', 'es']));
+t('61 → outros estados', () => assert.strictEqual(origem.regiaoDoTelefone('556199998888'), 'outros'));
+t('número do exterior → sem DDD', () => assert.strictEqual(origem.regiaoDoTelefone('14155550100'), 'semddd'));
+t('identificador oculto (15 dígitos) → sem DDD', () => assert.strictEqual(origem.regiaoDoTelefone('551234567890123'), 'semddd'));
+t('com máscara (+55 (31) 9 8888-7777) → BH', () => assert.strictEqual(origem.regiaoDoTelefone('+55 (31) 9 8888-7777'), 'bh'));
+t('vazio → sem DDD', () => assert.strictEqual(origem.regiaoDoTelefone(''), 'semddd'));
+t('resumo() traz regiões com TC/RM, agendados, origem e "fora de BH"', () => {
+  const a = novo('553799990001'); msg(a, 'in', 'Olá! Posso ter mais informações sobre isso?'); origem.classificar(db, a, 'Olá! Posso ter mais informações sobre isso?');
+  db.prepare("UPDATE contatos SET orcamento_enviado_at = datetime('now','localtime'), orcamento_modalidade = 'RM' WHERE id = ?").run(a);
+  msg(a, 'out', 'Exame agendado para sexta');
+  const b = novo('553299990002'); msg(b, 'in', 'oi'); origem.classificar(db, b, 'oi');
+  db.prepare("UPDATE contatos SET orcamento_enviado_at = datetime('now','localtime'), orcamento_modalidade = 'US' WHERE id = ?").run(b);
+  db.prepare("UPDATE contatos SET orcamento_modalidade = 'TC' WHERE id = 1").run(); // contato 1 é DDD 31
+  const r = origem.resumo(db, 30);
+  const by = Object.fromEntries(r.regioes.map(x => [x.regiao, x]));
+  assert.strictEqual(r.regioes[0].regiao, 'bh', 'BH primeiro');
+  assert.strictEqual(by.d37.contatos, 1); assert.strictEqual(by.d37.tcrm, 1); assert.strictEqual(by.d37.agendados, 1); assert.strictEqual(by.d37.meta, 1); assert.strictEqual(by.d37.taxa, 100);
+  assert.strictEqual(by.d32.contatos, 1); assert.strictEqual(by.d32.tcrm, 0); assert.strictEqual(by.d32.orcados, 1); assert.strictEqual(by.d32.direto, 1);
+  assert.strictEqual(by.bh.tcrm, 1);
+  assert.strictEqual(soma(r.regioes, 'contatos'), r.total, 'toda região soma o total');
+  assert.strictEqual(r.fora_bh.contatos, 2); assert.strictEqual(r.fora_bh.tcrm, 1); assert.strictEqual(r.fora_bh.pct_tcrm, 50);
+});
+function soma(arr, k) { return arr.reduce((s, x) => s + x[k], 0); }
 
 console.log(falhas ? `\n${falhas} FALHA(S)` : '\ntudo ok');
 process.exit(falhas ? 1 : 0);
