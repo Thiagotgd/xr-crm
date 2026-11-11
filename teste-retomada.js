@@ -83,7 +83,7 @@ console.log('texto sugerido');
   t('plano não liberou → condição no particular', () => {
     const s = retomada.sugerir(db, get(d), manha);
     assert.strictEqual(s.motivo, 'plano não liberou');
-    assert.ok(/12x sem juros/.test(s.texto) && /\[dia e hora\]/.test(s.texto));
+    assert.ok(/10x sem juros/.test(s.texto) && /\[dia e hora\]/.test(s.texto));
   });
 
   const e = add({ nome: 'Rita', pet: 'Bob', orc: '2026-11-06 10:00:00', mod: 'TC' });

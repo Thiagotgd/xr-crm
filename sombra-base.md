@@ -39,7 +39,7 @@ Quando o pedido for de algo que não fazemos, dizer com clareza e, se couber, of
 - Outros itens: ver a tabela de preços ao final (se a tabela trouxer valor diferente dos acima, vale a tabela). Orçamento de TC/RM com vários itens é feito no gerador de orçamentos e enviado em PDF.
 
 ## Pagamento
-- Tomografia e ressonância: este mês, até 12x sem juros no crédito ou 10% de desconto à vista (pix ou dinheiro).
+- Tomografia e ressonância: este mês (novembro/2026, confirmado pelo Thiago em 11/11), até 10x sem juros no crédito ou 5% de desconto à vista (pix ou dinheiro).
 - Exames simples (raio-X, ultrassom, eco, eletro, sangue): crédito em até 2 vezes sem juros, débito, pix e dinheiro. Valores baixos (por exemplo R$ 180) não são parcelados.
 - Desconto fora dessas regras, cobrir preço de concorrente e condição especial: só a equipe decide.
 

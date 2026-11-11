@@ -17,7 +17,7 @@ const REGRAS = {
   diasArquivarAposUltima: 2,  // sem resposta à última → Finalizado
   horasMesmaRetomada: 12,     // várias linhas seguidas contam como UMA retomada
   // ↓ Ajustar quando a condição do mês mudar. Aparece nos textos sugeridos.
-  condicaoPagamento: 'parcelar em até 12x sem juros no cartão ou dar 10% de desconto à vista (pix ou dinheiro)',
+  condicaoPagamento: 'parcelar em até 10x sem juros no cartão ou dar 5% de desconto à vista (pix ou dinheiro)',
   validadeDias: 15,           // por quanto tempo as condições ficam seguras depois do encerramento
 };
 
