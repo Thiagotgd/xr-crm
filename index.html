@@ -941,6 +941,9 @@ button.msg-agenda:hover { filter: brightness(1.1); }
     <label>Observação</label>
     <input type="text" id="agDesc" placeholder="opcional">
     <div class="ag-livres">
+      <button type="button" onclick="agendaObs('1 segmento')">+ 1 segmento</button>
+      <button type="button" onclick="agendaObs('2 segmentos')">+ 2 segmentos</button>
+      <button type="button" onclick="agendaObs('3 segmentos')">+ 3 segmentos</button>
       <button type="button" onclick="agendaObs('Aguardando exames pré-anestésicos')">+ Aguardando exames pré-anestésicos</button>
       <button type="button" onclick="agendaObs('PetLove')">+ PetLove</button>
     </div>
@@ -3537,6 +3540,9 @@ function lerAgendamento(texto) {
   // pendência escrita entre parênteses, ex.: "(aguardando ECO + ECG + exames de sangue)" → vai para a observação
   const pend = Array.from(cab.matchAll(/\(([^)]{1,70})\)/g)).map(m => m[1].trim()).find(p => /aguardando|falta|pendente/i.test(p));
   r.obs = pend ? pend.charAt(0).toUpperCase() + pend.slice(1) : '';
+  // segmentos, quando a mensagem diz ("2 segmentos", "2 seg")
+  const ms = cab.match(/(\d)\s*seg(?:mento)?s?\b/i);
+  r.seg = ms ? (ms[1] === '1' ? '1 segmento' : ms[1] + ' segmentos') : '';
   const n = cab.replace(/\([^)]*\)/g, ' ').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const itens = [];
   if (/tomograf|\btc\b/.test(n)) itens.push('TC');
@@ -3580,7 +3586,8 @@ function abrirAgendaCfaz(msgId) {
   agendaDados = null;
   document.getElementById('agTitulo').value = lido.titulo;
   document.getElementById('agTel').value = telefoneParaCfaz(c.telefone);
-  document.getElementById('agDesc').value = [[lido.pet || c.pet_nome, c.nome].filter(Boolean).join(' - '), lido.obs].filter(Boolean).join(' · ');
+  // Observação no padrão da recepção: nome do pet, segmentos e pendência. Sem o nome do tutor (pedido do Thiago).
+  document.getElementById('agDesc').value = [lido.pet || c.pet_nome, lido.seg, lido.obs].filter(Boolean).join(' · ');
   document.getElementById('agData').value = lido.data;
   document.getElementById('agHora').value = lido.hora;
   const avisos = [];
@@ -3621,9 +3628,14 @@ async function agendaCarregar(calPreferido) {
 // Atalhos da observação (um clique põe ou tira), ex.: "Aguardando exames pré-anestésicos"
 function agendaObs(t) {
   const el = document.getElementById('agDesc');
-  const partes = el.value.split(' · ').map(x => x.trim()).filter(Boolean);
+  let partes = el.value.split(' · ').map(x => x.trim()).filter(Boolean);
   const i = partes.findIndex(x => x.toLowerCase() === t.toLowerCase());
-  if (i >= 0) partes.splice(i, 1); else partes.push(t);
+  if (i >= 0) partes.splice(i, 1);
+  else {
+    // segmentos: só um vale por vez (clicar em "2 segmentos" troca o "1 segmento")
+    if (/^\d+ segmentos?$/i.test(t)) partes = partes.filter(x => !/^\d+ segmentos?$/i.test(x));
+    partes.push(t);
+  }
   el.value = partes.join(' · ');
 }
 function agendaEscolherHora(h) {
