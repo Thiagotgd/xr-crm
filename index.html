@@ -129,6 +129,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .msg-leitura.atencao { border-left-color: #f59e0b; background: rgba(245,158,11,0.10); }
 .msg-leitura.simples { border-left-color: #9ca3af; background: rgba(156,163,175,0.10); padding: 4px 8px; font-size: 11.5px; }
 .msg-leitura.simples span { opacity: .8; }
+.msg-leitura.audio { border-left-color: #25d366; background: rgba(37,211,102,0.08); }
 .msg-leitura .ml-h { font-weight: 700; margin-bottom: 3px; }
 .msg-leitura .ml-h span { font-weight: 400; font-size: 10.5px; opacity: .7; margin-left: 4px; }
 .msg-leitura .ml-e { font-weight: 600; }
@@ -1083,9 +1084,9 @@ function renderMetricasVendas(r) {
 // ─── Leitor de anexos: quantas fotos e PDFs foram lidos e o que eram ─────────
 function leitorCard(l) {
   if (!l) return '';
-  const nomes = { pedido_exame: '📋 pedidos de exame', resultado_exame: '🧪 resultados de exame', comprovante: '🧾 comprovantes', receita: '💊 receitas', foto_animal: '🐾 fotos do animal', outro: '📎 outros' };
+  const nomes = { pedido_exame: '📋 pedidos de exame', resultado_exame: '🧪 resultados de exame', comprovante: '🧾 comprovantes', receita: '💊 receitas', foto_animal: '🐾 fotos do animal', outro: '📎 outros', audio: '🎙️ áudios transcritos' };
   const partes = Object.keys(nomes).filter(k => l.por_tipo && l.por_tipo[k]).map(k => l.por_tipo[k] + ' ' + nomes[k]);
-  return '<div class="mt-card"><div class="mt-h">📎 Leitor de anexos <small>(a IA transcreve a foto ou o PDF que o cliente manda; a leitura aparece abaixo do anexo na conversa · até ' + l.porDia + ' leituras por dia)</small></div>' +
+  return '<div class="mt-card"><div class="mt-h">📎 Leitor de anexos e áudios <small>(a IA transcreve a foto ou o PDF que o cliente manda, e os áudios são transcritos dentro do servidor; a leitura aparece abaixo da mensagem na conversa · até ' + l.porDia + ' leituras e ' + (l.porDiaAudio || 60) + ' áudios por dia)</small></div>' +
     (l.total ? '<div style="font-size:13px;line-height:1.6">' + l.total + ' anexos classificados no período, ' + l.por_ia + ' lidos pela IA' + (l.falhas ? ' · ' + l.falhas + ' com falha' : '') + '.<br>' + partes.join(' · ') +
       (l.pedidos_confianca_baixa ? '<br><span style="color:#f59e0b">' + l.pedidos_confianca_baixa + ' pedidos com leitura de baixa confiança (letra difícil): conferir com a imagem.</span>' : '') + '</div>'
       : '<div style="color:var(--text-muted);font-size:13px">Ainda sem anexos lidos neste período.</div>') + '</div>';
@@ -2771,6 +2772,10 @@ function renderConversaChat() {
 function leituraBloco(m) {
   const l = m && m.leitura;
   if (!l) return '';
+  if (l.tipo === 'audio') {
+    return '<div class="msg-leitura audio" title="Transcrição automática feita no servidor. Pode trocar palavras: na dúvida, ouça o áudio.">' +
+      '<div class="ml-h">' + l.icone + ' Transcrição <span>automática · pode ter erros</span></div>' + esc(l.texto) + '</div>';
+  }
   if (l.tipo !== 'pedido_exame') {
     return '<div class="msg-leitura simples" title="Classificado automaticamente' + (l.origem === 'regra' ? ' pelo nome do arquivo' : ' pela leitura do anexo') + '">' + l.icone + ' ' + esc(l.rotulo) +
       (l.origem === 'ia' && l.resumo ? ' <span>· ' + esc(l.resumo) + '</span>' : '') + '</div>';

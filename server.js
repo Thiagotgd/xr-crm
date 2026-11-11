@@ -888,8 +888,8 @@ async function handleRequest(req, res) {
       if (!isFromMe) { try { origem.classificar(db, contato.id, texto || caption); } catch (e) { console.error('[ORIGEM]', e.message); } }
       // A recepção escreveu para um orçamento parado (🟡/⚪)? Conta como retomada (1ª, 2ª ou última).
       else { try { retomada.registrarSeRetomada(db, contato.id, texto || caption || docName || docCaption, tipo); } catch (e) { console.error('[RETOMADA]', e.message); } }
-      // Cliente mandou foto ou PDF: a IA lê em seguida (pedido do veterinário, comprovante...). Só transcreve.
-      if (!isFromMe && mediaPath && (tipo === 'image' || tipo === 'document')) { try { leitor.aoReceber(db); } catch (e) { console.error('[LEITOR]', e.message); } }
+      // Cliente mandou foto, PDF ou áudio: lê/transcreve em seguida (pedido do veterinário, comprovante, fala). Só transcreve.
+      if (!isFromMe && mediaPath && (tipo === 'image' || tipo === 'document' || tipo === 'audio')) { try { leitor.aoReceber(db); } catch (e) { console.error('[LEITOR]', e.message); } }
     }
 
     // ─── Auto-move to Orçamento when PDF sent outgoing ───────────────────

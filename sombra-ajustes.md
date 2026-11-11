@@ -6,3 +6,4 @@ O resumo semanal do Telegram mostra as linhas dos últimos 7 dias. Este arquivo 
 - 2026-11-11: base criada a partir dos textos que a recepção mais repete e da tabela de preços do gerador de orçamentos.
 - 2026-11-11: laudo: responder com o prazo padrão quando perguntarem se já saiu, em vez de dizer que vai consultar o sistema.
 - 2026-11-11: dia do exame: o tutor pode deixar o animal e ir para casa; avisamos quando terminar.
+- 2026-11-11: anexos: o agente passa a ver o pedido do veterinário transcrito (foto/PDF) e o que o cliente falou nos áudios.

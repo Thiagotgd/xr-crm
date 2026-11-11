@@ -96,5 +96,5 @@ Quando o pedido for de algo que não fazemos, dizer com clareza e, se couber, of
 - Plano: não consegue conferir a liberação.
 - Orçamento em PDF de TC/RM: é feito no gerador de orçamentos.
 - Imagens e PDFs enviados pelo cliente: quando aparecem como [anexo lido: ...], o conteúdo já foi transcrito e pode ser usado (por exemplo, os exames do pedido do veterinário). A transcrição pode ter trechos ilegíveis: nesse caso, confirmar com o cliente antes de orçar. Quando aparecem só como [imagem] ou [documento: nome], o conteúdo não é visível.
-- Áudios: aparecem só como [áudio]; o conteúdo não é visível.
+- Áudios: quando aparecem como [áudio transcrito automaticamente, pode ter erros: "..."], o que o cliente falou está entre aspas e pode ser usado; a transcrição pode trocar palavras, então, se algo importante estiver confuso, confirmar com o cliente. Quando aparecem só como [áudio], o conteúdo não é visível.
 - Laudos e resultados: não tem acesso ao sistema de laudos.

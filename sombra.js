@@ -89,7 +89,7 @@ function textoMsg(m) {
 }
 // Foto ou PDF do cliente que o leitor (leitor.js) já transcreveu aparece com o conteúdo; senão, só o marcador.
 function textoComLeitura(db, m) {
-  if (m.direcao === 'in' && (m.tipo === 'image' || m.tipo === 'document')) {
+  if (m.direcao === 'in' && (m.tipo === 'image' || m.tipo === 'document' || m.tipo === 'audio')) {
     try { const t = require('./leitor').textoParaAgente(db, m.id); if (t) return t; } catch {}
   }
   return textoMsg(m);

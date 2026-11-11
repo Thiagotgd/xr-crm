@@ -17,6 +17,7 @@ const path = require('path');
 const REGRAS = {
   ativo: process.env.LEITOR !== '0',
   porDia: 70,              // teto de leituras por IA por dia (comprovante/resultado pelo nome não contam)
+  porDiaAudio: 60,         // teto de áudios transcritos por dia (transcrição local, ~30 s cada)
   porRodada: 4,            // quantos pendentes a rodada de repescagem lê
   intervaloMin: 10,
   horaIni: 7, horaFim: 22, // fora disso fica pendente para a manhã
@@ -25,8 +26,14 @@ const REGRAS = {
 };
 
 const BRIDGE_URL = (process.env.CLAUDE_BRIDGE_URL || 'http://172.18.0.1:18802/texto').replace(/\/texto$/, '/arquivo');
+// Áudio: transcrição LOCAL na VPS (whisper), pela rota /audio da ponte. O áudio não sai do servidor.
+const BRIDGE_URL_AUDIO = BRIDGE_URL.replace(/\/arquivo$/, '/audio');
+const EXT_AUDIO = new Set(['.ogg', '.opus', '.mp3', '.m4a', '.wav', '.aac']);
+// Frases que o whisper inventa quando o áudio é silêncio ou ruído (vêm de legendas de vídeo do treino dele).
+const RE_ALUCINACAO = /legendas? (pela|por|da) comunidade|amara\.org|obrigad[oa] por assistir|inscreva-se no canal|transcri[cç][aã]o e legendas|^\W*(tchau|obrigad[oa])\W*$/i;
 const INTERNOS = ['553182043117', '553183283626', '553183746380', '553184505939'];
 const TIPOS = {
+  audio: { rotulo: 'Transcrição do áudio', icone: '🎙️' },
   pedido_exame: { rotulo: 'Pedido de exame', icone: '📋' },
   resultado_exame: { rotulo: 'Resultado de exame', icone: '🧪' },
   comprovante: { rotulo: 'Comprovante de pagamento', icone: '🧾' },
@@ -70,11 +77,12 @@ function pendentes(db, agora = new Date(), limite = 50) {
   return db.prepare(`
     SELECT m.id, m.contato_id, m.tipo, m.texto, m.media_path, m.created_at, c.etapa, c.telefone
     FROM mensagens m JOIN contatos c ON c.id = m.contato_id
-    WHERE m.direcao = 'in' AND m.tipo IN ('image','document') AND COALESCE(m.media_path,'') != '' AND m.created_at >= ?
+    WHERE m.direcao = 'in' AND m.tipo IN ('image','document','audio') AND COALESCE(m.media_path,'') != '' AND m.created_at >= ?
       AND COALESCE(c.followup_ignorar,0) = 0 AND COALESCE(c.equipe_xr,0) = 0
       AND NOT EXISTS (SELECT 1 FROM anexos_lidos a WHERE a.msg_id = m.id)
     ORDER BY (c.etapa IN ('novo','orcamento')) DESC, m.id DESC LIMIT ?`).all(desde, limite * 3)
-    .filter(m => !INTERNOS.includes(String(m.telefone).replace(/\D/g, '')) && EXT_OK.has(path.extname(m.media_path).toLowerCase()))
+    .filter(m => !INTERNOS.includes(String(m.telefone).replace(/\D/g, '')) &&
+      (m.tipo === 'audio' ? EXT_AUDIO : EXT_OK).has(path.extname(m.media_path).toLowerCase()))
     .slice(0, limite);
 }
 
@@ -117,6 +125,25 @@ async function chamarPonte(arquivo, prompt, system, model) {
     return { texto: String(j.result || ''), modelo: j.model || model };
   } finally { clearTimeout(timer); }
 }
+async function chamarAudio(arquivo) {
+  const tk = token();
+  if (!tk) throw new Error('token da ponte não encontrado');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 330000);
+  try {
+    const r = await fetch(BRIDGE_URL_AUDIO, { method: 'POST', headers: { 'content-type': 'application/json', 'x-bridge-token': tk },
+      body: JSON.stringify({ arquivo, raiz: 'xr-crm', origem: 'xr-crm-leitor' }), signal: ctrl.signal });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || !j.ok) throw new Error('ponte: HTTP ' + r.status + ' ' + String((j && j.error) || '').slice(0, 160));
+    return { texto: String(j.result || ''), modelo: j.model || 'whisper' };
+  } finally { clearTimeout(timer); }
+}
+// Limpa a transcrição: tira frases inventadas em silêncio/ruído e espaços sobrando.
+function limparTranscricao(t) {
+  const s = String(t || '').replace(/\s+/g, ' ').trim();
+  if (!s || RE_ALUCINACAO.test(s)) return '';
+  return s;
+}
 function lerJson(texto) {
   const s = String(texto || ''); const a = s.indexOf('{'), b = s.lastIndexOf('}');
   if (a < 0 || b <= a) return null;
@@ -127,8 +154,17 @@ function lerJson(texto) {
 const inserir = db => db.prepare(`INSERT OR IGNORE INTO anexos_lidos (msg_id, contato_id, arquivo, tipo, resumo, dados, confianca, origem, modelo, ms, erro)
   VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
 
-async function lerMensagem(db, m, chamar = chamarPonte) {
+async function lerMensagem(db, m, chamar = chamarPonte, ouvir = chamarAudio) {
   if (db.prepare('SELECT 1 FROM anexos_lidos WHERE msg_id = ?').get(m.id)) return null;
+  if (m.tipo === 'audio') {
+    const t0 = Date.now();
+    let texto = '', modelo = '', erro = '';
+    try { const r = await ouvir(m.media_path); texto = limparTranscricao(r.texto).slice(0, 4000); modelo = r.modelo; }
+    catch (e) { erro = String(e.message || e).slice(0, 300); }
+    inserir(db).run(m.id, m.contato_id, m.media_path, 'audio', texto, '{}', '', 'voz', modelo, Date.now() - t0, erro);
+    console.log(`[LEITOR] msg ${m.id}: ${erro ? 'ERRO ' + erro : 'áudio transcrito (' + texto.length + ' caracteres)'} em ${Date.now() - t0} ms`);
+    return { msg_id: m.id, tipo: 'audio', origem: 'voz', erro };
+  }
   const nome = m.tipo === 'document' ? String(m.texto || '') : '';
   const peloNome = tipoPeloNome(nome);
   if (peloNome) {
@@ -151,6 +187,7 @@ async function lerMensagem(db, m, chamar = chamarPonte) {
 // ─── Fila (uma leitura por vez) ────────────────────────────────────────────────
 const noHorario = d => d.getHours() >= REGRAS.horaIni && d.getHours() < REGRAS.horaFim;
 const lidosHojePorIa = db => db.prepare("SELECT COUNT(*) AS n FROM anexos_lidos WHERE origem = 'ia' AND created_at >= date('now','localtime')").get().n;
+const audiosHoje = db => db.prepare("SELECT COUNT(*) AS n FROM anexos_lidos WHERE origem = 'voz' AND created_at >= date('now','localtime')").get().n;
 let ocupado = false;
 
 async function rodada(db, opts = {}) {
@@ -160,11 +197,15 @@ async function rodada(db, opts = {}) {
   ocupado = true;
   const feitos = [];
   try {
-    for (const m of pendentes(db, agora, opts.n || REGRAS.porRodada)) {
+    // Olha mais pendentes do que vai processar: quando um tipo bate o teto do dia, os outros seguem.
+    let n = 0;
+    for (const m of pendentes(db, agora, (opts.n || REGRAS.porRodada) * 6)) {
+      if (n >= (opts.n || REGRAS.porRodada)) break;
+      if (m.tipo === 'audio') { if (audiosHoje(db) >= REGRAS.porDiaAudio) continue; }
       // comprovante/resultado pelo nome não gastam o teto; leitura por IA respeita o teto do dia
-      if (!tipoPeloNome(m.tipo === 'document' ? m.texto : '') && lidosHojePorIa(db) >= REGRAS.porDia) { feitos.push({ pulou: 'teto do dia' }); break; }
-      const r = await lerMensagem(db, m, opts.chamar);
-      if (r) feitos.push(r);
+      else if (!tipoPeloNome(m.tipo === 'document' ? m.texto : '') && lidosHojePorIa(db) >= REGRAS.porDia) continue;
+      const r = await lerMensagem(db, m, opts.chamar, opts.ouvir);
+      if (r) { feitos.push(r); n++; }
     }
   } catch (e) { console.error('[LEITOR] rodada:', e.message); }
   finally { ocupado = false; }
@@ -187,6 +228,10 @@ function iniciar(db) {
 // ─── Leitura para a tela e para o agente ───────────────────────────────────────
 function detalhe(row) {
   if (!row || row.erro || !row.tipo) return null;
+  if (row.tipo === 'audio') {
+    const texto = String(row.resumo || '').trim();
+    return texto ? { tipo: 'audio', rotulo: TIPOS.audio.rotulo, icone: TIPOS.audio.icone, origem: row.origem, texto } : null;   // áudio sem fala não mostra nada
+  }
   let d = {}; try { d = JSON.parse(row.dados || '{}'); } catch {}
   const t = TIPOS[row.tipo] || TIPOS.outro;
   const exames = (Array.isArray(d.exames) ? d.exames : []).filter(e => e && (e.exame || e.regiao))
@@ -206,7 +251,7 @@ function anexarLeituras(db, mensagens) {
   if (!mensagens || !mensagens.length) return mensagens;
   const q = db.prepare('SELECT * FROM anexos_lidos WHERE msg_id = ?');
   for (const m of mensagens) {
-    if (m.direcao !== 'in' || (m.tipo !== 'image' && m.tipo !== 'document')) continue;
+    if (m.direcao !== 'in' || (m.tipo !== 'image' && m.tipo !== 'document' && m.tipo !== 'audio')) continue;
     const l = detalhe(q.get(m.id));
     if (l) m.leitura = l;
   }
@@ -217,6 +262,7 @@ function anexarLeituras(db, mensagens) {
 function textoParaAgente(db, msgId) {
   const l = detalhe(db.prepare('SELECT * FROM anexos_lidos WHERE msg_id = ?').get(msgId));
   if (!l) return null;
+  if (l.tipo === 'audio') return `[áudio transcrito automaticamente, pode ter erros: "${l.texto.slice(0, 700)}"]`;
   if (l.tipo !== 'pedido_exame') return `[anexo lido: ${l.rotulo.toLowerCase()}${l.resumo && l.origem === 'ia' ? ' — ' + l.resumo : ''}]`;
   const partes = ['pedido de exame do veterinário'];
   if (l.exames.length) partes.push('exames: ' + l.exames.join('; '));
@@ -235,7 +281,8 @@ function resumo(db, dias) {
   for (const l of ok) por[l.tipo] = (por[l.tipo] || 0) + 1;
   const pedidos = ok.filter(l => l.tipo === 'pedido_exame');
   return { total: linhas.length, falhas: linhas.length - ok.length, por_ia: ok.filter(l => l.origem === 'ia').length, por_tipo: por,
+    audios: ok.filter(l => l.tipo === 'audio').length, porDiaAudio: REGRAS.porDiaAudio,
     pedidos: pedidos.length, pedidos_confianca_baixa: pedidos.filter(l => l.confianca === 'baixa').length, ativo: REGRAS.ativo, porDia: REGRAS.porDia };
 }
 
-module.exports = { REGRAS, TIPOS, SYSTEM, init, tipoPeloNome, pendentes, lerMensagem, rodada, aoReceber, iniciar, detalhe, anexarLeituras, textoParaAgente, resumo, lerJson };
+module.exports = { limparTranscricao, REGRAS, TIPOS, SYSTEM, init, tipoPeloNome, pendentes, lerMensagem, rodada, aoReceber, iniciar, detalhe, anexarLeituras, textoParaAgente, resumo, lerJson };
