@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>XR CRM</title>
+<script>try{if(localStorage.getItem('crm_tema')==='light')document.documentElement.setAttribute('data-theme','light')}catch(e){}</script>
 <style>
 :root {
   --bg: #111b21;
@@ -263,6 +264,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .compose-bar { display: flex; gap: 6px; padding: 5px 10px 5px 5px; background: var(--wa-header); flex-shrink: 0; align-items: center; min-height: 62px; }
 .compose-bar input[type="text"] { flex: 1; padding: 9px 12px 11px; background: var(--wa-search-bg); border: none; border-radius: 8px; color: var(--text-secondary); font-size: 15px; outline: none; }
 .compose-bar input[type="text"]::placeholder { color: var(--text-muted); }
+.compose-bar input[type="text"] { margin: 7px 0; }
 .compose-bar .btn { flex-shrink: 0; }
 .compose-bar .attach-btn { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--text-muted); padding: 4px 8px; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; }
 .compose-bar .attach-btn:hover { color: var(--text-secondary); }
@@ -506,6 +508,107 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 
 /* Update grupo card colors */
 .grupo-card .gc-icon { background: var(--wa-search-bg); }
+
+/* ══ 11/11/2026 · pacotes 1 e 2 da tela: comportamento mais próximo do WhatsApp ══ */
+button, input, textarea, select { font-family: inherit; }
+
+/* Campo de mensagem com várias linhas (Enter envia, Shift+Enter quebra a linha) */
+.compose-bar { align-items: flex-end; }
+.compose-bar textarea { flex: 1; min-width: 0; padding: 9px 12px 10px; background: var(--wa-search-bg); border: none; border-radius: 8px; color: var(--text); font-size: 15px; line-height: 20px; outline: none; resize: none; height: 39px; max-height: 140px; overflow-y: auto; margin: 6px 0; }
+.compose-bar textarea::placeholder { color: var(--text-muted); }
+.compose-bar .attach-btn { margin-bottom: 4px; }
+.compose-bar .btn { margin-bottom: 11px; }
+.send-btn { flex-shrink: 0; width: 40px; height: 40px; margin: 0 2px 6px 2px; border: none; border-radius: 50%; background: var(--primary); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.send-btn:hover { filter: brightness(1.08); }
+.send-btn svg { width: 20px; height: 20px; fill: currentColor; margin-left: 2px; }
+.envio-estado { position: absolute; right: 60px; top: -22px; font-size: 12px; color: var(--text-muted); background: var(--wa-header); padding: 2px 8px; border-radius: 8px 8px 0 0; display: none; }
+.envio-estado.show { display: block; }
+
+/* Hora curta no balão e faixa separando os dias */
+.msg .msg-time { cursor: default; }
+.msg-dia { align-self: center; background: var(--wa-dia-bg); color: var(--wa-dia-text); font-size: 12.5px; padding: 5px 12px; border-radius: 7.5px; margin: 10px 0 6px; box-shadow: 0 1px .5px rgba(11,20,26,.13); text-transform: uppercase; flex-shrink: 0; }
+.msg-mais { align-self: center; background: var(--wa-dia-bg); color: var(--wa-quote-bar); font-size: 13px; padding: 7px 16px; border-radius: 16px; border: none; cursor: pointer; margin: 2px 0 8px; flex-shrink: 0; }
+.msg-mais:hover { filter: brightness(1.15); }
+.chat-nova { position: absolute; right: 22px; bottom: 78px; z-index: 40; background: var(--wa-header); color: var(--text); border: 1px solid var(--border); border-radius: 18px; padding: 7px 14px; font-size: 13px; cursor: pointer; box-shadow: 0 2px 6px rgba(11,20,26,.35); display: none; }
+.chat-nova.show { display: block; }
+.chat-nova b { color: var(--wa-badge-bg); }
+
+/* Trecho citado dentro do balão e barra de resposta acima do campo */
+.msg-cita { border-left: 4px solid var(--wa-quote-bar); background: rgba(0,0,0,.18); border-radius: 5px; padding: 5px 9px; margin: -1px -2px 5px -4px; font-size: 13px; line-height: 1.3; color: var(--text-secondary); max-height: 64px; overflow: hidden; word-break: break-word; }
+.msg-cita b { display: block; color: var(--wa-quote-bar); font-weight: 600; font-size: 12.5px; }
+.reply-bar { display: none; align-items: center; gap: 10px; padding: 7px 12px 0 56px; background: var(--wa-header); flex-shrink: 0; }
+.reply-bar.show { display: flex; }
+.reply-bar .rb-box { flex: 1; min-width: 0; border-left: 4px solid var(--wa-quote-bar); background: var(--wa-search-bg); border-radius: 6px; padding: 6px 10px; font-size: 13px; color: var(--text-secondary); }
+.reply-bar .rb-box b { display: block; color: var(--wa-quote-bar); font-size: 12.5px; font-weight: 600; }
+.reply-bar .rb-box span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reply-bar .rb-x { background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer; padding: 4px 8px; }
+
+/* Nome do arquivo no anexo */
+.msg-file-link { text-decoration: none; display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,.14); border-radius: 6px; padding: 8px 10px; word-break: break-word; }
+.msg-file-link:hover { text-decoration: underline; }
+
+/* Prévia antes de enviar arquivo (colar com Ctrl+V, arrastar ou escolher no clipe) */
+.anexo-lista { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow-y: auto; margin-bottom: 10px; }
+.anexo-item { display: flex; align-items: center; gap: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13.5px; }
+.anexo-item img { max-width: 100%; max-height: 260px; border-radius: 6px; display: block; margin: 0 auto; }
+.anexo-item.foto { flex-direction: column; align-items: stretch; }
+.anexo-item .ai-nome { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.anexo-item .ai-tam { color: var(--text-muted); font-size: 12px; flex-shrink: 0; }
+.anexo-item .ai-x { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 2px 6px; flex-shrink: 0; }
+/* só no computador: no celular a conversa já é uma camada fixa por cima da lista e não pode perder isso */
+@media (min-width: 769px) { .conversas-chat { position: relative; } }
+.chat-solte { position: absolute; inset: 0; z-index: 150; background: rgba(0,168,132,.16); border: 3px dashed var(--primary); display: none; align-items: center; justify-content: center; font-size: 20px; color: var(--text); pointer-events: none; }
+.conversas-chat.arrastando .chat-solte { display: flex; }
+
+/* Lista: botão para mostrar mais conversas e aviso de busca */
+.lista-mais { display: block; width: calc(100% - 24px); margin: 10px 12px 14px; padding: 9px; border: 1px solid var(--border); border-radius: 8px; background: none; color: var(--wa-quote-bar); font-size: 13.5px; cursor: pointer; }
+.lista-mais:hover { background: var(--card-hover); }
+.lista-nota { text-align: center; padding: 8px 12px; color: var(--text-muted); font-size: 12.5px; }
+.header-icone { background: none; border: 1px solid var(--border); color: var(--text-muted); border-radius: var(--radius); cursor: pointer; font-size: 16px; padding: 5px 9px; line-height: 1.1; }
+.header-icone:hover { color: var(--text); }
+
+/* Faixa de dia e botões pequenos: cores próprias em cada tema */
+:root { --wa-dia-bg: #182229; --wa-dia-text: #8696a0; }
+
+/* ── Tema claro (igual ao WhatsApp claro). Fica guardado no navegador de cada pessoa. ── */
+:root[data-theme="light"] {
+  --bg: #ffffff; --card-bg: #f0f2f5; --card-hover: #f5f6f6; --border: #d1d7db;
+  --text: #111b21; --text-secondary: #3b4a54; --text-muted: #667781;
+  --success: #1fa855; --warning: #b45309; --danger: #dc2626;
+  --wa-outgoing: #d9fdd3; --wa-incoming: #ffffff; --wa-header: #f0f2f5; --wa-search-bg: #ffffff;
+  --wa-sidebar: #ffffff; --wa-panel-bg: #efeae2; --wa-row-border: #e9edef; --wa-active: #f0f2f5;
+  --wa-dropdown: #ffffff; --wa-quote-bar: #008069; --wa-blue-tick: #027eb5;
+  --wa-badge-bg: #25d366; --wa-badge-text: #ffffff; --wa-dia-bg: #ffffff; --wa-dia-text: #54656f;
+}
+:root[data-theme="light"] .messages-area { background-color: #efeae2; background-image: none; }
+:root[data-theme="light"] .msg { box-shadow: 0 1px .5px rgba(11,20,26,.13); }
+:root[data-theme="light"] .msg .msg-time, :root[data-theme="light"] .msg.in .msg-time { color: #667781; }
+:root[data-theme="light"] .msg-cita, :root[data-theme="light"] .msg-file-link { background: rgba(11,20,26,.06); }
+:root[data-theme="light"] .chat-header .ch-actions a, :root[data-theme="light"] .chat-header .ch-actions button { color: #54656f; }
+:root[data-theme="light"] .conversa-avatar-fb, :root[data-theme="light"] .chat-header .ch-avatar-fb { background: #dfe5e7; color: #54656f; }
+:root[data-theme="light"] .modal-overlay { background: rgba(11,20,26,.45); }
+:root[data-theme="light"] .conversas-search input { background: #f0f2f5; }
+:root[data-theme="light"] .filter-chip:hover:not(.active) { background: #e9edef; }
+:root[data-theme="light"] .conversa-etapa-chip { background: rgba(11,20,26,.06); }
+:root[data-theme="light"] .conversas-list::-webkit-scrollbar-thumb { background: rgba(11,20,26,.2); }
+:root[data-theme="light"] .col-body::-webkit-scrollbar-track, :root[data-theme="light"] .kanban::-webkit-scrollbar-track { background: rgba(11,20,26,.05); }
+:root[data-theme="light"] .compose-bar textarea, :root[data-theme="light"] .compose-bar input[type="text"] { color: #111b21; }
+
+/* Balão de foto do tamanho da foto (antes esticava até 65% da largura) */
+.msg-img { max-width: 280px; }
+@media (max-width: 768px) { .msg-img { max-width: 100%; } }
+
+/* Topo em uma barra só: logo, abas e botões na mesma linha (antes eram duas barras) */
+.header { padding: 0 12px; min-height: 46px; gap: 10px; }
+.header .crm-tabs { flex: 1; min-width: 0; background: none; border-bottom: none; align-self: stretch; overflow-x: auto; margin: 0 6px; }
+.header .crm-tabs::-webkit-scrollbar { height: 0; }
+.header .crm-tab { flex: 0 0 auto; padding: 0 16px; font-size: 13.5px; white-space: nowrap; display: flex; align-items: center; gap: 4px; min-height: 46px; }
+.header .header-actions { flex-shrink: 0; }
+@media (max-width: 768px) {
+  .header { flex-wrap: wrap; padding: 4px 10px 0; }
+  .header .crm-tabs { order: 3; flex: 0 0 100%; margin: 0; }
+  .header .crm-tab { min-height: 36px; padding: 0 12px; }
+}
 </style>
 </head>
 <body>
@@ -516,18 +619,18 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
     <a href="https://xrdiagnostico.tech"><img src="/logo-xr.png" alt="XR"></a>
     <h1>CRM</h1>
   </div>
+  <div class="crm-tabs" id="crmTabs">
+    <button class="crm-tab active" id="tabBtnConversas" onclick="switchTab('conversas')">Conversas</button>
+    <button class="crm-tab" id="tabBtnFollowup" onclick="switchTab('followup')">🔔 Follow-up</button>
+    <button class="crm-tab" id="tabBtnMetricas" onclick="switchTab('metricas')">📊 Métricas</button>
+    <!-- custom tabs inserted here dynamically -->
+  </div>
   <div class="header-actions">
+    <button class="header-icone" id="btnSom" onclick="alternarSom()" title="Aviso de mensagem nova">🔔</button>
+    <button class="header-icone" id="btnTema" onclick="alternarTema()" title="Tema claro ou escuro">☀️</button>
     <button class="btn btn-ghost btn-sm" onclick="openConfig()" style="font-size:18px;padding:6px 10px">&#x2699;&#xFE0F;</button>
     <button class="btn btn-primary btn-sm" onclick="openNewModal()">+ Novo</button>
   </div>
-</div>
-
-<!-- Tabs -->
-<div class="crm-tabs" id="crmTabs">
-  <button class="crm-tab active" id="tabBtnConversas" onclick="switchTab('conversas')">Conversas</button>
-  <button class="crm-tab" id="tabBtnFollowup" onclick="switchTab('followup')">🔔 Follow-up</button>
-  <button class="crm-tab" id="tabBtnMetricas" onclick="switchTab('metricas')">📊 Métricas</button>
-  <!-- custom tabs inserted here dynamically -->
 </div>
 
 <!-- Tab: Conversas (WhatsApp-style) -->
@@ -535,7 +638,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
   <!-- Left: Conversation list -->
   <div class="conversas-sidebar">
     <div class="conversas-search">
-      <input type="text" id="conversasSearch" placeholder="Pesquisar ou comecar uma nova conversa" oninput="filterConversas()">
+      <input type="text" id="conversasSearch" placeholder="Pesquisar por nome, pet ou telefone" oninput="filterConversas()">
     </div>
     <div class="conversas-filters">
       <button class="filter-chip active" data-filter="tudo" onclick="setConversasFilter('tudo')">Tudo</button>
@@ -555,19 +658,23 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
       <div style="text-align:center;color:var(--text-muted)">
         <div style="font-size:64px;margin-bottom:16px;opacity:.5">&#x1F4AC;</div>
         <h2 style="font-weight:300;font-size:28px;color:var(--text);margin-bottom:8px">XR CRM</h2>
-        <p style="font-size:14px">Selecione uma conversa para comecar</p>
+        <p style="font-size:14px">Selecione uma conversa para começar</p>
       </div>
     </div>
     <div id="chatActivePanel" style="display:none;flex-direction:column;height:100%">
       <div class="chat-header" id="chatHeader"></div>
       <div class="messages-area" id="chatMessagesArea"></div>
+      <button class="chat-nova" id="chatNova" onclick="irParaUltima()">&#x2193; <b>Mensagem nova</b></button>
+      <div class="chat-solte">Solte o arquivo aqui para enviar</div>
+      <div class="reply-bar" id="chatReplyBar"></div>
       <div class="compose-bar" style="position:relative">
         <div class="slash-popup" id="chatSlashPopup"></div>
         <button class="attach-btn" onclick="document.getElementById('chatFileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
         <button class="attach-btn" onclick="abrirOrcamentoChat()" title="Criar orçamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
-        <input type="file" id="chatFileInput" style="display:none" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onchange="sendFileChat(this)">
-        <input type="text" id="chatComposeInput" placeholder="Mensagem... ( / para atalhos)" onkeydown="handleChatComposeKey(event)" oninput="checkChatSlashTrigger(this)" style="min-width:0">
-        <button class="btn btn-primary btn-sm" onclick="sendChatMessage()" style="padding:7px 10px;font-size:12px;white-space:nowrap">Enviar</button>
+        <input type="file" id="chatFileInput" multiple style="display:none" onchange="escolherArquivosChat(this)">
+        <textarea id="chatComposeInput" rows="1" placeholder="Digite uma mensagem ( / abre as mensagens rápidas )" onkeydown="handleChatComposeKey(event)" oninput="checkChatSlashTrigger(this);ajustarAltura(this)"></textarea>
+        <div class="envio-estado" id="chatEnvioEstado"></div>
+        <button class="send-btn" onclick="sendChatMessage()" title="Enviar (Enter). Shift+Enter quebra a linha."><svg viewBox="0 0 24 24"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
       </div>
     </div>
   </div>
@@ -575,7 +682,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 
 <!-- Conversation Context Menu -->
 <div class="conversa-context-menu" id="conversaContextMenu">
-  <div class="conversa-context-item" onclick="conversaMarkUnread()">&#x1F4E9; Marcar como nao lido</div>
+  <div class="conversa-context-item" onclick="conversaMarkUnread()">&#x1F4E9; Marcar como não lida</div>
   <div class="conversa-context-item" onclick="conversaTogglePin()">&#x1F4CC; Fixar/Desafixar</div>
   <div class="conversa-context-item" onclick="conversaOpenTag()">&#x1F3F7;&#xFE0F; Etiquetar</div>
 </div>
@@ -698,7 +805,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
       <button class="attach-btn" onclick="document.getElementById('fileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
       <button class="attach-btn" onclick="abrirOrcamento()" title="Criar orçamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
       <input type="file" id="fileInput" style="display:none" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onchange="sendFile(this)">
-      <input type="text" id="composeInput" placeholder="Mensagem... ( / para atalhos)" onkeydown="handleComposeKey(event)" oninput="checkSlashTrigger(this)" style="min-width:0">
+      <textarea id="composeInput" rows="1" placeholder="Digite uma mensagem ( / abre as mensagens rápidas )" onkeydown="handleComposeKey(event)" oninput="checkSlashTrigger(this);ajustarAltura(this)"></textarea>
       <button class="btn btn-primary btn-sm" onclick="sendMessage()" style="padding:7px 10px;font-size:12px;white-space:nowrap">Enviar</button>
     </div>
   </div>
@@ -785,6 +892,19 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 </div>
 
 
+<!-- Prévia de arquivo antes de enviar (colar, arrastar ou escolher no clipe) -->
+<div class="modal-overlay" id="anexoModal" onclick="if(event.target===this)fecharAnexo()">
+  <div class="modal">
+    <h2 id="anexoTitulo">Enviar arquivo</h2>
+    <div class="anexo-lista" id="anexoPrevia"></div>
+    <textarea id="anexoLegenda" rows="2" placeholder="Legenda (opcional). Enter envia, Shift+Enter quebra a linha." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarAnexos()}else if(event.key==='Escape'){fecharAnexo()}"></textarea>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="fecharAnexo()">Cancelar</button>
+      <button class="btn btn-primary" id="anexoEnviar" onclick="enviarAnexos()">Enviar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Forward Modal -->
 <div class="modal-overlay" id="forwardModal" onclick="if(event.target===this)closeForwardModal()">
   <div class="modal">
@@ -799,6 +919,7 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 
 <!-- Message Context Menu -->
 <div class="msg-context-menu" id="msgContextMenu" style="display:none">
+  <div class="msg-context-item" id="ctxResponder" onclick="contextResponder()">&#x21A9;&#xFE0F; Responder</div>
   <div class="msg-context-item" onclick="contextForward()">&#x21AA;&#xFE0F; Encaminhar</div>
   <div class="msg-context-item" onclick="contextCopy()">&#x1F4CB; Copiar texto</div>
   <div class="msg-context-item danger" onclick="contextDelete()">&#x1F5D1;&#xFE0F; Apagar</div>
@@ -1326,35 +1447,7 @@ function renderDetail() {
     '<button class="etapa-btn' + (c.etapa === e.id ? ' current' : '') + '" style="' + (c.etapa === e.id ? 'border-color:' + e.cor + ';color:' + e.cor : '') + '" onclick="moveContato(\'' + e.id + '\')">' + e.label + '</button>'
   ).join('');
 
-  const area = document.getElementById('messagesArea');
-  if (!c.mensagens || c.mensagens.length === 0) {
-    area.innerHTML = '<div class="empty"><div class="emoji">&#x1F4AC;</div>Nenhuma mensagem</div>';
-  } else {
-    area.innerHTML = c.mensagens.reverse().map(m => {
-      let content = '';
-      if (m.media_path && (m.tipo === 'image')) {
-        content = '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="window.open(\'/media/' + esc(m.media_path) + '\')" alt="imagem">';
-        if (m.texto && m.texto !== '[image]') content += '<div>' + fmtWa(m.texto) + '</div>';
-      } else if (m.media_path && m.tipo === 'audio') {
-        content = '<audio controls src="/media/' + esc(m.media_path) + '" style="max-width:250px"></audio>';
-      } else if (m.media_path && (m.tipo === 'document' || m.tipo === 'video')) {
-        content = '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link">&#x1F4CE; ' + esc(m.media_path) + '</a>';
-        if (m.texto && !m.texto.startsWith('[')) content += '<div>' + fmtWa(m.texto) + '</div>';
-      } else {
-        content = fmtWa(m.texto);
-      }
-      content += leituraBloco(m);
-      return '<div class="msg ' + m.direcao + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
-        '<div class="msg-time">' + (m.created_at || '') + '</div></div>';
-    }).join('');
-    area.scrollTop = area.scrollHeight;
-    // Scroll again after images load
-    area.querySelectorAll('img, audio').forEach(el => {
-      el.addEventListener('load', () => { area.scrollTop = area.scrollHeight; });
-      el.addEventListener('loadeddata', () => { area.scrollTop = area.scrollHeight; });
-    });
-    setTimeout(() => { area.scrollTop = area.scrollHeight; }, 200);
-  }
+  renderMessagesInto(document.getElementById('messagesArea'), c.mensagens, { rolar: 'fim', nome: String(c.nome || '').split(' ')[0] || 'Cliente' });
 }
 
 async function renderDetailAbas() {
@@ -1408,11 +1501,14 @@ async function sendMessage() {
   const texto = input.value.trim();
   if (!texto) return;
   input.value = '';
+  ajustarAltura(input);
   try {
     await api('POST', '/api/contato/' + currentContato.id + '/mensagem', { texto });
     await openDetail(currentContato.id);
-    toast('Enviada!');
-  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+  } catch(e) {
+    toast('NÃO foi enviada: ' + e.message, 'err');
+    if (!input.value) { input.value = texto; ajustarAltura(input); }
+  }
 }
 
 async function sendFile(input) {
@@ -1726,16 +1822,16 @@ function checkSlashTrigger(input) {
 }
 
 function handleComposeKey(e) {
-  if (e.key === 'Enter') {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault(); // Enter envia; Shift+Enter quebra a linha
     if (slashOpen) {
-      // Send first visible slash item
       const first = document.querySelector('#slashPopup .slash-item:not([style*="display: none"])');
-      if (first) { first.click(); e.preventDefault(); return; }
+      if (first) { first.click(); return; }
     }
     sendMessage();
   } else if (e.key === 'Escape') {
-    hideSlashPopup();
-    document.getElementById('composeInput').value = '';
+    const input = document.getElementById('composeInput');
+    if (slashOpen) { hideSlashPopup(); if (input.value.startsWith('/')) { input.value = ''; ajustarAltura(input); } }
   }
 }
 
@@ -1768,16 +1864,15 @@ function hideSlashPopup() {
   slashOpen = false;
 }
 
-async function sendQuickMsg(id) {
+// Mensagem rápida: entra no campo para conferir e ajustar antes de enviar.
+function sendQuickMsg(id) {
   const msg = msgsRapidas.find(m => m.id === id);
   if (!msg || !currentContato) return;
   hideSlashPopup();
-  document.getElementById('composeInput').value = '';
-  try {
-    await api('POST', '/api/contato/' + currentContato.id + '/mensagem', { texto: msg.texto });
-    await openDetail(currentContato.id);
-    toast('Enviada!');
-  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+  const input = document.getElementById('composeInput');
+  input.value = msg.texto;
+  ajustarAltura(input);
+  input.focus();
 }
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────
@@ -1871,7 +1966,7 @@ async function openGrupoChat(id, nome) {
       return '<div class="msg ' + (isMe ? 'out' : 'in') + '">' +
         (isMe ? '' : '<div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:2px">' + esc(m.remetente_nome || m.remetente || '?') + '</div>') +
         fmtWa(m.texto) +
-        '<div class="msg-time">' + (m.created_at || '') + '</div>' +
+        '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + horaMsg(m.created_at) + '</div>' +
       '</div>';
     }).join('');
     area.scrollTop = area.scrollHeight;
@@ -2211,9 +2306,12 @@ function showMsgContextMenu(msgEl, x, y) {
   msgEl.classList.add('selected');
 
   const menu = document.getElementById('msgContextMenu');
+  // "Responder" só existe na conversa da aba Conversas
+  const ctxR = document.getElementById('ctxResponder');
+  if (ctxR) ctxR.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato) ? '' : 'none';
   menu.style.display = 'block';
   // Position menu
-  const menuW = 160, menuH = 140;
+  const menuW = 200, menuH = 190;
   let left = x, top = y;
   if (left + menuW > window.innerWidth) left = window.innerWidth - menuW - 10;
   if (top + menuH > window.innerHeight) top = y - menuH;
@@ -2252,6 +2350,11 @@ async function contextDelete() {
     const result = await api('DELETE', '/api/mensagem/' + id);
     toast(result.whatsappDeleted ? 'Apagada do CRM e WhatsApp!' : 'Apagada do CRM');
     if (currentContato) await openDetail(currentContato.id);
+    if (currentChatContato) {
+      chatAntigas = chatAntigas.filter(m => String(m.id) !== String(id));
+      currentChatContato.mensagens = (currentChatContato.mensagens || []).filter(m => String(m.id) !== String(id));
+      await recarregarChat('auto', true);
+    }
   } catch(e) { toast('Erro: ' + e.message, 'err'); }
 }
 
@@ -2533,129 +2636,6 @@ let conversasTagFilter = null;
 let conversaContextId = null;
 let currentTab = 'conversas';
 
-async function loadConversas() {
-  try {
-    const [data, tags] = await Promise.all([
-      api('GET', '/api/contatos/conversas'),
-      allTags.length ? Promise.resolve(allTags) : api('GET', '/api/etiquetas')
-    ]);
-    conversasList = data;
-    if (!allTags.length) allTags = tags;
-    renderConversasList();
-  } catch(e) { console.error('loadConversas:', e); }
-}
-
-function renderConversasList() {
-  const list = document.getElementById('conversasList');
-  const q = (document.getElementById('conversasSearch').value || '').trim().toLowerCase();
-  const now = new Date();
-
-  let filtered = conversasList;
-
-  // Apply filter
-  if (conversasFilter === 'nao-lidas') {
-    filtered = filtered.filter(c => (c.nao_lidas > 0 || c.manual_unread));
-  } else if (conversasFilter === 'favoritas') {
-    filtered = filtered.filter(c => c.favorito);
-  } else if (conversasFilter === 'pendentes') {
-    filtered = filtered.filter(c => {
-      if (c.etapa !== 'orcamento' || !c.orcamento_enviado_at) return false;
-      const enviadoAt = new Date(c.orcamento_enviado_at);
-      const ultimaResp = c.ultima_resposta_cliente_at ? new Date(c.ultima_resposta_cliente_at) : null;
-      if (ultimaResp && ultimaResp >= enviadoAt) return false;
-      return (new Date() - enviadoAt) >= 24 * 3600000;
-    });
-  } else if (conversasFilter === 'etiqueta') {
-    if (conversasTagFilter) {
-      filtered = filtered.filter(c => c.etiquetas && c.etiquetas.some(t => t.id === conversasTagFilter));
-    }
-  }
-
-  // Search
-  if (q) {
-    filtered = filtered.filter(c => {
-      const name = (c.nome || '').toLowerCase();
-      const phone = (c.telefone || '').toLowerCase();
-      return name.includes(q) || phone.includes(q);
-    });
-  }
-
-  // Sort: pinned first, then by last_message_at
-  filtered.sort((a, b) => {
-    if (a.pinado && !b.pinado) return -1;
-    if (!a.pinado && b.pinado) return 1;
-    const ta = a.ultima_msg_at || a.last_message_at || a.created_at || '';
-    const tb = b.ultima_msg_at || b.last_message_at || b.created_at || '';
-    return tb.localeCompare(ta);
-  });
-
-  if (filtered.length === 0) {
-    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);font-size:14px">' +
-      (q ? 'Nenhum resultado para "' + esc(q) + '"' : 'Nenhuma conversa') + '</div>';
-    return;
-  }
-
-  list.innerHTML = filtered.map(c => {
-    const unread = Math.max(c.nao_lidas || 0, c.manual_unread || 0);
-    const lastTime = c.ultima_msg_at || c.last_message_at;
-    const timeStr = lastTime ? formatTimeWa(new Date(lastTime)) : '';
-    const isActive = currentChatContato && currentChatContato.id === c.id;
-
-    // Preview with check marks for outgoing
-    let preview = '';
-    if (c.ultima_msg) {
-      if (c.ultima_msg_dir === 'out') preview = '<span class="check-marks">&#x2713;&#x2713;</span> ';
-      // Show media type icons
-      if (c.ultima_msg_tipo === 'image') preview += '&#x1F4F7; ';
-      else if (c.ultima_msg_tipo === 'audio') preview += '&#x1F3A4; ';
-      else if (c.ultima_msg_tipo === 'document') preview += '&#x1F4CE; ';
-      preview += esc(c.ultima_msg).substring(0, 60);
-    }
-
-    const avatar = c.foto_url
-      ? '<img class="conversa-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
-        '<div class="conversa-avatar-fb" style="display:none">' + inicial(c.nome) + '</div>'
-      : '<div class="conversa-avatar-fb">' + inicial(c.nome) + '</div>';
-
-    const tags = (c.etiquetas && c.etiquetas.length)
-      ? '<div class="conversa-tags">' + c.etiquetas.map(t => '<span class="tag" style="background:' + t.cor + '">' + esc(t.nome) + '</span>').join('') + '</div>'
-      : '';
-
-    // Follow-up badge for orçamento sem resposta
-    let followupHtml = '';
-    if (c.etapa === 'orcamento' && c.orcamento_enviado_at) {
-      const enviadoAt = new Date(c.orcamento_enviado_at);
-      const ultimaResp = c.ultima_resposta_cliente_at ? new Date(c.ultima_resposta_cliente_at) : null;
-      // Only show if client hasn't responded AFTER the quote was sent
-      if (!ultimaResp || ultimaResp < enviadoAt) {
-        const horasSem = (now - enviadoAt) / 3600000;
-        if (horasSem >= 72) followupHtml = '<span class="followup-badge cold">&#x1F9CA; ' + Math.floor(horasSem / 24) + 'd esfriou</span>';
-        else if (horasSem >= 48) followupHtml = '<span class="followup-badge hot">&#x1F525; 48h sem resposta</span>';
-        else if (horasSem >= 24) followupHtml = '<span class="followup-badge warm">&#x23F0; 24h sem resposta</span>';
-      }
-    }
-
-    return '<div class="conversa-row' + (isActive ? ' active' : '') + (unread ? ' has-unread' : '') + '" data-id="' + c.id + '" onclick="openConversaChat(' + c.id + ')" oncontextmenu="showConversaContext(event,' + c.id + ')">' +
-      avatar +
-      '<div class="conversa-info">' +
-        '<div class="conversa-top-row">' +
-          '<div class="conversa-name">' + esc(c.nome || formatPhone(c.telefone)) + (c.pinado ? '<span class="pin-icon">&#x1F4CC;</span>' : '') + '</div>' +
-          '<span class="conversa-time' + (unread ? ' unread' : '') + '">' + timeStr + '</span>' +
-        '</div>' +
-        '<div class="conversa-bottom-row">' +
-          '<div class="conversa-preview">' + preview + '</div>' +
-          '<div class="conversa-badges">' +
-            '<span class="conversa-star' + (c.favorito ? ' active' : '') + '" onclick="event.stopPropagation();toggleFavorito(' + c.id + ')" title="Favoritar">&#x2605;</span>' +
-            (unread ? '<span class="conversa-unread-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '') +
-          '</div>' +
-        '</div>' +
-        followupHtml +
-        tags +
-      '</div>' +
-    '</div>';
-  }).join('');
-}
-
 function formatTimeWa(d) {
   const now = new Date();
   const diff = now - d;
@@ -2674,11 +2654,12 @@ function formatTimeWa(d) {
   return d.getDate().toString().padStart(2,'0') + '/' + (d.getMonth()+1).toString().padStart(2,'0') + '/' + d.getFullYear();
 }
 
-function filterConversas() { renderConversasList(); }
+function filterConversas() { listaLimite = LISTA_LOTE; renderConversasList(); }
 
 function setConversasFilter(filter) {
   conversasFilter = filter;
   conversasTagFilter = null;
+  listaLimite = LISTA_LOTE;
   document.querySelectorAll('.conversas-filters .filter-chip').forEach(c => {
     c.classList.toggle('active', c.dataset.filter === filter);
   });
@@ -2711,32 +2692,7 @@ function filterByTag(tagId) {
 }
 
 // ─── Conversas: Chat panel ──────────────────────────────────────────────────
-async function openConversaChat(id) {
-  try {
-    currentChatContato = await api('GET', '/api/contato/' + id);
-    renderConversaChat();
-    document.getElementById('chatEmptyState').style.display = 'none';
-    document.getElementById('chatActivePanel').style.display = 'flex';
-    // Mobile: show chat
-    document.getElementById('conversasChat').classList.add('mobile-open');
-    // Update sidebar unread (mark as read happened on GET)
-    const idx = conversasList.findIndex(c => c.id === id);
-    if (idx >= 0) { conversasList[idx].nao_lidas = 0; conversasList[idx].manual_unread = 0; }
-    renderConversasList();
-    // Sync: update kanban badges too
-    refreshTabBadges();
-  } catch(e) { toast('Erro: ' + e.message, 'err'); }
-}
-
-function closeConversaChat() {
-  document.getElementById('conversasChat').classList.remove('mobile-open');
-  document.getElementById('chatActivePanel').style.display = 'none';
-  document.getElementById('chatEmptyState').style.display = 'flex';
-  currentChatContato = null;
-  loadConversas();
-}
-
-function renderConversaChat() {
+function renderConversaChat(rolar, chegouDoCliente) {
   const c = currentChatContato;
   if (!c) return;
 
@@ -2767,8 +2723,9 @@ function renderConversaChat() {
     '<button class="etapa-btn' + (c.etapa === e.id ? ' current' : '') + '" style="' + (c.etapa === e.id ? 'border-color:' + e.cor + ';color:' + e.cor : '') + '" onclick="moveChatContato(\'' + e.id + '\')">' + e.label + '</button>'
   ).join('');
 
-  // Messages
-  renderMessagesInto(document.getElementById('chatMessagesArea'), c.mensagens);
+  // Messages (as 50 mais recentes + as anteriores que a pessoa pediu para carregar)
+  const ficouAcima = renderMessagesInto(document.getElementById('chatMessagesArea'), mensagensDoChat(), { rolar: rolar || 'auto', temMais: chatTemMais });
+  mostrarAvisoNova(ficouAcima && chegouDoCliente);
 }
 
 // ─── Leitura automática de foto/PDF do cliente (pedido do veterinário etc.) ───
@@ -2795,36 +2752,6 @@ function leituraBloco(m) {
     '<div class="ml-n">Confira com a imagem antes de orçar.</div></div>';
 }
 
-function renderMessagesInto(area, mensagens) {
-  if (!mensagens || mensagens.length === 0) {
-    area.innerHTML = '<div class="empty"><div class="emoji">&#x1F4AC;</div>Nenhuma mensagem</div>';
-    return;
-  }
-  area.innerHTML = mensagens.slice().reverse().map(m => {
-    let content = '';
-    if (m.media_path && (m.tipo === 'image')) {
-      content = '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="window.open(\'/media/' + esc(m.media_path) + '\')" alt="imagem">';
-      if (m.texto && m.texto !== '[image]') content += '<div>' + fmtWa(m.texto) + '</div>';
-    } else if (m.media_path && m.tipo === 'audio') {
-      content = '<audio controls src="/media/' + esc(m.media_path) + '" style="max-width:250px"></audio>';
-    } else if (m.media_path && (m.tipo === 'document' || m.tipo === 'video')) {
-      content = '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link">&#x1F4CE; ' + esc(m.media_path) + '</a>';
-      if (m.texto && !m.texto.startsWith('[')) content += '<div>' + fmtWa(m.texto) + '</div>';
-    } else {
-      content = fmtWa(m.texto);
-    }
-    content += leituraBloco(m);
-    return '<div class="msg ' + m.direcao + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
-      '<div class="msg-time">' + (m.created_at || '') + '</div></div>';
-  }).join('');
-  area.scrollTop = area.scrollHeight;
-  area.querySelectorAll('img, audio').forEach(el => {
-    el.addEventListener('load', () => { area.scrollTop = area.scrollHeight; });
-    el.addEventListener('loadeddata', () => { area.scrollTop = area.scrollHeight; });
-  });
-  setTimeout(() => { area.scrollTop = area.scrollHeight; }, 200);
-}
-
 async function moveChatContato(etapa) {
   if (!currentChatContato) return;
   try {
@@ -2833,42 +2760,6 @@ async function moveChatContato(etapa) {
     renderConversaChat();
     toast('Movido!');
   } catch(e) { toast('Erro: ' + e.message, 'err'); }
-}
-
-async function sendChatMessage() {
-  if (!currentChatContato) return;
-  const input = document.getElementById('chatComposeInput');
-  const texto = input.value.trim();
-  if (!texto) return;
-  input.value = '';
-  try {
-    await api('POST', '/api/contato/' + currentChatContato.id + '/mensagem', { texto });
-    currentChatContato = await api('GET', '/api/contato/' + currentChatContato.id);
-    renderConversaChat();
-    toast('Enviada!');
-  } catch(e) { toast('Erro: ' + e.message, 'err'); }
-}
-
-async function sendFileChat(input) {
-  if (!currentChatContato || !input.files.length) return;
-  const file = input.files[0];
-  input.value = '';
-  if (file.size > 15 * 1024 * 1024) return toast('Arquivo muito grande (max 15MB)', 'err');
-  const reader = new FileReader();
-  reader.onload = async function() {
-    const base64 = reader.result.split(',')[1];
-    const isImage = file.type.startsWith('image/');
-    try {
-      toast('Enviando ' + file.name + '...');
-      await api('POST', '/api/contato/' + currentChatContato.id + '/media', {
-        base64, mediatype: isImage ? 'image' : 'document', mimetype: file.type, fileName: file.name, caption: ''
-      });
-      currentChatContato = await api('GET', '/api/contato/' + currentChatContato.id);
-      renderConversaChat();
-      toast('Arquivo enviado!');
-    } catch(e) { toast('Erro: ' + e.message, 'err'); }
-  };
-  reader.readAsDataURL(file);
 }
 
 function abrirOrcamentoChat() {
@@ -2902,22 +2793,9 @@ let chatSlashOpen = false;
 
 function checkChatSlashTrigger(input) {
   const val = input.value;
-  if (val.startsWith('/')) {
+  if (val.startsWith('/') && val.indexOf('\n') < 0) {
     showChatSlashPopup(val.slice(1).toLowerCase());
   } else { hideChatSlashPopup(); }
-}
-
-function handleChatComposeKey(e) {
-  if (e.key === 'Enter') {
-    if (chatSlashOpen) {
-      const first = document.querySelector('#chatSlashPopup .slash-item:not([style*="display: none"])');
-      if (first) { first.click(); e.preventDefault(); return; }
-    }
-    sendChatMessage();
-  } else if (e.key === 'Escape') {
-    hideChatSlashPopup();
-    document.getElementById('chatComposeInput').value = '';
-  }
 }
 
 function showChatSlashPopup(filter) {
@@ -2946,19 +2824,6 @@ function showChatSlashPopup(filter) {
 function hideChatSlashPopup() {
   document.getElementById('chatSlashPopup').classList.remove('show');
   chatSlashOpen = false;
-}
-
-async function sendChatQuickMsg(id) {
-  const msg = msgsRapidas.find(m => m.id === id);
-  if (!msg || !currentChatContato) return;
-  hideChatSlashPopup();
-  document.getElementById('chatComposeInput').value = '';
-  try {
-    await api('POST', '/api/contato/' + currentChatContato.id + '/mensagem', { texto: msg.texto });
-    currentChatContato = await api('GET', '/api/contato/' + currentChatContato.id);
-    renderConversaChat();
-    toast('Enviada!');
-  } catch(e) { toast('Erro: ' + e.message, 'err'); }
 }
 
 function openEditModalChat() {
@@ -3082,48 +2947,801 @@ document.addEventListener('click', function(e) {
 });
 
 // ─── Init ────────────────────────────────────────────────────────────────────
+
+// ══ 11/11/2026 · pacotes 1 e 2 da tela ════════════════════════════════════════════════════════
+// Lista que não para de atualizar, aviso de mensagem nova, campo com várias linhas, hora curta com
+// faixa de dia, lista mais leve, colar/arrastar arquivo com prévia, responder citando, mensagens
+// anteriores, nome do arquivo e tema claro. Nada aqui envia mensagem sem alguém apertar Enviar.
+
+// ─── A tela está na frente? (só então a conversa aberta conta como lida) ─────────────────────────
+function telaNaFrente() {
+  return document.visibilityState === 'visible' && document.hasFocus();
+}
+
+// ─── Tema claro/escuro e som: preferência de cada navegador ──────────────────────────────────────
+function prefLer(chave, padrao) { try { const v = localStorage.getItem(chave); return v === null ? padrao : v; } catch (e) { return padrao; } }
+function prefGravar(chave, valor) { try { localStorage.setItem(chave, valor); } catch (e) {} }
+
+function aplicarTema() {
+  const claro = prefLer('crm_tema', 'dark') === 'light';
+  if (claro) document.documentElement.setAttribute('data-theme', 'light'); else document.documentElement.removeAttribute('data-theme');
+  const b = document.getElementById('btnTema');
+  if (b) { b.textContent = claro ? '🌙' : '☀️'; b.title = claro ? 'Mudar para o tema escuro' : 'Mudar para o tema claro'; }
+}
+function alternarTema() {
+  prefGravar('crm_tema', prefLer('crm_tema', 'dark') === 'light' ? 'dark' : 'light');
+  aplicarTema();
+}
+
+let somCtx = null;
+function somLigado() { return prefLer('crm_som', '1') === '1'; }
+function aplicarSom() {
+  const b = document.getElementById('btnSom');
+  if (b) { b.textContent = somLigado() ? '🔔' : '🔕'; b.title = somLigado() ? 'Aviso de mensagem nova ligado (clique para silenciar)' : 'Aviso de mensagem nova desligado (clique para ligar)'; }
+}
+function alternarSom() {
+  prefGravar('crm_som', somLigado() ? '0' : '1');
+  aplicarSom();
+  if (somLigado()) {
+    tocarSom();
+    // Aviso do Windows quando a aba do CRM não está na frente: o navegador pergunta uma vez.
+    try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) {}
+  }
+}
+// O navegador só deixa tocar som depois do primeiro clique na página.
+document.addEventListener('pointerdown', function () {
+  if (somCtx) return;
+  try { somCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { somCtx = null; }
+}, { passive: true });
+function tocarSom() {
+  if (!somLigado() || !somCtx) return;
+  try {
+    if (somCtx.state === 'suspended') somCtx.resume();
+    const t0 = somCtx.currentTime;
+    [[880, 0], [1175, 0.13]].forEach(function (par) {
+      const o = somCtx.createOscillator(), g = somCtx.createGain();
+      o.type = 'sine'; o.frequency.value = par[0];
+      g.gain.setValueAtTime(0.0001, t0 + par[1]);
+      g.gain.exponentialRampToValueAtTime(0.16, t0 + par[1] + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + par[1] + 0.22);
+      o.connect(g); g.connect(somCtx.destination);
+      o.start(t0 + par[1]); o.stop(t0 + par[1] + 0.25);
+    });
+  } catch (e) {}
+}
+
+// ─── Aviso de mensagem nova: som, contador no título da aba e aviso do Windows ───────────────────
+let conversasVistas = null; // id do contato -> hora da última mensagem RECEBIDA já conhecida
+function previaDe(c) {
+  const ic = c.ultima_msg_tipo === 'image' ? '📷 ' : c.ultima_msg_tipo === 'audio' ? '🎤 ' : c.ultima_msg_tipo === 'document' ? '📎 ' : '';
+  const t = String(c.ultima_msg || '');
+  return ic + (t.startsWith('[') ? '' : t).slice(0, 90);
+}
+function atualizarTitulo(lista) {
+  const n = (lista || []).filter(c => (c.nao_lidas > 0 || c.manual_unread)).length;
+  document.title = (n ? '(' + n + ') ' : '') + 'XR CRM';
+}
+function avisarNovas(data) {
+  const mapa = {};
+  const novas = [];
+  for (const c of data) {
+    const chave = c.ultima_msg_dir === 'in' ? (c.ultima_msg_at || '') : '';
+    mapa[c.id] = chave;
+    if (conversasVistas && chave && chave > (conversasVistas[c.id] || '')) {
+      const abertaNaFrente = currentTab === 'conversas' && currentChatContato && currentChatContato.id === c.id && telaNaFrente();
+      if (!abertaNaFrente) novas.push(c);
+    }
+  }
+  // Contato que saiu da lista (ficou antigo) mantém o que já se sabia dele.
+  if (conversasVistas) for (const id in conversasVistas) if (!(id in mapa)) mapa[id] = conversasVistas[id];
+  conversasVistas = mapa;
+  atualizarTitulo(data);
+  if (!novas.length) return;
+  tocarSom();
+  try {
+    if (somLigado() && 'Notification' in window && Notification.permission === 'granted' && !telaNaFrente()) {
+      const c = novas[0];
+      const n = new Notification(c.nome || formatPhone(c.telefone), {
+        body: (novas.length > 1 ? '(+' + (novas.length - 1) + ' conversas) ' : '') + previaDe(c), tag: 'crm-' + c.id, icon: '/logo-xr.png'
+      });
+      n.onclick = function () { window.focus(); if (currentTab !== 'conversas') switchTab('conversas'); openConversaChat(c.id); n.close(); };
+    }
+  } catch (e) {}
+}
+
+// ─── Lista de conversas ─────────────────────────────────────────────────────────────────────────
+const fotosRuins = new Set();
+function fotoRuim(img) {
+  try { fotosRuins.add(img.getAttribute('src')); } catch (e) {}
+  img.style.display = 'none';
+  if (img.nextElementSibling) img.nextElementSibling.style.display = 'flex';
+}
+const LISTA_LOTE = 250;      // quantas linhas a lista desenha de cada vez
+let listaLimite = LISTA_LOTE;
+let conversasEtag = '';      // "impressão digital" da última lista recebida: se o servidor disser que é a mesma, nada é redesenhado
+let buscaExtra = [];         // contatos antigos achados pela busca no servidor
+let buscaTexto = '';
+let buscaTimer = null;
+
+async function loadConversas(forcar) {
+  try {
+    const hdr = {};
+    if (conversasEtag && !forcar) hdr['If-None-Match'] = conversasEtag;
+    const r = await fetch('/api/contatos/conversas', { headers: hdr, redirect: 'manual', cache: 'no-store' });
+    if (r.status === 304) return; // nada mudou (tem de vir ANTES do teste de sessão, que trata 3xx como login vencido)
+    if (sessaoCaiu(r)) { irParaLogin(); return; }
+    if (!r.ok) throw new Error('lista de conversas: erro ' + r.status);
+    conversasEtag = r.headers.get('ETag') || '';
+    const data = await r.json();
+    if (!allTags.length) { try { allTags = await api('GET', '/api/etiquetas'); } catch (e) {} }
+    avisarNovas(data);
+    conversasList = data;
+    renderConversasList();
+  } catch (e) { console.error('loadConversas:', e); }
+}
+
+function buscarAntigos(q) {
+  clearTimeout(buscaTimer);
+  if (q.length < 3) { if (buscaExtra.length) { buscaExtra = []; buscaTexto = ''; } return; }
+  if (q === buscaTexto) return;
+  buscaTimer = setTimeout(async function () {
+    try {
+      const r = await api('GET', '/api/contatos/conversas?q=' + encodeURIComponent(q));
+      const atual = (document.getElementById('conversasSearch').value || '').trim().toLowerCase();
+      if (atual !== q) return; // a pessoa já digitou outra coisa
+      buscaTexto = q;
+      buscaExtra = Array.isArray(r) ? r : [];
+      renderConversasList();
+    } catch (e) {}
+  }, 350);
+}
+
+function renderConversasList() {
+  const list = document.getElementById('conversasList');
+  const q = (document.getElementById('conversasSearch').value || '').trim().toLowerCase();
+  const now = new Date();
+
+  let filtered = conversasList.slice();
+
+  // Apply filter
+  if (conversasFilter === 'nao-lidas') {
+    filtered = filtered.filter(c => (c.nao_lidas > 0 || c.manual_unread));
+  } else if (conversasFilter === 'favoritas') {
+    filtered = filtered.filter(c => c.favorito);
+  } else if (conversasFilter === 'pendentes') {
+    filtered = filtered.filter(c => {
+      if (c.etapa !== 'orcamento' || !c.orcamento_enviado_at) return false;
+      const enviadoAt = new Date(c.orcamento_enviado_at);
+      const ultimaResp = c.ultima_resposta_cliente_at ? new Date(c.ultima_resposta_cliente_at) : null;
+      if (ultimaResp && ultimaResp >= enviadoAt) return false;
+      return (new Date() - enviadoAt) >= 24 * 3600000;
+    });
+  } else if (conversasFilter === 'etiqueta') {
+    if (conversasTagFilter) {
+      filtered = filtered.filter(c => c.etiquetas && c.etiquetas.some(t => t.id === conversasTagFilter));
+    }
+  }
+
+  // Search: na lista carregada e, com 3 letras ou mais, também nos contatos antigos (servidor)
+  if (q) {
+    const qNum = q.replace(/\D/g, '');
+    filtered = filtered.filter(c => {
+      const name = (c.nome || '').toLowerCase();
+      const phone = (c.telefone || '').toLowerCase();
+      const pet = (c.pet_nome || '').toLowerCase();
+      return name.includes(q) || pet.includes(q) || phone.includes(q) || (qNum.length >= 3 && phone.replace(/\D/g, '').includes(qNum));
+    });
+    if (conversasFilter === 'tudo' && buscaTexto === q && buscaExtra.length) {
+      const tem = new Set(filtered.map(c => c.id));
+      for (const c of buscaExtra) if (!tem.has(c.id)) filtered.push(c);
+    }
+    buscarAntigos(q);
+  } else if (buscaExtra.length) { buscaExtra = []; buscaTexto = ''; }
+
+  // Sort: pinned first, then by last_message_at
+  filtered.sort((a, b) => {
+    if (a.pinado && !b.pinado) return -1;
+    if (!a.pinado && b.pinado) return 1;
+    const ta = a.ultima_msg_at || a.last_message_at || a.created_at || '';
+    const tb = b.ultima_msg_at || b.last_message_at || b.created_at || '';
+    return tb.localeCompare(ta);
+  });
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);font-size:14px">' +
+      (q ? 'Nenhum resultado para "' + esc(q) + '"' + (q.length < 3 ? '<br><span style="font-size:12.5px">Digite 3 letras ou mais para procurar também nas conversas antigas.</span>' : '') : 'Nenhuma conversa') + '</div>';
+    return;
+  }
+
+  const total = filtered.length;
+  const visiveis = filtered.slice(0, listaLimite);
+
+  list.innerHTML = visiveis.map(c => {
+    const unread = Math.max(c.nao_lidas || 0, c.manual_unread || 0);
+    const lastTime = c.ultima_msg_at || c.last_message_at;
+    const timeStr = lastTime ? formatTimeWa(new Date(lastTime)) : '';
+    const isActive = currentChatContato && currentChatContato.id === c.id;
+
+    // Preview with check marks for outgoing
+    let preview = '';
+    if (c.ultima_msg) {
+      if (c.ultima_msg_dir === 'out') preview = '<span class="check-marks">&#x2713;&#x2713;</span> ';
+      // Show media type icons
+      if (c.ultima_msg_tipo === 'image') preview += '&#x1F4F7; ';
+      else if (c.ultima_msg_tipo === 'audio') preview += '&#x1F3A4; ';
+      else if (c.ultima_msg_tipo === 'document') preview += '&#x1F4CE; ';
+      const txt = String(c.ultima_msg);
+      preview += esc(txt === '[image]' ? 'Foto' : txt === '[audio]' ? 'Áudio' : txt === '[document]' ? 'Documento' : txt).substring(0, 60);
+    }
+
+    // Foto de perfil vencida (o WhatsApp devolve 403): depois da primeira falha não tenta de novo a cada redesenho.
+    const avatar = (c.foto_url && !fotosRuins.has(c.foto_url))
+      ? '<img class="conversa-avatar" loading="lazy" src="' + esc(c.foto_url) + '" onerror="fotoRuim(this)">' +
+        '<div class="conversa-avatar-fb" style="display:none">' + inicial(c.nome) + '</div>'
+      : '<div class="conversa-avatar-fb">' + inicial(c.nome) + '</div>';
+
+    const tags = (c.etiquetas && c.etiquetas.length)
+      ? '<div class="conversa-tags">' + c.etiquetas.map(t => '<span class="tag" style="background:' + t.cor + '">' + esc(t.nome) + '</span>').join('') + '</div>'
+      : '';
+
+    // Follow-up badge for orçamento sem resposta
+    let followupHtml = '';
+    if (c.etapa === 'orcamento' && c.orcamento_enviado_at) {
+      const enviadoAt = new Date(c.orcamento_enviado_at);
+      const ultimaResp = c.ultima_resposta_cliente_at ? new Date(c.ultima_resposta_cliente_at) : null;
+      // Only show if client hasn't responded AFTER the quote was sent
+      if (!ultimaResp || ultimaResp < enviadoAt) {
+        const horasSem = (now - enviadoAt) / 3600000;
+        if (horasSem >= 72) followupHtml = '<span class="followup-badge cold">&#x1F9CA; ' + Math.floor(horasSem / 24) + 'd esfriou</span>';
+        else if (horasSem >= 48) followupHtml = '<span class="followup-badge hot">&#x1F525; 48h sem resposta</span>';
+        else if (horasSem >= 24) followupHtml = '<span class="followup-badge warm">&#x23F0; 24h sem resposta</span>';
+      }
+    }
+
+    return '<div class="conversa-row' + (isActive ? ' active' : '') + (unread ? ' has-unread' : '') + '" data-id="' + c.id + '" onclick="openConversaChat(' + c.id + ')" oncontextmenu="showConversaContext(event,' + c.id + ')">' +
+      avatar +
+      '<div class="conversa-info">' +
+        '<div class="conversa-top-row">' +
+          '<div class="conversa-name">' + esc(c.nome || formatPhone(c.telefone)) + (c.pinado ? '<span class="pin-icon">&#x1F4CC;</span>' : '') + '</div>' +
+          '<span class="conversa-time' + (unread ? ' unread' : '') + '">' + timeStr + '</span>' +
+        '</div>' +
+        '<div class="conversa-bottom-row">' +
+          '<div class="conversa-preview">' + preview + '</div>' +
+          '<div class="conversa-badges">' +
+            '<span class="conversa-star' + (c.favorito ? ' active' : '') + '" onclick="event.stopPropagation();toggleFavorito(' + c.id + ')" title="Favoritar">&#x2605;</span>' +
+            (unread ? '<span class="conversa-unread-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '') +
+          '</div>' +
+        '</div>' +
+        followupHtml +
+        tags +
+      '</div>' +
+    '</div>';
+  }).join('') +
+    (total > visiveis.length ? '<button class="lista-mais" onclick="listaLimite += LISTA_LOTE; renderConversasList()">Mostrar mais conversas (' + (total - visiveis.length) + ')</button>' : '') +
+    (!q && conversasFilter === 'tudo' ? '<div class="lista-nota">Conversas dos últimos 45 dias. As mais antigas aparecem pela busca.</div>' : '');
+}
+
+// ─── Conversa aberta ────────────────────────────────────────────────────────────────────────────
+let chatAntigas = [];      // mensagens anteriores às 50 mais recentes que já foram carregadas
+let chatTemMais = false;   // ainda há mensagens mais antigas no servidor?
+let chatAssinatura = '';   // muda quando chega mensagem nova ou uma leitura/transcrição fica pronta
+let chatReply = null;      // mensagem que está sendo respondida (citação)
+const rascunhos = {};      // texto digitado e não enviado, por conversa
+
+function assinaturaMsgs(msgs) {
+  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '')).join(',');
+}
+// Todas as mensagens na tela, da mais nova para a mais antiga.
+function mensagensDoChat() {
+  if (!currentChatContato) return [];
+  const mapa = new Map();
+  for (const m of (currentChatContato.mensagens || [])) mapa.set(m.id, m);
+  for (const m of chatAntigas) if (!mapa.has(m.id)) mapa.set(m.id, m);
+  return Array.from(mapa.values()).sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '') || (b.id - a.id));
+}
+// Ao receber as 50 mais recentes de novo, o que já estava na tela e saiu dessa janela continua guardado.
+function guardarForaDaJanela(fresh) {
+  const novos = new Set((fresh.mensagens || []).map(m => m.id));
+  const maisAntigaNova = (fresh.mensagens || []).length ? fresh.mensagens[fresh.mensagens.length - 1] : null;
+  const tem = new Set(chatAntigas.map(m => m.id));
+  for (const m of ((currentChatContato && currentChatContato.mensagens) || [])) {
+    if (!novos.has(m.id) && !tem.has(m.id) && maisAntigaNova && (m.created_at || '') <= (maisAntigaNova.created_at || '')) chatAntigas.push(m);
+  }
+}
+
+function guardarRascunho() {
+  const input = document.getElementById('chatComposeInput');
+  if (!input || !currentChatContato) return;
+  if (input.value.trim()) rascunhos[currentChatContato.id] = input.value; else delete rascunhos[currentChatContato.id];
+}
+
+async function openConversaChat(id) {
+  try {
+    guardarRascunho();
+    const c = await api('GET', '/api/contato/' + id);
+    currentChatContato = c;
+    chatAntigas = [];
+    chatTemMais = !!c.tem_mais;
+    chatAssinatura = assinaturaMsgs(c.mensagens);
+    cancelarResposta();
+    hideChatSlashPopup();
+    renderConversaChat('fim');
+    document.getElementById('chatEmptyState').style.display = 'none';
+    document.getElementById('chatActivePanel').style.display = 'flex';
+    // Mobile: show chat
+    document.getElementById('conversasChat').classList.add('mobile-open');
+    const input = document.getElementById('chatComposeInput');
+    input.value = rascunhos[id] || '';
+    ajustarAltura(input);
+    if (window.innerWidth > 768) input.focus();
+    // Update sidebar unread (mark as read happened on GET)
+    const idx = conversasList.findIndex(x => x.id === id);
+    if (idx >= 0) { conversasList[idx].nao_lidas = 0; conversasList[idx].manual_unread = 0; }
+    renderConversasList();
+    atualizarTitulo(conversasList);
+    // Sync: update kanban badges too
+    refreshTabBadges();
+  } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+function closeConversaChat() {
+  guardarRascunho();
+  document.getElementById('conversasChat').classList.remove('mobile-open');
+  document.getElementById('chatActivePanel').style.display = 'none';
+  document.getElementById('chatEmptyState').style.display = 'flex';
+  currentChatContato = null;
+  chatAntigas = [];
+  cancelarResposta();
+  loadConversas(true);
+}
+
+// Busca de novo a conversa aberta. Em segundo plano (aba escondida ou sem foco) não marca como lida.
+async function recarregarChat(rolar, forcar) {
+  if (!currentChatContato) return;
+  const id = currentChatContato.id;
+  const fresh = await api('GET', '/api/contato/' + id + (telaNaFrente() ? '' : '?visto=0'));
+  if (!currentChatContato || currentChatContato.id !== id) return; // trocou de conversa enquanto buscava
+  const ass = assinaturaMsgs(fresh.mensagens);
+  if (!forcar && ass === chatAssinatura) return;
+  const chegouDoCliente = (fresh.mensagens || []).some(m => m.direcao === 'in' && !(currentChatContato.mensagens || []).some(o => o.id === m.id));
+  guardarForaDaJanela(fresh);
+  if (!chatAntigas.length) chatTemMais = !!fresh.tem_mais;
+  currentChatContato = fresh;
+  chatAssinatura = ass;
+  renderConversaChat(rolar || 'auto', chegouDoCliente);
+}
+
+async function carregarAnteriores(btn) {
+  if (!currentChatContato) return;
+  const todas = mensagensDoChat();
+  if (!todas.length) return;
+  const id = currentChatContato.id;
+  if (btn) { btn.disabled = true; btn.textContent = 'Carregando…'; }
+  try {
+    const r = await api('GET', '/api/contato/' + id + '/mensagens?antes=' + todas[todas.length - 1].id);
+    if (!currentChatContato || currentChatContato.id !== id) return;
+    const tem = new Set(todas.map(m => m.id));
+    for (const m of (r.mensagens || [])) if (!tem.has(m.id)) chatAntigas.push(m);
+    chatTemMais = !!r.tem_mais;
+    renderConversaChat('topo');
+  } catch (e) { toast('Erro: ' + e.message, 'err'); if (btn) { btn.disabled = false; btn.textContent = 'Carregar mensagens anteriores'; } }
+}
+
+// ─── Desenho das mensagens ──────────────────────────────────────────────────────────────────────
+function horaMsg(s) { return s ? String(s).slice(11, 16) : ''; }
+function rotuloDia(dia) {
+  const d = new Date(dia + 'T12:00:00');
+  if (isNaN(d)) return dia;
+  const hoje = new Date(); hoje.setHours(12, 0, 0, 0);
+  const dif = Math.round((hoje - d) / 86400000);
+  if (dif === 0) return 'Hoje';
+  if (dif === 1) return 'Ontem';
+  if (dif > 1 && dif < 7) return ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'][d.getDay()];
+  return dia.slice(8, 10) + '/' + dia.slice(5, 7) + '/' + dia.slice(0, 4);
+}
+// Nome que aparece no anexo: o nome do arquivo quando o WhatsApp informou; senão "Documento PDF".
+function rotuloArquivo(m) {
+  const t = String(m.texto || '').trim();
+  const ext = ((String(m.media_path || '').match(/\.([a-z0-9]{2,5})$/i) || [])[1] || '').toUpperCase();
+  // Primeira linha = nome do arquivo (quando parece um nome); o resto é a legenda que foi junto.
+  const linhas = t.split('\n');
+  const pareceNome = /\.[a-z0-9]{2,5}$/i.test(linhas[0].trim()) && linhas[0].length <= 160;
+  if (pareceNome) return { rotulo: linhas[0].trim(), legenda: linhas.slice(1).join('\n').trim() };
+  return { rotulo: (m.tipo === 'video' ? 'Vídeo' : 'Documento') + (ext ? ' ' + ext : ''), legenda: t && !t.startsWith('[') ? t : '' };
+}
+function resumoCitar(m) {
+  const t = String(m.texto || '');
+  if (m.tipo === 'image') return '📷 Foto' + (t && t !== '[image]' ? ' · ' + t : '');
+  if (m.tipo === 'audio') return '🎤 Áudio';
+  if (m.tipo === 'document') return '📎 ' + (t && !t.startsWith('[') ? t : 'Documento');
+  if (m.tipo === 'video') return '🎥 Vídeo';
+  return t;
+}
+function nomeDoCliente() {
+  const c = (currentTab === 'conversas' ? currentChatContato : currentContato) || currentChatContato || currentContato;
+  return c ? (String(c.nome || '').split(' ')[0] || 'Cliente') : 'Cliente';
+}
+
+// opts.rolar: 'fim' (vai para a última), 'topo' (mantém o ponto ao carregar anteriores), 'auto' (só desce se a pessoa já estava no fim)
+function renderMessagesInto(area, mensagens, opts) {
+  opts = opts || {};
+  const rolar = opts.rolar || 'fim';
+  const antesAltura = area.scrollHeight, antesTopo = area.scrollTop;
+  const estavaNoFim = antesAltura - antesTopo - area.clientHeight < 140;
+  // Âncora: a primeira mensagem que a pessoa estava vendo. Depois de redesenhar, ela volta para o mesmo lugar da tela.
+  let ancoraId = null, ancoraPos = 0;
+  if (rolar === 'topo') {
+    const topoArea = area.getBoundingClientRect().top;
+    const vista = Array.from(area.querySelectorAll('.msg[data-msg-id]')).find(el => el.getBoundingClientRect().bottom > topoArea + 4);
+    if (vista) { ancoraId = vista.dataset.msgId; ancoraPos = vista.getBoundingClientRect().top - topoArea; }
+  }
+  if (!mensagens || mensagens.length === 0) {
+    area.innerHTML = '<div class="empty"><div class="emoji">&#x1F4AC;</div>Nenhuma mensagem</div>';
+    return;
+  }
+  let diaAtual = '';
+  const html = mensagens.slice().reverse().map(m => {
+    let content = '';
+    if (m.citacao_texto) {
+      content += '<div class="msg-cita"><b>' + (m.citacao_de === 'out' ? 'XR Diagnóstico' : m.citacao_de === 'in' ? esc(nomeDoCliente()) : 'Mensagem citada') + '</b>' + esc(String(m.citacao_texto).slice(0, 220)) + '</div>';
+    }
+    if (m.media_path && (m.tipo === 'image')) {
+      content += '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="window.open(\'/media/' + esc(m.media_path) + '\')" alt="imagem">';
+      if (m.texto && m.texto !== '[image]') content += '<div>' + fmtWa(m.texto) + '</div>';
+    } else if (m.media_path && m.tipo === 'audio') {
+      content += '<audio controls src="/media/' + esc(m.media_path) + '" style="max-width:250px"></audio>';
+    } else if (m.media_path && (m.tipo === 'document' || m.tipo === 'video')) {
+      const arq = rotuloArquivo(m);
+      content += '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link" title="Abrir o arquivo">&#x1F4CE; <span>' + esc(arq.rotulo) + '</span></a>';
+      if (arq.legenda) content += '<div>' + fmtWa(arq.legenda) + '</div>';
+    } else {
+      content += fmtWa(m.texto === '[image]' ? '📷 Foto' : m.texto === '[audio]' ? '🎤 Áudio' : m.texto === '[document]' ? '📎 Documento' : m.texto);
+    }
+    content += leituraBloco(m);
+    const dia = String(m.created_at || '').slice(0, 10);
+    let faixa = '';
+    if (dia && dia !== diaAtual) { diaAtual = dia; faixa = '<div class="msg-dia">' + rotuloDia(dia) + '</div>'; }
+    return faixa + '<div class="msg ' + m.direcao + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
+      '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + horaMsg(m.created_at) + '</div></div>';
+  }).join('');
+  area.innerHTML = (opts.temMais ? '<button class="msg-mais" onclick="carregarAnteriores(this)">Carregar mensagens anteriores</button>' : '') + html;
+
+  const irAoFim = () => { area.scrollTop = area.scrollHeight; };
+  if (rolar === 'topo') {
+    // fica no mesmo ponto em que a pessoa estava, mesmo quando fotos das mensagens antigas terminam de carregar depois
+    const reancorar = () => {
+      const el = ancoraId ? area.querySelector('.msg[data-msg-id="' + ancoraId + '"]') : null;
+      if (!el) { area.scrollTop = area.scrollHeight - antesAltura + antesTopo; return; }
+      area.scrollTop += (el.getBoundingClientRect().top - area.getBoundingClientRect().top) - ancoraPos;
+    };
+    reancorar();
+    let mexeu = false;
+    const parar = () => { mexeu = true; };
+    area.addEventListener('wheel', parar, { once: true, passive: true });
+    area.addEventListener('touchmove', parar, { once: true, passive: true });
+    area.querySelectorAll('img, audio').forEach(el => {
+      el.addEventListener('load', () => { if (!mexeu) reancorar(); });
+      el.addEventListener('loadeddata', () => { if (!mexeu) reancorar(); });
+    });
+  } else if (rolar === 'fim' || (rolar === 'auto' && estavaNoFim)) {
+    irAoFim();
+    area.querySelectorAll('img, audio').forEach(el => {
+      el.addEventListener('load', irAoFim);
+      el.addEventListener('loadeddata', irAoFim);
+    });
+    setTimeout(irAoFim, 200);
+  } else {
+    area.scrollTop = antesTopo; // a pessoa está lendo mais acima: não puxa para baixo
+  }
+  return rolar === 'auto' && !estavaNoFim;
+}
+
+function mostrarAvisoNova(mostrar) {
+  const b = document.getElementById('chatNova');
+  if (b) b.classList.toggle('show', !!mostrar);
+}
+function irParaUltima() {
+  const area = document.getElementById('chatMessagesArea');
+  area.scrollTop = area.scrollHeight;
+  mostrarAvisoNova(false);
+}
+
+// ─── Responder citando ──────────────────────────────────────────────────────────────────────────
+function responderMsg(id) {
+  if (!currentChatContato) return;
+  const m = mensagensDoChat().find(x => String(x.id) === String(id));
+  if (!m) return;
+  chatReply = { id: m.id, de: m.direcao, texto: resumoCitar(m) };
+  const bar = document.getElementById('chatReplyBar');
+  bar.innerHTML = '<div class="rb-box"><b>' + (m.direcao === 'out' ? 'XR Diagnóstico' : esc(nomeDoCliente())) + '</b><span>' + esc(chatReply.texto.slice(0, 160)) + '</span></div>' +
+    '<button class="rb-x" onclick="cancelarResposta()" title="Cancelar a resposta (Esc)">&#x2715;</button>';
+  bar.classList.add('show');
+  document.getElementById('chatComposeInput').focus();
+}
+function cancelarResposta() {
+  chatReply = null;
+  const bar = document.getElementById('chatReplyBar');
+  if (bar) { bar.classList.remove('show'); bar.innerHTML = ''; }
+}
+function contextResponder() {
+  const id = contextMsgId;
+  hideMsgContextMenu();
+  if (id) responderMsg(id);
+}
+document.addEventListener('dblclick', function (e) {
+  const msg = e.target.closest('#chatMessagesArea .msg[data-msg-id]');
+  if (!msg || e.target.closest('a, img, audio, button')) return;
+  responderMsg(msg.dataset.msgId);
+  try { window.getSelection().removeAllRanges(); } catch (err) {}
+});
+
+// ─── Campo de mensagem ──────────────────────────────────────────────────────────────────────────
+function ajustarAltura(el) {
+  if (!el || el.tagName !== 'TEXTAREA') return;
+  el.style.height = 'auto';
+  el.style.height = Math.max(39, Math.min(el.scrollHeight, 140)) + 'px';
+}
+
+// Envios em fila: dá para mandar várias mensagens seguidas sem esperar a anterior terminar.
+const filaEnvio = [];
+let enviando = false;
+function estadoEnvio() {
+  const el = document.getElementById('chatEnvioEstado');
+  if (!el) return;
+  const n = filaEnvio.length + (enviando ? 1 : 0);
+  el.textContent = n > 1 ? 'Enviando ' + n + ' mensagens…' : 'Enviando…';
+  el.classList.toggle('show', n > 0);
+}
+async function processarFila() {
+  if (enviando) return;
+  enviando = true;
+  while (filaEnvio.length) {
+    const item = filaEnvio.shift();
+    estadoEnvio();
+    try {
+      const r = await api('POST', '/api/contato/' + item.destino + '/mensagem', item.citar ? { texto: item.texto, citar: item.citar } : { texto: item.texto });
+      if (r && r.sem_citacao) toast('Enviada, mas sem a citação (mensagem antiga demais para citar)', 'err');
+      if (currentChatContato && currentChatContato.id === item.destino) await recarregarChat('fim', true);
+    } catch (e) {
+      toast('NÃO foi enviada: ' + e.message, 'err');
+      // devolve o texto para o campo, para a pessoa não perder o que escreveu
+      const input = document.getElementById('chatComposeInput');
+      if (currentChatContato && currentChatContato.id === item.destino && input) {
+        input.value = item.texto + (input.value ? '\n' + input.value : '');
+        ajustarAltura(input);
+      } else { rascunhos[item.destino] = item.texto + (rascunhos[item.destino] ? '\n' + rascunhos[item.destino] : ''); }
+    }
+  }
+  enviando = false;
+  estadoEnvio();
+  loadConversas();
+}
+
+function sendChatMessage() {
+  if (!currentChatContato) return;
+  const input = document.getElementById('chatComposeInput');
+  const texto = input.value.replace(/\s+$/, '').replace(/^\n+/, '');
+  if (!texto.trim()) return;
+  filaEnvio.push({ destino: currentChatContato.id, texto, citar: chatReply ? chatReply.id : null });
+  input.value = '';
+  delete rascunhos[currentChatContato.id];
+  ajustarAltura(input);
+  cancelarResposta();
+  hideChatSlashPopup();
+  input.focus();
+  estadoEnvio();
+  processarFila();
+}
+
+function handleChatComposeKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault(); // Enter envia; Shift+Enter quebra a linha
+    if (chatSlashOpen) {
+      const first = document.querySelector('#chatSlashPopup .slash-item:not([style*="display: none"])');
+      if (first) { first.click(); return; }
+    }
+    sendChatMessage();
+  } else if (e.key === 'Escape') {
+    const input = document.getElementById('chatComposeInput');
+    if (chatSlashOpen) { hideChatSlashPopup(); if (input.value.startsWith('/')) { input.value = ''; ajustarAltura(input); } }
+    else if (chatReply) cancelarResposta();
+  }
+}
+
+// Mensagem rápida: entra no campo para a pessoa conferir e ajustar antes de enviar (como no WhatsApp Business).
+function sendChatQuickMsg(id) {
+  const msg = msgsRapidas.find(m => m.id === id);
+  if (!msg || !currentChatContato) return;
+  hideChatSlashPopup();
+  const input = document.getElementById('chatComposeInput');
+  input.value = msg.texto;
+  ajustarAltura(input);
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
+// ─── Arquivos: colar (Ctrl+V), arrastar para a conversa ou escolher no clipe, sempre com prévia ──
+const ANEXO_MAX = 15 * 1024 * 1024;
+let anexosFila = [];
+let anexoDestino = null;
+let anexoEnviando = false;
+function tamanhoLegivel(n) { return n >= 1048576 ? (n / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+
+function abrirAnexos(files) {
+  if (!currentChatContato || anexoEnviando) return;
+  const lista = Array.from(files || []).filter(f => f && f.size > 0);
+  if (!lista.length) return;
+  const grandes = lista.filter(f => f.size > ANEXO_MAX);
+  if (grandes.length) toast('Arquivo acima de 15 MB não é enviado: ' + grandes[0].name, 'err');
+  const novos = lista.filter(f => f.size <= ANEXO_MAX);
+  if (!novos.length) return;
+  if (anexoDestino !== currentChatContato.id) { anexosFila = []; document.getElementById('anexoLegenda').value = ''; }
+  anexoDestino = currentChatContato.id;
+  anexosFila = anexosFila.concat(novos).slice(0, 10);
+  document.getElementById('anexoTitulo').textContent = 'Enviar para ' + (currentChatContato.nome || formatPhone(currentChatContato.telefone));
+  desenharAnexos();
+  document.getElementById('anexoModal').classList.add('show');
+  setTimeout(() => document.getElementById('anexoLegenda').focus(), 50);
+}
+function desenharAnexos() {
+  const box = document.getElementById('anexoPrevia');
+  box.querySelectorAll('img').forEach(i => { try { URL.revokeObjectURL(i.src); } catch (e) {} });
+  box.innerHTML = anexosFila.map((f, i) => {
+    const x = '<button class="ai-x" onclick="tirarAnexo(' + i + ')" title="Tirar este arquivo">&#x2715;</button>';
+    if (f.type.startsWith('image/')) {
+      return '<div class="anexo-item foto"><img src="' + URL.createObjectURL(f) + '" alt="prévia"><div style="display:flex;align-items:center;gap:8px"><span class="ai-nome">' + esc(f.name || 'imagem') + '</span><span class="ai-tam">' + tamanhoLegivel(f.size) + '</span>' + x + '</div></div>';
+    }
+    return '<div class="anexo-item">&#x1F4CE; <span class="ai-nome">' + esc(f.name || 'arquivo') + '</span><span class="ai-tam">' + tamanhoLegivel(f.size) + '</span>' + x + '</div>';
+  }).join('');
+  document.getElementById('anexoEnviar').textContent = anexosFila.length > 1 ? 'Enviar ' + anexosFila.length + ' arquivos' : 'Enviar';
+}
+function tirarAnexo(i) {
+  anexosFila.splice(i, 1);
+  if (!anexosFila.length) return fecharAnexo();
+  desenharAnexos();
+}
+function fecharAnexo() {
+  if (anexoEnviando) return;
+  anexosFila = []; anexoDestino = null;
+  document.getElementById('anexoModal').classList.remove('show');
+  document.getElementById('anexoLegenda').value = '';
+  const box = document.getElementById('anexoPrevia');
+  box.querySelectorAll('img').forEach(i => { try { URL.revokeObjectURL(i.src); } catch (e) {} });
+  box.innerHTML = '';
+}
+function lerBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(new Error('não consegui ler o arquivo'));
+    r.readAsDataURL(file);
+  });
+}
+async function enviarAnexos() {
+  if (anexoEnviando || !anexosFila.length || !anexoDestino) return;
+  anexoEnviando = true;
+  const destino = anexoDestino, arquivos = anexosFila.slice();
+  const legenda = document.getElementById('anexoLegenda').value.trim();
+  const btn = document.getElementById('anexoEnviar');
+  let enviados = 0;
+  try {
+    for (let i = 0; i < arquivos.length; i++) {
+      const f = arquivos[i];
+      btn.textContent = 'Enviando ' + (i + 1) + ' de ' + arquivos.length + '…';
+      const ehFoto = f.type.startsWith('image/');
+      const nome = f.name && f.name !== 'image.png' ? f.name : (ehFoto ? 'imagem.' + ((f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')) : 'arquivo');
+      const base64 = await lerBase64(f);
+      await api('POST', '/api/contato/' + destino + '/media', { base64, mediatype: ehFoto ? 'image' : 'document', mimetype: f.type, fileName: nome, caption: i === 0 ? legenda : '' });
+      enviados++;
+    }
+    toast(enviados > 1 ? enviados + ' arquivos enviados' : 'Arquivo enviado');
+  } catch (e) {
+    toast('Parou no arquivo ' + (enviados + 1) + ': ' + e.message, 'err');
+  }
+  anexoEnviando = false;
+  if (enviados === arquivos.length) fecharAnexo();
+  else { anexosFila = arquivos.slice(enviados); desenharAnexos(); }
+  if (currentChatContato && currentChatContato.id === destino) { try { await recarregarChat('fim', true); } catch (e) {} }
+  loadConversas();
+}
+function escolherArquivosChat(input) {
+  const arquivos = Array.from(input.files || []);
+  input.value = '';
+  abrirAnexos(arquivos);
+}
+// Mantido para quem ainda chamar pelo nome antigo.
+function sendFileChat(input) { escolherArquivosChat(input); }
+
+// Colar: imagem ou arquivo copiado vira anexo com prévia; texto continua colando normalmente no campo.
+document.addEventListener('paste', function (e) {
+  if (currentTab !== 'conversas' || !currentChatContato) return;
+  const aberto = document.querySelector('.modal-overlay.show');
+  if (aberto && aberto.id !== 'anexoModal') return;
+  const cd = e.clipboardData;
+  if (!cd || !cd.files || !cd.files.length) return;
+  const texto = cd.getData && cd.getData('text/plain');
+  if (texto && texto.trim() && !Array.from(cd.files).some(f => !f.type.startsWith('image/'))) {
+    // Copiado do Excel/Word: vem texto junto com uma imagem do trecho. Vale o texto, como no WhatsApp.
+    return;
+  }
+  e.preventDefault();
+  abrirAnexos(cd.files);
+});
+
+// Arrastar arquivo do computador para dentro da conversa.
+(function () {
+  const temArquivo = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf('Files') >= 0;
+  const painel = () => document.getElementById('conversasChat');
+  document.addEventListener('dragover', function (e) {
+    if (!temArquivo(e) || !currentChatContato || !e.target.closest || !e.target.closest('#conversasChat')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    painel().classList.add('arrastando');
+  });
+  document.addEventListener('dragleave', function (e) {
+    if (!e.relatedTarget || !(e.relatedTarget.closest && e.relatedTarget.closest('#conversasChat'))) painel().classList.remove('arrastando');
+  });
+  document.addEventListener('drop', function (e) {
+    const p = painel();
+    const dentro = e.target.closest && e.target.closest('#conversasChat');
+    p.classList.remove('arrastando');
+    if (!temArquivo(e)) return;
+    e.preventDefault(); // nunca deixa o navegador abrir o arquivo no lugar do CRM
+    if (dentro && currentChatContato) abrirAnexos(e.dataTransfer.files);
+  });
+  // fora da conversa, soltar um arquivo não faz nada (em vez de o navegador sair da página)
+  window.addEventListener('dragover', function (e) { if (temArquivo(e)) e.preventDefault(); });
+})();
+
+// ─── Atualização automática ─────────────────────────────────────────────────────────────────────
+// Um "relógio" em segundo plano avisa a cada 5 s. Diferente do setInterval, ele não é freado pelo
+// navegador quando a aba do CRM fica escondida, então o aviso de mensagem nova continua chegando.
+function aCadaCincoSegundos() {
+  loadConversas(); // sempre, mesmo com uma conversa aberta e em qualquer aba (para o aviso e o contador)
+  if (currentTab === 'kanban' && !currentContato) loadBoard();
+  if (currentChatContato) recarregarChat('auto').catch(() => {});
+  else if (currentContato) atualizarDetalhe();
+}
+async function atualizarDetalhe() {
+  if (!currentContato) return;
+  try {
+    const id = currentContato.id;
+    const fresh = await api('GET', '/api/contato/' + id + (telaNaFrente() ? '' : '?visto=0'));
+    if (!currentContato || currentContato.id !== id) return;
+    if (assinaturaMsgs(fresh.mensagens) !== assinaturaMsgs(currentContato.mensagens)) { currentContato = fresh; renderDetail(); }
+  } catch (e) {}
+}
+(function () {
+  let ligado = false;
+  try {
+    const w = new Worker(URL.createObjectURL(new Blob(['setInterval(function(){postMessage(1)},5000)'], { type: 'text/javascript' })));
+    w.onmessage = aCadaCincoSegundos;
+    ligado = true;
+  } catch (e) {}
+  if (!ligado) setInterval(aCadaCincoSegundos, 5000);
+})();
+setInterval(refreshTabBadges, 10000);
+// Voltou para a aba do CRM: atualiza na hora (e aí sim a conversa aberta conta como lida).
+function aoVoltar() {
+  if (!telaNaFrente()) return;
+  loadConversas();
+  if (currentChatContato) recarregarChat('auto', true).then(() => { loadConversas(true); }).catch(() => {});
+}
+window.addEventListener('focus', aoVoltar);
+document.addEventListener('visibilitychange', aoVoltar);
+document.addEventListener('scroll', function (e) {
+  const a = e.target;
+  if (a && a.id === 'chatMessagesArea' && a.scrollHeight - a.scrollTop - a.clientHeight < 60) mostrarAvisoNova(false);
+}, true);
+
+// ─── Init ───────────────────────────────────────────────────────────────────────────────────────
+aplicarTema();
+aplicarSom();
 loadConversas();
 loadBoard();
 loadCustomTabs().then(() => refreshTabBadges());
 loadMsgsRapidas();
-setInterval(() => {
-  if (currentTab === 'conversas' && !currentChatContato) loadConversas();
-  if (currentTab === 'kanban' && !currentContato) loadBoard();
-  refreshTabBadges();
-}, 10000);
 
-// Auto-refresh messages when chat is open (every 5s)
-setInterval(async () => {
-  // Conversas chat
-  if (currentChatContato) {
-    try {
-      const fresh = await api('GET', '/api/contato/' + currentChatContato.id);
-      const oldMsgs = currentChatContato.mensagens || [];
-      const newMsgs = fresh.mensagens || [];
-      const oldLast = oldMsgs.length ? oldMsgs[0].id : 0;
-      const newLast = newMsgs.length ? newMsgs[0].id : 0;
-      if (newLast !== oldLast || newMsgs.length !== oldMsgs.length) {
-        currentChatContato = fresh;
-        renderConversaChat();
-      }
-    } catch(e) {}
-    return;
-  }
-  // Kanban detail
-  if (currentContato) {
-    try {
-      const fresh = await api('GET', '/api/contato/' + currentContato.id);
-      const oldMsgs = currentContato.mensagens || [];
-      const newMsgs = fresh.mensagens || [];
-      const oldLast = oldMsgs.length ? oldMsgs[0].id : 0;
-      const newLast = newMsgs.length ? newMsgs[0].id : 0;
-      if (newLast !== oldLast || newMsgs.length !== oldMsgs.length) {
-        currentContato = fresh;
-        renderDetail();
-      }
-    } catch(e) {}
-  }
-}, 5000);
 </script>
 </body>
 </html>

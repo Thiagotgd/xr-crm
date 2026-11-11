@@ -4,6 +4,8 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
+const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const followup = require('./followup');
 const alerta = require('./alerta');
@@ -143,6 +145,10 @@ try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_msg_id TEXT DEFAULT ''"); } c
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_mensagens_wa_msg_id ON mensagens(wa_msg_id)"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN wa_remote_jid TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN manual_unread INTEGER DEFAULT 0"); } catch {}
+// 11/11/2026: resposta citando uma mensagem. O trecho citado fica guardado junto da mensagem (de = 'in' cliente, 'out' recepção).
+try { db.exec("ALTER TABLE mensagens ADD COLUMN citacao_texto TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE mensagens ADD COLUMN citacao_de TEXT DEFAULT ''"); } catch {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_mensagens_contato_data ON mensagens(contato_id, created_at)"); } catch (e) { console.error('[CRM] índice de mensagens:', e.message); }
 try { db.exec("ALTER TABLE contatos ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN favorito INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN orcamento_enviado_at TEXT DEFAULT ''"); } catch {}
@@ -217,8 +223,66 @@ if (etapasCount === 0) {
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 function sendJSON(res, status, data) {
   const body = JSON.stringify(data);
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' });
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, If-None-Match' };
+  // 11/11/2026: a lista de conversas é pedida a cada poucos segundos. Resposta grande de leitura leva uma
+  // "impressão digital" (ETag): se a tela já tem essa versão, vai 304 sem corpo; se não, vai compactada.
+  const req = res._req;
+  if (req && req.method === 'GET' && status === 200 && body.length > 4096) {
+    const etag = '"' + crypto.createHash('md5').update(body).digest('hex') + '"';
+    headers['ETag'] = etag;
+    headers['Cache-Control'] = 'no-store';
+    if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); return res.end(); }
+    if (/\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
+      try {
+        const gz = zlib.gzipSync(body, { level: 4 });
+        headers['Content-Encoding'] = 'gzip';
+        headers['Vary'] = 'Accept-Encoding';
+        res.writeHead(status, headers);
+        return res.end(gz);
+      } catch (e) { /* cai para o envio simples */ }
+    }
+  }
+  res.writeHead(status, headers);
   res.end(body);
+}
+
+// Resumo de uma mensagem para aparecer como trecho citado.
+function resumoParaCitar(m) {
+  if (!m) return '';
+  const t = String(m.texto || '');
+  if (m.tipo === 'image') return '📷 Foto' + (t && t !== '[image]' ? ' · ' + t : '');
+  if (m.tipo === 'audio') return '🎤 Áudio';
+  if (m.tipo === 'document') return '📎 ' + (t && !t.startsWith('[') ? t : 'Documento');
+  if (m.tipo === 'video') return '🎥 Vídeo';
+  return t;
+}
+
+// Mensagem do WhatsApp que responde a outra traz o trecho citado em contextInfo.quotedMessage.
+function citacaoDoContexto(msg, data, jid) {
+  const vazio = { texto: '', de: '' };
+  try {
+    const m = msg || {};
+    const ctx = (m.extendedTextMessage && m.extendedTextMessage.contextInfo) || (m.imageMessage && m.imageMessage.contextInfo) ||
+      (m.documentMessage && m.documentMessage.contextInfo) || (m.audioMessage && m.audioMessage.contextInfo) ||
+      (m.videoMessage && m.videoMessage.contextInfo) || (data && data.contextInfo) || null;
+    if (!ctx || !ctx.quotedMessage) return vazio;
+    const q = ctx.quotedMessage;
+    const texto = q.conversation || (q.extendedTextMessage && q.extendedTextMessage.text) ||
+      (q.imageMessage && ('📷 Foto' + (q.imageMessage.caption ? ' · ' + q.imageMessage.caption : ''))) ||
+      (q.documentMessage && ('📎 ' + (q.documentMessage.fileName || 'Documento'))) ||
+      (q.documentWithCaptionMessage && '📎 Documento') ||
+      (q.audioMessage && '🎤 Áudio') || (q.videoMessage && '🎥 Vídeo') || (q.stickerMessage && 'Figurinha') || 'Mensagem';
+    let de = '';
+    if (ctx.stanzaId) {
+      const orig = db.prepare('SELECT direcao FROM mensagens WHERE wa_msg_id = ? LIMIT 1').get(String(ctx.stanzaId));
+      if (orig) de = orig.direcao;
+    }
+    if (!de && ctx.participant) {
+      const soNum = v => phoneFromJid(String(v || '')).replace(/\D/g, '');
+      de = soNum(ctx.participant) && soNum(ctx.participant) === soNum(jid) ? 'in' : 'out';
+    }
+    return { texto: String(texto).slice(0, 300), de };
+  } catch (e) { return vazio; }
 }
 
 function parseBody(req, maxSize) {
@@ -242,18 +306,28 @@ function jidFromPhone(phone) {
 }
 
 // ─── Evolution API send message ────────────────────────────────────────────────
-function evoSendText(phone, text) {
+// A Evolution responde 4xx/5xx com um JSON de erro. Sem olhar o código, a mensagem era gravada como enviada.
+function erroDaEvolution(res, corpo) {
+  if (res.statusCode < 400) return null;
+  let motivo = '';
+  try { const j = JSON.parse(corpo); motivo = j && j.response && j.response.message ? JSON.stringify(j.response.message) : (j.error || j.message || ''); } catch {}
+  return new Error('WhatsApp recusou o envio (código ' + res.statusCode + ')' + (motivo ? ': ' + String(motivo).slice(0, 160) : ''));
+}
+
+function evoSendText(phone, text, quoted) {
   return new Promise((resolve, reject) => {
     const url = new URL(`${EVO_BASE}/message/sendText/${EVO_INSTANCE}`);
     const number = phone.includes('@g.us') ? phone : phone.replace(/\D/g, '');
-    const payload = JSON.stringify({ number, text });
+    const corpo = { number, text };
+    if (quoted) corpo.quoted = quoted;
+    const payload = JSON.stringify(corpo);
     const req = http.request({
       hostname: url.hostname, port: url.port, path: url.pathname,
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY, 'Content-Length': Buffer.byteLength(payload) }
     }, res => {
       let d = ''; res.on('data', c => d += c);
-      res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } });
+      res.on('end', () => { const err = erroDaEvolution(res, d); if (err) return reject(err); try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } });
     });
     req.on('error', reject);
     req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
@@ -315,7 +389,7 @@ function evoSendMedia(phone, mediatype, base64, caption, fileName) {
       headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY, 'Content-Length': Buffer.byteLength(payload) }
     }, res => {
       let d = ''; res.on('data', c => d += c);
-      res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } });
+      res.on('end', () => { const err = erroDaEvolution(res, d); if (err) return reject(err); try { resolve(JSON.parse(d)); } catch { resolve({ raw: d }); } });
     });
     req.on('error', reject);
     req.setTimeout(30000, () => { req.destroy(); reject(new Error('timeout')); });
@@ -370,6 +444,7 @@ async function handleRequest(req, res) {
   const urlObj = new URL(req.url, 'http://localhost');
   const pathname = urlObj.pathname;
   const method = req.method;
+  res._req = req;
 
   if (method === 'OPTIONS') return sendJSON(res, 200, {});
 
@@ -480,18 +555,39 @@ async function handleRequest(req, res) {
   }
 
   // ─── API: Single contato with messages ────────────────────────────────────
+  if (method === 'GET' && pathname.match(/^\/api\/contato\/\d+\/mensagens$/)) {
+    const id = pathname.split('/')[3];
+    const antes = Number(urlObj.searchParams.get('antes') || 0);
+    const ref = antes ? db.prepare('SELECT id, created_at FROM mensagens WHERE id = ? AND contato_id = ?').get(antes, id) : null;
+    if (!ref) return sendJSON(res, 400, { error: 'informe a mensagem de referência (antes)' });
+    const msgs = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? AND (created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT 51').all(id, ref.created_at, ref.created_at, ref.id);
+    const temMais = msgs.length > 50;
+    if (temMais) msgs.pop();
+    try { leitor.anexarLeituras(db, msgs); } catch (e) { console.error('[LEITOR] anexar:', e.message); }
+    return sendJSON(res, 200, { mensagens: msgs, tem_mais: temMais });
+  }
+
   if (method === 'GET' && pathname.match(/^\/api\/contato\/\d+$/)) {
     const id = pathname.split('/').pop();
     const contato = db.prepare('SELECT * FROM contatos WHERE id = ?').get(id);
     if (!contato) return sendJSON(res, 404, { error: 'Not found' });
-    contato.mensagens = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? ORDER BY created_at DESC LIMIT 50').all(id);
+    contato.mensagens = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? ORDER BY created_at DESC, id DESC LIMIT 51').all(id);
+    contato.tem_mais = contato.mensagens.length > 50;
+    if (contato.tem_mais) contato.mensagens.pop();
     // Foto ou PDF do cliente já lido pela IA (pedido do veterinário etc.): a leitura vai junto da mensagem.
     try { leitor.anexarLeituras(db, contato.mensagens); } catch (e) { console.error('[LEITOR] anexar:', e.message); }
     contato.etiquetas = db.prepare('SELECT e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id WHERE ce.contato_id = ?').all(id);
-    // Mark as read + reset manual_unread
-    db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(id);
-    // Sync: mark as read on real WhatsApp too
-    if (contato.telefone) evoMarkAsRead(contato.telefone);
+    // 11/11/2026: a tela atualiza a conversa aberta a cada 5 s. Quando a aba do CRM está em segundo plano ela
+    // manda ?visto=0, e aí NÃO se marca como lido: antes, uma conversa esquecida aberta apagava o aviso verde
+    // de mensagem nova no WhatsApp sem ninguém ter lido.
+    const visto = urlObj.searchParams.get('visto') !== '0';
+    if (visto) {
+      // Mark as read + reset manual_unread
+      db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(id);
+      // Sync: mark as read on real WhatsApp too — só se havia algo por ler (antes ia a cada atualização)
+      const haviaNaoLida = contato.manual_unread || db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'in' AND created_at > COALESCE(NULLIF(?, ''), '1970-01-01') LIMIT 1").get(id, contato.last_read_at || '');
+      if (contato.telefone && haviaNaoLida) evoMarkAsRead(contato.telefone);
+    }
     return sendJSON(res, 200, contato);
   }
 
@@ -609,19 +705,32 @@ async function handleRequest(req, res) {
 
   // ─── API: Contatos (conversas view - all contacts) ────────────────────────
   if (method === 'GET' && pathname === '/api/contatos/conversas') {
-    const rows = db.prepare(`
-      SELECT c.*,
-        (SELECT texto FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg,
-        (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id AND direcao = 'in' AND created_at > COALESCE(NULLIF(c.last_read_at,''), '1970-01-01')) as nao_lidas,
-        (SELECT direcao FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_dir,
-        (SELECT created_at FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_at,
-        (SELECT tipo FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_tipo
+    // 11/11/2026: a tela pede esta lista a cada poucos segundos. Antes vinham os ~2.500 contatos com todos os
+    // campos (2,2 MB). Agora: só os campos que a lista usa e, por padrão, as conversas dos últimos 45 dias mais
+    // as fixadas, favoritas, marcadas como não lidas ou com etiqueta. ?q= busca em TODOS os contatos; ?tudo=1 traz tudo.
+    const q = (urlObj.searchParams.get('q') || '').trim();
+    const tudo = urlObj.searchParams.get('tudo') === '1';
+    const campos = `SELECT c.id, c.nome, c.telefone, c.pet_nome, c.etapa, c.foto_url, c.pinado, c.favorito, c.manual_unread, c.equipe_xr,
+        c.orcamento_enviado_at, c.ultima_resposta_cliente_at, c.last_message_at, c.created_at, c.origem,
+        substr(m.texto, 1, 100) as ultima_msg, m.direcao as ultima_msg_dir, m.created_at as ultima_msg_at, m.tipo as ultima_msg_tipo,
+        (SELECT COUNT(*) FROM mensagens WHERE contato_id = c.id AND direcao = 'in' AND created_at > COALESCE(NULLIF(c.last_read_at,''), '1970-01-01')) as nao_lidas
       FROM contatos c
-      WHERE NOT (c.etapa = 'finalizado' AND c.updated_at < datetime('now','localtime','-2 days'))
-      ORDER BY c.pinado DESC, c.last_message_at DESC
-    `).all();
-    const getEtiquetas = db.prepare('SELECT e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id WHERE ce.contato_id = ?');
-    for (const row of rows) { row.etiquetas = getEtiquetas.all(row.id); }
+      LEFT JOIN mensagens m ON m.id = (SELECT id FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC, id DESC LIMIT 1)`;
+    let rows;
+    if (q.length >= 2) {
+      const like = '%' + q + '%';
+      const digitos = q.replace(/[^0-9]/g, '');
+      const likeTel = digitos.length >= 3 ? '%' + digitos + '%' : like;
+      rows = db.prepare(campos + ` WHERE c.nome LIKE ? OR c.telefone LIKE ? OR c.pet_nome LIKE ? ORDER BY c.last_message_at DESC LIMIT 80`).all(like, likeTel, like);
+    } else {
+      const recentes = tudo ? '' : ` AND (c.last_message_at >= datetime('now','localtime','-45 days') OR c.pinado = 1 OR c.favorito = 1 OR c.manual_unread = 1 OR EXISTS (SELECT 1 FROM contato_etiquetas ce WHERE ce.contato_id = c.id))`;
+      rows = db.prepare(campos + ` WHERE NOT (c.etapa = 'finalizado' AND c.updated_at < datetime('now','localtime','-2 days'))` + recentes + ` ORDER BY c.pinado DESC, c.last_message_at DESC`).all();
+    }
+    const porContato = {};
+    for (const e of db.prepare('SELECT ce.contato_id, e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id').all()) {
+      (porContato[e.contato_id] = porContato[e.contato_id] || []).push({ id: e.id, nome: e.nome, cor: e.cor });
+    }
+    for (const row of rows) { row.etiquetas = porContato[row.id] || []; }
     return sendJSON(res, 200, rows);
   }
 
@@ -640,10 +749,19 @@ async function handleRequest(req, res) {
     const contato = db.prepare('SELECT * FROM contatos WHERE id = ?').get(id);
     if (!contato) return sendJSON(res, 404, { error: 'Contato not found' });
 
+    // Responder citando uma mensagem: só dá para citar o que tem o identificador do WhatsApp guardado.
+    let quoted = null, citada = null;
+    if (body.citar) {
+      citada = db.prepare('SELECT id, direcao, texto, tipo, wa_msg_id, wa_remote_jid FROM mensagens WHERE id = ? AND contato_id = ?').get(body.citar, id);
+      if (citada && citada.wa_msg_id) {
+        quoted = { key: { id: citada.wa_msg_id, remoteJid: citada.wa_remote_jid || jidFromPhone(contato.telefone), fromMe: citada.direcao === 'out' }, message: { conversation: resumoParaCitar(citada) } };
+      } else { citada = null; }
+    }
+
     // Send via Evolution
     let waKey = null;
     try {
-      const result = await evoSendText(contato.telefone, body.texto);
+      const result = await evoSendText(contato.telefone, body.texto, quoted);
       if (result && result.key) waKey = result.key;
     } catch (e) {
       console.error('[CRM] Erro enviando msg:', e.message);
@@ -653,11 +771,12 @@ async function handleRequest(req, res) {
     // Save message
     const waMsgId = (waKey && waKey.id) || '';
     const waJid = (waKey && waKey.remoteJid) || jidFromPhone(contato.telefone);
-    db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, wa_msg_id, wa_remote_jid) VALUES (?, 'out', ?, 'text', ?, ?)").run(id, body.texto, waMsgId, waJid);
+    db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, wa_msg_id, wa_remote_jid, citacao_texto, citacao_de) VALUES (?, 'out', ?, 'text', ?, ?, ?, ?)").run(
+      id, body.texto, waMsgId, waJid, citada ? resumoParaCitar(citada).slice(0, 300) : '', citada ? citada.direcao : '');
     db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(id);
     // Mensagem enviada pela tela do CRM a um orçamento parado também conta como retomada.
     try { retomada.registrarSeRetomada(db, Number(id), body.texto, 'text'); } catch (e) { console.error('[RETOMADA]', e.message); }
-    return sendJSON(res, 200, { ok: true });
+    return sendJSON(res, 200, { ok: true, sem_citacao: !!body.citar && !citada });
   }
 
   // ─── API: Send media via Evolution ─────────────────────────────────────────
@@ -669,8 +788,10 @@ async function handleRequest(req, res) {
     if (!contato) return sendJSON(res, 404, { error: 'Contato not found' });
 
     // Send via Evolution
+    let mediaKey = null;
     try {
-      await evoSendMedia(contato.telefone, body.mediatype, body.base64, body.caption || '', body.fileName || '');
+      const r = await evoSendMedia(contato.telefone, body.mediatype, body.base64, body.caption || '', body.fileName || '');
+      if (r && r.key) mediaKey = r.key;
     } catch (e) {
       console.error('[CRM] Erro enviando media:', e.message);
       return sendJSON(res, 500, { error: 'Falha ao enviar: ' + e.message });
@@ -683,9 +804,12 @@ async function handleRequest(req, res) {
     const filename = `${Date.now()}_${contato.id}_out${ext}`;
     fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(rawBase64, 'base64'));
 
-    const msgTexto = body.caption || body.fileName || `[${body.mediatype}]`;
-    db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path) VALUES (?, 'out', ?, ?, ?)").run(
-      id, msgTexto, body.mediatype === 'image' ? 'image' : 'document', filename
+    // Foto sem legenda não mostra o nome do arquivo embaixo; documento mostra o nome.
+    // Documento com legenda: guarda "nome do arquivo" na primeira linha e a legenda embaixo, para a tela mostrar os dois.
+    const msgTexto = (body.mediatype === 'image' ? (body.caption || '[image]') : [body.fileName, body.caption].filter(Boolean).join('\n')) || `[${body.mediatype}]`;
+    db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid) VALUES (?, 'out', ?, ?, ?, ?, ?)").run(
+      id, msgTexto, body.mediatype === 'image' ? 'image' : 'document', filename,
+      (mediaKey && mediaKey.id) || '', (mediaKey && mediaKey.remoteJid) || jidFromPhone(contato.telefone)
     );
     db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(id);
     return sendJSON(res, 200, { ok: true });
@@ -702,6 +826,15 @@ async function handleRequest(req, res) {
     if (event === 'messages.update' || event === 'MESSAGES_UPDATE') {
       const updates = Array.isArray(body.data) ? body.data : [body.data || body];
       for (const upd of updates) {
+        // fromMe=false + READ = alguém da recepção leu a mensagem do cliente em outro aparelho. Acha a mensagem
+        // pelo identificador e marca a conversa como lida ATÉ essa mensagem (o que chegou depois continua não lido).
+        if (upd && upd.keyId && upd.fromMe === false && (upd.status === 'READ' || upd.status === 'PLAYED')) {
+          const lida = db.prepare("SELECT contato_id, created_at FROM mensagens WHERE wa_msg_id = ? AND direcao = 'in' LIMIT 1").get(String(upd.keyId));
+          if (lida) {
+            db.prepare("UPDATE contatos SET last_read_at = ?, manual_unread = 0 WHERE id = ? AND COALESCE(NULLIF(last_read_at,''), '1970-01-01') < ?").run(lida.created_at, lida.contato_id, lida.created_at);
+          }
+          continue;
+        }
         const updKey = upd.key || {};
         const updStatus = upd.update?.status;
         // Status 3 = READ (on WhatsApp), 4 = PLAYED (audio)
@@ -881,8 +1014,9 @@ async function handleRequest(req, res) {
       const waJid = jid || '';
       const docName = (tipo === 'document' && msg.documentMessage && msg.documentMessage.fileName) ? String(msg.documentMessage.fileName) : '';
       const docCaption = (tipo === 'document' && msg.documentMessage && msg.documentMessage.caption) ? String(msg.documentMessage.caption) : '';
-      db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-        contato.id, direcao, texto || caption || docName || docCaption || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid
+      const cita = citacaoDoContexto(msg, data, jid);
+      db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid, citacao_texto, citacao_de) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+        contato.id, direcao, texto || caption || [docName, docCaption].filter(Boolean).join('\n') || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid, cita.texto, cita.de
       );
       // De onde o cliente veio (anúncio Meta, Google, direto) — só leitura das primeiras mensagens dele.
       if (!isFromMe) { try { origem.classificar(db, contato.id, texto || caption); } catch (e) { console.error('[ORIGEM]', e.message); } }
