@@ -1066,7 +1066,39 @@ function renderMetricasVendas(r) {
     '<div style="font-size:11px;color:var(--text-muted);margin-top:6px">O DDD 31 junta BH, Contagem, Sete Lagoas, Itabira, Ouro Preto e Ipatinga. DDD é onde o chip foi comprado, não necessariamente onde a pessoa mora.</div>' +
   '</div>' : '';
 
-  document.getElementById('mtBody').innerHTML = kpis + '<div class="mt-grid">' + funil + mods + '</div>' + origens + regioes + porDia + motivos;
+  document.getElementById('mtBody').innerHTML = kpis + '<div class="mt-grid">' + funil + mods + '</div>' + origens + regioes + porDia + motivos + sombraCard(r.sombra);
+}
+
+// ─── Modo sombra: o agente de IA redige em silêncio e é comparado com a recepção ──
+// Nada é enviado a clientes. Aqui só se lê o placar: onde ele já responderia igual,
+// onde responderia diferente e do que sente falta (agenda, plano, PDF, anexos).
+function sombraCard(s) {
+  if (!s) return '';
+  const g = s.geral || {};
+  const cab = '<div class="mt-card"><div class="mt-h">🤖 Modo sombra <small>(teste: o agente redige a resposta em silêncio e ela é comparada com a da recepção · nada é enviado a clientes · até ' + (s.regras ? s.regras.porDia : 40) + ' conversas por dia)</small></div>';
+  if (!s.total) return cab + '<div style="color:var(--text-muted);font-size:13px">Ainda sem conversas avaliadas neste período. O teste roda em horário comercial; os primeiros números aparecem em alguns minutos.</div></div>';
+  const tile = (v, l, sub) => '<div class="mt-tile"><div class="mt-v">' + v + '</div><div class="mt-l">' + l + '</div>' + (sub ? '<div class="mt-s">' + sub + '</div>' : '') + '</div>';
+  const tiles = '<div class="mt-tiles" style="padding:0;margin:8px 0 12px">' +
+    tile(g.n, 'conversas avaliadas', s.com_erro ? s.com_erro + ' com falha técnica (fora da conta)' : '') +
+    tile(g.comparaveis ? g.taxa + '%' : '—', 'responderia igual à recepção', g.equivalente + ' de ' + g.comparaveis + ' comparáveis · ' + g.parcial + ' parciais · ' + g.divergente + ' diferentes') +
+    tile(g.depende_de_sistema, 'travou por falta de sistema', 'sabia o passo, mas não enxerga agenda, plano, PDF, anexo ou laudo') +
+    tile(g.erro_grave, 'erros graves', 'preço, prazo ou regra errados, ou respondeu o que era de uma pessoa') +
+  '</div>';
+  const linhas = (s.categorias || []).map(c =>
+    '<tr><td><b>' + esc(c.label) + '</b>' + (c.pronta ? ' <span class="origem-tag" style="background:#1d8a4e" title="' + s.regras.prontaTaxa + '% ou mais em pelo menos ' + s.regras.prontaMinimo + ' conversas, sem erro grave">pronta</span>' : '') + '</td>' +
+    '<td>' + c.n + '</td><td>' + c.equivalente + '</td><td>' + c.parcial + '</td><td>' + c.divergente + '</td><td>' + c.depende_de_sistema + '</td><td>' + (c.erro_grave || '') + '</td>' +
+    '<td>' + (c.comparaveis ? '<div class="mt-mini"><div class="mt-mini-bar" style="width:' + Math.min(100, c.taxa) + '%"></div></div> ' + c.taxa + '%' : '—') + '</td></tr>').join('');
+  const tabela = '<table class="mt-table"><thead><tr><th>Tipo de conversa</th><th>Avaliadas</th><th>Igual</th><th>Parcial</th><th>Diferente</th><th>Falta sistema</th><th>Erro grave</th><th>Responderia igual</th></tr></thead><tbody>' + linhas + '</tbody></table>';
+  const rotV = { divergente: 'diferente', parcial: 'parcial', equivalente: 'igual' };
+  const casos = (s.exemplos || []).length ? '<details class="mt-details"><summary>ver onde o agente respondeu diferente (' + s.exemplos.length + ' mais recentes)</summary>' +
+    s.exemplos.map(e => '<div style="border-top:1px solid var(--border);padding:8px 0;font-size:12.5px;line-height:1.4">' +
+      '<div style="color:var(--text-muted);font-size:11px">' + esc(e.categoria) + ' · ' + (rotV[e.veredito] || esc(e.veredito)) + (e.erro_grave ? ' · <b style="color:#ef4444">erro grave</b>' : '') + ' · <a href="#" onclick="openDetail(' + e.contato_id + ');return false" style="color:inherit">abrir conversa</a></div>' +
+      '<div><b>Cliente:</b> ' + esc(e.cliente) + '</div>' +
+      '<div><b>Recepção:</b> ' + esc(e.real) + '</div>' +
+      '<div><b>Agente:</b> <i>[' + esc(e.acao) + ']</i> ' + esc(e.rascunho || '(sem mensagem)') + '</div>' +
+      '<div style="color:var(--text-muted)"><b>Por quê:</b> ' + esc(e.explicacao) + '</div></div>').join('') + '</details>' : '';
+  return cab + tiles + tabela + casos +
+    '<div style="font-size:11px;color:var(--text-muted);margin-top:6px">"Pronta" = categoria com ' + s.regras.prontaTaxa + '% ou mais de respostas iguais em pelo menos ' + s.regras.prontaMinimo + ' conversas e nenhum erro grave. É o critério para liberar o agente a responder sozinho naquele assunto.</div></div>';
 }
 
 // ─── Origem do contato (anúncio Meta / Google / direto) ──────────────────────

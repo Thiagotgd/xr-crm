@@ -10,6 +10,7 @@ const alerta = require('./alerta');
 const metricas = require('./metricas');
 const origem = require('./origem');
 const retomada = require('./retomada');
+const sombra = require('./sombra');
 
 const PORT = process.env.PORT || 8095;
 const EVO_BASE = process.env.EVO_BASE || 'http://172.18.0.1:8085';
@@ -147,6 +148,7 @@ try { db.exec("ALTER TABLE contatos ADD COLUMN orcamento_enviado_at TEXT DEFAULT
 try { db.exec("ALTER TABLE contatos ADD COLUMN ultima_resposta_cliente_at TEXT DEFAULT ''"); } catch {}
 followup.initFollowup(db);
 origem.init(db);
+try { sombra.init(db); } catch (e) { console.error('[SOMBRA] init:', e.message); }
 
 // Migrate etapas: remove aguardando_exame, confirmado; rename agendamento→agendado; add diversos
 try {
@@ -1391,6 +1393,8 @@ async function handleRequest(req, res) {
       const out = metricas.calcular(db, dias);
       // Por origem (anúncio Meta / Google / direto): quem chegou no período e quanto virou exame.
       try { out.origens = origem.resumo(db, dias, followup.ATHENA_MARCA); } catch (e) { console.error('[ORIGEM] resumo:', e.message); }
+      // Modo sombra: placar do agente que redige em silêncio (nada é enviado a clientes).
+      try { out.sombra = sombra.resumo(db, dias); } catch (e) { console.error('[SOMBRA] resumo:', e.message); }
       console.log(`[METRICAS] ok em ${Date.now() - t0}ms`);
       return sendJSON(res, 200, out);
     } catch (e) { console.error('[METRICAS] erro:', e.message); return sendJSON(res, 500, { error: e.message }); }
@@ -1401,6 +1405,13 @@ async function handleRequest(req, res) {
     const dias = Number(urlObj.searchParams.get('dias')) || 30;
     try { return sendJSON(res, 200, origem.resumo(db, dias, followup.ATHENA_MARCA)); }
     catch (e) { console.error('[ORIGEM] erro:', e.message); return sendJSON(res, 500, { error: e.message }); }
+  }
+
+  // ─── API: Modo sombra — placar do agente em teste (somente leitura) ────────
+  if (method === 'GET' && pathname === '/api/painel/sombra') {
+    const dias = Number(urlObj.searchParams.get('dias')) || 30;
+    try { return sendJSON(res, 200, sombra.resumo(db, dias)); }
+    catch (e) { console.error('[SOMBRA] erro:', e.message); return sendJSON(res, 500, { error: e.message }); }
   }
 
   // ─── API: Follow-up — ações pela tela (mesmos comandos do WhatsApp) ────────
@@ -1471,6 +1482,8 @@ server.listen(PORT, () => {
   try { followup.corrigirLaudos(db); } catch (e) { console.error('[CRM] corrigirLaudos:', e.message); }
   // Uma vez: origem (anúncio/Google/direto) de quem já estava no banco, pelas primeiras mensagens.
   try { origem.backfill(db); } catch (e) { console.error('[ORIGEM] backfill:', e.message); }
+  // Modo sombra: o agente redige em silêncio e é comparado com a recepção. Não envia nada. (SOMBRA=0 desliga)
+  try { sombra.iniciar(db); } catch (e) { console.error('[SOMBRA] iniciar:', e.message); }
   // A cada 5 min: encerra desistências/luto e recalcula os níveis 🔴🟡⚪.
   followup.iniciarVigia(db, {
     intervaloMs: 5 * 60 * 1000,

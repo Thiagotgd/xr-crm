@@ -3,3 +3,4 @@ crm.db
 crm.db-shm
 crm.db-wal
 media/
+secrets/
