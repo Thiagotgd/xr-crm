@@ -52,7 +52,7 @@ console.log('texto sugerido');
     const s = retomada.sugerir(db, get(a), manha);
     assert.strictEqual(s.etapa, 1); assert.strictEqual(s.rotulo, '1ª mensagem');
     assert.ok(s.texto.startsWith('Bom dia, Carla! Tudo bem?'), s.texto);
-    assert.ok(/orçamento da tomografia da Luna/.test(s.texto), s.texto);
+    assert.ok(/orçamento da tomografia de Luna/.test(s.texto), s.texto);
     assert.ok(s.texto.includes('[dia e hora]') && s.preencher === true);
     assert.ok(/pré-anestésicos aqui, no mesmo dia/.test(s.texto));
   });
@@ -73,7 +73,7 @@ console.log('texto sugerido');
   t('cliente aguardando exames → pergunta dos exames, sem colchete', () => {
     const s = retomada.sugerir(db, get(c), manha);
     assert.strictEqual(s.motivo, 'aguardando exames');
-    assert.ok(/Os exames do Thor já ficaram prontos\?/.test(s.texto), s.texto);
+    assert.ok(/Os exames de Thor já ficaram prontos\?/.test(s.texto), s.texto);
     assert.ok(/deixo a ressonância agendada/.test(s.texto));
     assert.strictEqual(s.preencher, false);
   });
@@ -94,13 +94,13 @@ console.log('texto sugerido');
   t('2ª mensagem para quem falou de valor', () => {
     const s = retomada.sugerir(db, get(e), manha);
     assert.strictEqual(s.etapa, 2); assert.strictEqual(s.feitas, 1); assert.strictEqual(s.rotulo, '2ª mensagem');
-    assert.ok(/Como está o Bob\?/.test(s.texto) && /Sobre o valor da tomografia/.test(s.texto), s.texto);
+    assert.ok(/Como está Bob\?/.test(s.texto) && /Sobre o valor da tomografia/.test(s.texto), s.texto);
   });
   db.prepare("INSERT INTO followup_eventos (contato_id, tipo, valor, created_at) VALUES (?, 'retomada', '2', '2026-11-09 09:00:00')").run(e);
   t('última mensagem: encerra e segura condições', () => {
     const s = retomada.sugerir(db, get(e), manha);
     assert.strictEqual(s.etapa, 3); assert.strictEqual(s.rotulo, 'Última mensagem');
-    assert.ok(/Vou encerrar por aqui o orçamento da tomografia do Bob/.test(s.texto) && /15 dias/.test(s.texto), s.texto);
+    assert.ok(/Vou encerrar por aqui o orçamento da tomografia de Bob/.test(s.texto) && /15 dias/.test(s.texto), s.texto);
     assert.strictEqual(s.preencher, false);
   });
 
@@ -194,15 +194,54 @@ console.log('ritmo dentro do follow-up (dia seguinte → 3º dia → 7º dia →
   const id2 = db.prepare("INSERT INTO contatos (nome, telefone, etapa, orcamento_enviado_at) VALUES ('Sem Retomada','553188884444','orcamento','2026-11-16 10:00:00')").run().lastInsertRowid;
   db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, created_at) VALUES (?, 'out', 'Segue o orçamento', '2026-11-16 10:00:00')").run(id2);
   const c2 = () => db.prepare('SELECT * FROM contatos WHERE id = ?').get(id2);
-  t('sem retomada: 🟡 no dia seguinte e ⚪ depois de 48h (régua antiga)', () => {
+  t('sem retomada: fica em 🟡 (1ª mensagem) mesmo parado há dias; a coluna segue o número da mensagem', () => {
     roda('2026-11-17 09:00:00'); assert.strictEqual(c2().followup_nivel, 2);
-    roda('2026-11-19 09:00:00'); assert.strictEqual(c2().followup_nivel, 3);
-    assert.strictEqual(retomada.sugerir(db, c2(), D('2026-11-19 09:00:00')).etapa, 1, 'em ⚪ sem retomada feita, ainda é a 1ª mensagem');
+    roda('2026-11-19 09:00:00'); assert.strictEqual(c2().followup_nivel, 2);
+    assert.ok(!/segunda tentativa/.test(c2().followup_motivo), c2().followup_motivo);
+    assert.strictEqual(retomada.sugerir(db, c2(), D('2026-11-19 09:00:00')).etapa, 1);
   });
   t('cliente responde de verdade: vira 🔴 e o ciclo zera', () => {
     db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, created_at) VALUES (?, 'in', 'Qual o horário disponível amanhã?', '2026-11-19 10:00:00')").run(id2);
     roda('2026-11-19 11:00:00'); assert.strictEqual(c2().followup_nivel, 1);
   });
+  // (por último neste bloco: avança o relógio e arquivaria os outros contatos de teste)
+  t('sem retomada e ninguém mexe: arquiva sozinho depois de 48h + 5 dias, como antes', () => {
+    const id3 = db.prepare("INSERT INTO contatos (nome, telefone, etapa, orcamento_enviado_at) VALUES ('Esquecido','553188885555','orcamento','2026-11-16 10:00:00')").run().lastInsertRowid;
+    db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, created_at) VALUES (?, 'out', 'Segue o orçamento', '2026-11-16 10:00:00')").run(id3);
+    const c3 = () => db.prepare('SELECT * FROM contatos WHERE id = ?').get(id3);
+    roda('2026-11-22 12:00:00'); assert.strictEqual(c3().etapa, 'orcamento'); assert.strictEqual(c3().followup_nivel, 2);
+    roda('2026-11-24 12:00:00'); assert.strictEqual(c3().etapa, 'finalizado');
+  });
+}
+
+console.log('coluna vermelha (cliente sem resposta)');
+{
+  const db = novoBanco();
+  const add = (nome, pet, mod) => db.prepare("INSERT INTO contatos (nome, telefone, pet_nome, etapa, orcamento_enviado_at, orcamento_modalidade, followup_nivel) VALUES (?,?,?,?,?,?,1)").run(nome, '553188887777', pet, 'orcamento', '2026-11-05 10:00:00', mod).lastInsertRowid;
+  const msg = (id, texto, quando) => db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, created_at) VALUES (?, 'in', ?, ?)").run(id, texto, quando);
+  const get = id => db.prepare('SELECT * FROM contatos WHERE id = ?').get(id);
+  const agora = D('2026-11-11 15:00:00');
+  t('recente (menos de 20 h): sem texto pronto, é para responder a pergunta', () => {
+    const a = add('Clara', 'Suzy', 'TC'); msg(a, 'Qual o valor com contraste?', '2026-11-11 09:00:00');
+    assert.strictEqual(retomada.sugerirVermelho(db, get(a), agora), null);
+  });
+  t('"pode agendar" há 4 dias: desculpas + agendar, com horário a preencher', () => {
+    const a = add('Clara', 'Suzy', 'TC'); msg(a, 'Pode agendar', '2026-11-07 10:00:00');
+    const s = retomada.sugerirVermelho(db, get(a), agora);
+    assert.strictEqual(s.rotulo, 'Retomar com desculpas'); assert.strictEqual(s.etapa, 0); assert.strictEqual(s.preencher, true);
+    assert.strictEqual(s.texto, 'Boa tarde, Clara! Desculpe a demora no nosso retorno. Vamos agendar sim a tomografia de Suzy. Tenho [dia e hora] disponível. Fica bom para você?');
+  });
+  t('outra pergunta parada há dias: desculpas + espaço para a resposta de verdade', () => {
+    const a = add('Rosiane', 'Fofo', 'TC'); msg(a, 'Vocês aceitam o plano?', '2026-10-30 10:00:00');
+    const s = retomada.sugerirVermelho(db, get(a), agora);
+    assert.ok(s.texto.startsWith('Boa tarde, Rosiane! Desculpe a demora no nosso retorno. [responder aqui o que o cliente perguntou]'), s.texto);
+    assert.ok(/a tomografia de Fofo\?$/.test(s.texto), s.texto);
+  });
+  t('gênero do pet nunca é adivinhado: "de Suzy", "de Mel", não "do/da"', () => {
+    const a = add('Ana', 'Mel', 'RM'); msg(a, 'pode marcar', '2026-11-08 10:00:00');
+    assert.ok(/a ressonância de Mel\./.test(retomada.sugerirVermelho(db, get(a), agora).texto));
+  });
+  t('sem mensagem do cliente: sem sugestão', () => assert.strictEqual(retomada.sugerirVermelho(db, get(add('X', '', '')), agora), null));
 }
 
 console.log(falhas ? `\n${falhas} FALHA(S)` : '\ntudo ok');

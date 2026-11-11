@@ -138,8 +138,9 @@ function sugerir(db, c, agora = new Date()) {
   const mod = c.orcamento_modalidade || '';
   const exame = EXAME[mod] || 'exame';
   const art = (exame === 'raio-X' || exame === 'ultrassom' || exame === 'exame') ? 'o' : 'a';       // "a tomografia", "o ultrassom"
-  const dePet = pet ? (/a$/i.test(pet) ? 'da ' : 'do ') + pet : 'do seu pet';                       // palpite pelo final do nome; a recepção corrige
-  const oPet = pet ? (/a$/i.test(pet) ? 'a ' : 'o ') + pet : 'o seu pet';
+  // Sem artigo de gênero: "de Suzy", "Como está Thor?". Adivinhar "do/da" pelo final do nome errava (Suzy, Mel, Nicole).
+  const dePet = pet ? 'de ' + pet : 'do seu pet';
+  const oPet = pet ? pet : 'o seu pet';
   const ola = `${saud}${nome ? ', ' + nome : ''}! Tudo bem?`;
   const cond = REGRAS.condicaoPagamento;
   const anest = !!COM_ANESTESIA[mod];
@@ -183,6 +184,38 @@ function sugerir(db, c, agora = new Date()) {
   return { etapa: e.etapa, feitas: e.feitas, rotulo, motivo, texto, preencher: texto.includes('['), sinais: s };
 }
 
+// ─── Coluna vermelha: cliente falou por último e ficou sem resposta ────────────
+// Recente (menos de N horas): não há texto pronto, porque o que falta é RESPONDER a pergunta dele.
+// Antigo (ficou de um dia para o outro, ou mais): sugere retomar pedindo desculpas pela demora.
+// O colchete obriga quem envia a ler a conversa e completar com a resposta de verdade.
+const HORAS_VERMELHO_COM_SUGESTAO = 20;
+const RE_QUER_AGENDAR = /pode (agendar|marcar|confirmar)|quero (agendar|marcar|fazer)|vamos (agendar|marcar)|vou fazer sim|pode ser sim|fechado/;
+
+function sugerirVermelho(db, c, agora = new Date()) {
+  const ult = db.prepare("SELECT texto, created_at FROM mensagens WHERE contato_id = ? AND direcao = 'in' ORDER BY id DESC LIMIT 3").all(c.id);
+  if (!ult.length) return null;
+  const quando = dt(ult[0].created_at);
+  if (!quando || (agora - quando) < HORAS_VERMELHO_COM_SUGESTAO * 3600000) return null;
+  const h = agora.getHours();
+  const saud = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+  const nome = primeiroNome(c.nome);
+  const pet = nomePet(c.pet_nome);
+  const exame = EXAME[c.orcamento_modalidade || ''] || 'exame';
+  const art = (exame === 'raio-X' || exame === 'ultrassom' || exame === 'exame') ? 'o' : 'a';
+  const dePet = pet ? 'de ' + pet : 'do seu pet';
+  const ola = `${saud}${nome ? ', ' + nome : ''}! Desculpe a demora no nosso retorno.`;
+  const falas = normalizar(ult.map(m => m.texto).join(' '));
+  let motivo, texto;
+  if (RE_QUER_AGENDAR.test(falas)) {
+    motivo = 'cliente pediu para agendar e ficou sem resposta';
+    texto = `${ola} Vamos agendar sim ${art} ${exame} ${dePet}. Tenho [dia e hora] disponível. Fica bom para você?`;
+  } else {
+    motivo = 'ficou sem resposta';
+    texto = `${ola} [responder aqui o que o cliente perguntou] Ainda posso ajudar com ${art} ${exame} ${dePet}?`;
+  }
+  return { etapa: 0, feitas: 0, rotulo: 'Retomar com desculpas', motivo, texto, preencher: true };
+}
+
 // ─── Resultado (para a aba Métricas) ───────────────────────────────────────────
 // Por contato retomado no período: respondeu depois? agendou depois?
 function resumo(db, desde, agendouDepois) {
@@ -205,4 +238,4 @@ function resumo(db, desde, agendouDepois) {
   return { mensagens: evs.length, contatos, responderam, agendaram, taxa_resposta: pct(responderam, contatos), taxa_agendou: pct(agendaram, contatos), por_etapa: porEtapa };
 }
 
-module.exports = { REGRAS, RE_AGENDOU, estado, inicioDoCiclo, registrarSeRetomada, sinais, sugerir, primeiroNome, nomePet, resumo };
+module.exports = { REGRAS, RE_AGENDOU, estado, inicioDoCiclo, registrarSeRetomada, sinais, sugerir, sugerirVermelho, primeiroNome, nomePet, resumo };

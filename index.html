@@ -589,8 +589,8 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
     </div>
     <div class="fu-legend">
       <span><b class="fu-dot" style="background:#ef4444"></b> cliente esperando resposta</span>
-      <span><b class="fu-dot" style="background:#f59e0b"></b> orçamento sem retorno 12h+</span>
-      <span><b class="fu-dot" style="background:#9ca3af"></b> 2ª tentativa 48h+</span>
+      <span><b class="fu-dot" style="background:#f59e0b"></b> orçamento sem retorno: mandar a 1ª mensagem</span>
+      <span><b class="fu-dot" style="background:#9ca3af"></b> segue mudo: 2ª ou última mensagem</span>
     </div>
   </div>
   <div id="fuList"></div>
@@ -894,7 +894,7 @@ function renderKanban() {
   // ─── Coluna Follow-up: quem recebeu orçamento e precisa de um toque ────────
   const fuCards = contatos.filter(c => (c.followup_nivel || 0) > 0)
     .sort((a, b) => (a.followup_nivel - b.followup_nivel) || String(a.followup_desde || '').localeCompare(String(b.followup_desde || '')));
-  const fuLabel = { 1: '🔴 Urgente', 2: '🟡 Follow-up', 3: '⚪ 2ª tentativa' };
+  const fuLabel = { 1: '🔴 Urgente', 2: '🟡 1ª mensagem', 3: '⚪ 2ª ou última' };
   const fuCor = { 1: '#ef4444', 2: '#f59e0b', 3: '#9ca3af' };
   let fuHtml = '';
   let lastN = 0;
@@ -902,8 +902,8 @@ function renderKanban() {
     if (c.followup_nivel !== lastN) { fuHtml += '<div class="fu-sep">' + fuLabel[c.followup_nivel] + '</div>'; lastN = c.followup_nivel; }
     const avatar = c.foto_url
       ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
-        '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
-      : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+        '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + inicial(c.nome) + '</div>'
+      : '<div class="cc-avatar cc-avatar-fallback">' + inicial(c.nome) + '</div>';
     fuHtml += '<div class="contact-card fu-card" style="border-left-color:' + fuCor[c.followup_nivel] + '" data-id="' + c.id + '" draggable="true" onclick="openDetail(' + c.id + ')">' +
       '<div class="cc-header-row">' + avatar +
         '<div class="cc-header-info">' +
@@ -943,8 +943,8 @@ function renderKanban() {
               const urgente = etapa.id === 'novo' && c.ultima_msg_dir === 'in' && minSemResposta >= 60;
               const avatar = c.foto_url
                 ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
-                  '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
-                : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+                  '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + inicial(c.nome) + '</div>'
+                : '<div class="cc-avatar cc-avatar-fallback">' + inicial(c.nome) + '</div>';
               const unread = c.nao_lidas || 0;
               // Build compact indicators
               let indicators = '';
@@ -1150,6 +1150,10 @@ async function loadFollowup() {
   } catch(e) { toast('Erro: ' + e.message, 'err'); }
 }
 
+// Inicial do nome para o avatar. Nome em fonte "enfeitada" (𝐉𝐮𝐥𝐢𝐚𝐧𝐚) ocupa dois códigos por letra:
+// charAt(0) pegava meia letra e mostrava "�". Array.from separa por letra de verdade.
+function inicial(nome) { const s = Array.from(String(nome || '?').trim()); return (s[0] || '?').toUpperCase(); }
+
 // ─── Retomada de orçamento: mensagem sugerida no card 🟡/⚪ ───────────────────
 // O texto vem pronto do servidor (1ª, 2ª ou última mensagem). A recepção ajusta,
 // copia e envia pelo WhatsApp dela. O CRM NÃO envia nada: só registra a retomada
@@ -1202,7 +1206,7 @@ function renderFollowup(r) {
 
   const grupos = [
     { n: 1, titulo: '🔴 Cliente esperando resposta', cor: '#ef4444', itens: fila.filter(c => c.followup_nivel === 1) },
-    { n: 2, titulo: '🟡 Orçamento sem retorno (dia seguinte)', cor: '#f59e0b', itens: fila.filter(c => c.followup_nivel === 2) },
+    { n: 2, titulo: '🟡 Orçamento sem retorno (1ª mensagem)', cor: '#f59e0b', itens: fila.filter(c => c.followup_nivel === 2) },
     { n: 3, titulo: '⚪ Segue mudo (2ª ou última mensagem)', cor: '#9ca3af', itens: fila.filter(c => c.followup_nivel === 3) },
   ];
 
@@ -1210,15 +1214,15 @@ function renderFollowup(r) {
   if (!total) { el.innerHTML = '<div class="fu-empty">🎉 Nenhum orçamento parado.</div>'; return; }
 
   // Três colunas lado a lado: 🔴 | 🟡 | ⚪ — triagem por posição, não por leitura.
-  const subt = { 1: 'falou por último, ninguém respondeu', 2: 'recebeu orçamento e sumiu · mande a mensagem sugerida', 3: 'parado há 2 dias ou já retomado · mensagem pronta no card' };
+  const subt = { 1: 'falou por último, ninguém respondeu · parado há mais de um dia vem com texto de retomada', 2: 'recebeu orçamento e sumiu · ainda não recebeu nenhuma retomada', 3: 'já recebeu retomada e segue sem responder' };
   el.innerHTML = '<div class="fu-board">' + grupos.map(g =>
     '<div class="fu-col" style="border-top-color:' + g.cor + '">' +
       '<div class="fu-col-h"><div><div style="color:' + g.cor + '">' + g.titulo + '</div><div class="fu-col-sub">' + subt[g.n] + '</div></div><span class="fu-count">' + g.itens.length + '</span></div>' +
       (g.itens.length ? g.itens.map(c => {
         const avatar = c.foto_url
           ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=&quot;none&quot;;this.nextElementSibling.style.display=&quot;flex&quot;">' +
-            '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
-          : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+            '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + inicial(c.nome) + '</div>'
+          : '<div class="cc-avatar cc-avatar-fallback">' + inicial(c.nome) + '</div>';
         const last = c.ultima_msg ? (c.ultima_msg_dir === 'in' ? '🗨️ ' : '↩️ ') + esc(String(c.ultima_msg).slice(0, 80)) : '';
         const ha = (String(c.followup_motivo || '').match(/há \S+/) || [''])[0];
         return '<div class="fu-card" style="border-left-color:' + g.cor + '" data-id="' + c.id + '">' +
@@ -1296,9 +1300,9 @@ function renderDetail() {
 
   const avatarEl = document.getElementById('detailAvatar');
   if (c.foto_url) {
-    avatarEl.innerHTML = '<img src="' + esc(c.foto_url) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover" onerror="this.parentElement.innerHTML=\'<div style=\\\'width:36px;height:36px;border-radius:50%;background:#4b5563;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px\\\'>' + (c.nome || '?').charAt(0).toUpperCase() + '</div>\'">';
+    avatarEl.innerHTML = '<img src="' + esc(c.foto_url) + '" style="width:36px;height:36px;border-radius:50%;object-fit:cover" onerror="this.parentElement.innerHTML=\'<div style=\\\'width:36px;height:36px;border-radius:50%;background:#4b5563;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px\\\'>' + inicial(c.nome) + '</div>\'">';
   } else {
-    avatarEl.innerHTML = '<div style="width:36px;height:36px;border-radius:50%;background:#4b5563;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+    avatarEl.innerHTML = '<div style="width:36px;height:36px;border-radius:50%;background:#4b5563;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px">' + inicial(c.nome) + '</div>';
   }
 
   const infoEl = document.getElementById('detailInfo');
@@ -1978,8 +1982,8 @@ async function loadCustomTab(abaId) {
     const unread = c.nao_lidas || 0;
     const avatar = c.foto_url
       ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
-        '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
-      : '<div class="cc-avatar cc-avatar-fallback">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+        '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + inicial(c.nome) + '</div>'
+      : '<div class="cc-avatar cc-avatar-fallback">' + inicial(c.nome) + '</div>';
     const pinIcon = c.pinado ? '<span class="cc-pin" title="Fixado">&#x1F4CC;</span>' : '';
     return '<div class="contact-card' + (unread ? ' has-unread' : '') + (followup ? ' followup' : '') + '" style="border-left-color:' + (aba ? aba.cor : 'var(--accent)') + ';margin-bottom:8px" data-contato-id="' + c.id + '" data-aba-id="' + abaId + '" onclick="openDetail(' + c.id + ')">' +
       '<div class="cc-header-row">' + avatar +
@@ -2348,8 +2352,8 @@ function renderForwardList() {
     html += fwdContatos.map(c =>
       '<div class="fwd-item" data-search="' + esc((c.nome || '') + ' ' + c.telefone).toLowerCase() + '" onclick="forwardToContato(' + c.id + ')">' +
         (c.foto_url
-          ? '<img class="fwd-avatar" src="' + esc(c.foto_url) + '" onerror="this.outerHTML=\'<div class=fwd-avatar-fb>' + (c.nome || '?').charAt(0).toUpperCase() + '</div>\'">'
-          : '<div class="fwd-avatar-fb">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>') +
+          ? '<img class="fwd-avatar" src="' + esc(c.foto_url) + '" onerror="this.outerHTML=\'<div class=fwd-avatar-fb>' + inicial(c.nome) + '</div>\'">'
+          : '<div class="fwd-avatar-fb">' + inicial(c.nome) + '</div>') +
         '<div class="fwd-info"><div class="fwd-name">' + esc(c.nome || c.telefone) + '</div>' +
         '<div class="fwd-sub">' + formatPhone(c.telefone) + '</div></div>' +
       '</div>'
@@ -2610,8 +2614,8 @@ function renderConversasList() {
 
     const avatar = c.foto_url
       ? '<img class="conversa-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
-        '<div class="conversa-avatar-fb" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
-      : '<div class="conversa-avatar-fb">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+        '<div class="conversa-avatar-fb" style="display:none">' + inicial(c.nome) + '</div>'
+      : '<div class="conversa-avatar-fb">' + inicial(c.nome) + '</div>';
 
     const tags = (c.etiquetas && c.etiquetas.length)
       ? '<div class="conversa-tags">' + c.etiquetas.map(t => '<span class="tag" style="background:' + t.cor + '">' + esc(t.nome) + '</span>').join('') + '</div>'
@@ -2739,8 +2743,8 @@ function renderConversaChat() {
   // Header
   const avatarHtml = c.foto_url
     ? '<img class="ch-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
-      '<div class="ch-avatar-fb" style="display:none">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>'
-    : '<div class="ch-avatar-fb">' + (c.nome || '?').charAt(0).toUpperCase() + '</div>';
+      '<div class="ch-avatar-fb" style="display:none">' + inicial(c.nome) + '</div>'
+    : '<div class="ch-avatar-fb">' + inicial(c.nome) + '</div>';
 
   const etapaLabel = etapas.find(e => e.id === c.etapa);
 

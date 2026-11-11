@@ -383,8 +383,10 @@ function avaliar(db, agora = new Date()) {
     // Sem nenhuma retomada registrada, vale a régua de sempre (🟡 12h → ⚪ 48h → arquiva).
     // Com retomada: some da fila até a próxima ficar devida (≈3º e ≈7º dia) e volta em ⚪;
     // depois da 3ª e última, espera a resposta e arquiva.
+    let semRetomada = false;
     if (nivel >= 2) {
       const r = retomada.estado(db, c, agora);
+      semRetomada = r.feitas === 0;
       if (r.esgotado) {
         if (r.ultima && (agora - r.ultima) >= retomada.REGRAS.diasArquivarAposUltima * 86400000) {
           arquivar.run(c.id); logArquivo.run(c.id);
@@ -409,6 +411,10 @@ function avaliar(db, agora = new Date()) {
       console.log(`[CRM] Follow-up: ${c.nome || c.telefone} arquivado (sem resposta após 2 cobranças)`);
       continue;
     }
+    // Colunas da tela seguem o NÚMERO DA MENSAGEM, não o relógio: quem ainda não recebeu nenhuma
+    // retomada fica em 🟡 (1ª mensagem) mesmo parado há dias; ⚪ é só para a 2ª ou a última.
+    // (O arquivamento por tempo, logo acima, continua valendo para quem ninguém retomou.)
+    if (nivel === 3 && semRetomada) { nivel = 2; motivo = String(motivo).replace(' — segunda tentativa', ''); }
     // "ok 123" pela recepção: silencia por um tempo (já ligaram, já resolveram por fora).
     if (nivel > 0 && c.followup_snooze_ate && dt(c.followup_snooze_ate) && agora < dt(c.followup_snooze_ate)) { nivel = 0; motivo = ''; desde = null; }
 

@@ -1448,9 +1448,11 @@ async function handleRequest(req, res) {
     // Orçamento parado (🟡/⚪): já vai com a mensagem de retomada sugerida (1ª, 2ª ou última).
     const agoraFu = new Date();
     for (const f of fila) {
-      if (f.followup_nivel < 2) continue;
-      try { const s = retomada.sugerir(db, f, agoraFu); f.retomada = { etapa: s.etapa, feitas: s.feitas, rotulo: s.rotulo, motivo: s.motivo, texto: s.texto, preencher: s.preencher }; }
-      catch (e) { console.error('[RETOMADA] sugerir:', e.message); }
+      try {
+        // 🔴 parado de um dia para o outro: sugestão de retomada com pedido de desculpas (recente não tem: é responder a pergunta).
+        const s = f.followup_nivel < 2 ? retomada.sugerirVermelho(db, f, agoraFu) : retomada.sugerir(db, f, agoraFu);
+        if (s) f.retomada = { etapa: s.etapa, feitas: s.feitas, rotulo: s.rotulo, motivo: s.motivo, texto: s.texto, preencher: s.preencher };
+      } catch (e) { console.error('[RETOMADA] sugerir:', e.message); }
     }
     return sendJSON(res, 200, { resumo, regras: followup.REGRAS, fila });
   }
