@@ -11,6 +11,7 @@ const metricas = require('./metricas');
 const origem = require('./origem');
 const retomada = require('./retomada');
 const sombra = require('./sombra');
+const leitor = require('./leitor');
 
 const PORT = process.env.PORT || 8095;
 const EVO_BASE = process.env.EVO_BASE || 'http://172.18.0.1:8085';
@@ -149,6 +150,7 @@ try { db.exec("ALTER TABLE contatos ADD COLUMN ultima_resposta_cliente_at TEXT D
 followup.initFollowup(db);
 origem.init(db);
 try { sombra.init(db); } catch (e) { console.error('[SOMBRA] init:', e.message); }
+try { leitor.init(db); } catch (e) { console.error('[LEITOR] init:', e.message); }
 
 // Migrate etapas: remove aguardando_exame, confirmado; rename agendamento→agendado; add diversos
 try {
@@ -483,6 +485,8 @@ async function handleRequest(req, res) {
     const contato = db.prepare('SELECT * FROM contatos WHERE id = ?').get(id);
     if (!contato) return sendJSON(res, 404, { error: 'Not found' });
     contato.mensagens = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? ORDER BY created_at DESC LIMIT 50').all(id);
+    // Foto ou PDF do cliente já lido pela IA (pedido do veterinário etc.): a leitura vai junto da mensagem.
+    try { leitor.anexarLeituras(db, contato.mensagens); } catch (e) { console.error('[LEITOR] anexar:', e.message); }
     contato.etiquetas = db.prepare('SELECT e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id WHERE ce.contato_id = ?').all(id);
     // Mark as read + reset manual_unread
     db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(id);
@@ -884,6 +888,8 @@ async function handleRequest(req, res) {
       if (!isFromMe) { try { origem.classificar(db, contato.id, texto || caption); } catch (e) { console.error('[ORIGEM]', e.message); } }
       // A recepção escreveu para um orçamento parado (🟡/⚪)? Conta como retomada (1ª, 2ª ou última).
       else { try { retomada.registrarSeRetomada(db, contato.id, texto || caption || docName || docCaption, tipo); } catch (e) { console.error('[RETOMADA]', e.message); } }
+      // Cliente mandou foto ou PDF: a IA lê em seguida (pedido do veterinário, comprovante...). Só transcreve.
+      if (!isFromMe && mediaPath && (tipo === 'image' || tipo === 'document')) { try { leitor.aoReceber(db); } catch (e) { console.error('[LEITOR]', e.message); } }
     }
 
     // ─── Auto-move to Orçamento when PDF sent outgoing ───────────────────
@@ -1395,6 +1401,7 @@ async function handleRequest(req, res) {
       try { out.origens = origem.resumo(db, dias, followup.ATHENA_MARCA); } catch (e) { console.error('[ORIGEM] resumo:', e.message); }
       // Modo sombra: placar do agente que redige em silêncio (nada é enviado a clientes).
       try { out.sombra = sombra.resumo(db, dias); } catch (e) { console.error('[SOMBRA] resumo:', e.message); }
+      try { out.leitor = leitor.resumo(db, dias); } catch (e) { console.error('[LEITOR] resumo:', e.message); }
       console.log(`[METRICAS] ok em ${Date.now() - t0}ms`);
       return sendJSON(res, 200, out);
     } catch (e) { console.error('[METRICAS] erro:', e.message); return sendJSON(res, 500, { error: e.message }); }
@@ -1484,6 +1491,8 @@ server.listen(PORT, () => {
   try { origem.backfill(db); } catch (e) { console.error('[ORIGEM] backfill:', e.message); }
   // Modo sombra: o agente redige em silêncio e é comparado com a recepção. Não envia nada. (SOMBRA=0 desliga)
   try { sombra.iniciar(db); } catch (e) { console.error('[SOMBRA] iniciar:', e.message); }
+  // Leitor de anexos: transcreve o pedido do veterinário enviado em foto ou PDF. Não envia nada. (LEITOR=0 desliga)
+  try { leitor.iniciar(db); } catch (e) { console.error('[LEITOR] iniciar:', e.message); }
   // A cada 5 min: encerra desistências/luto e recalcula os níveis 🔴🟡⚪.
   followup.iniciarVigia(db, {
     intervaloMs: 5 * 60 * 1000,

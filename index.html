@@ -124,6 +124,17 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .fu-card .cc-avatar { width: 32px; height: 32px; flex-shrink: 0; }
 .fu-card .fu-name { font-size: 13px; }
 .fu-card .fu-tel { font-size: 11px; }
+/* Leitura automática de foto/PDF do cliente (pedido do veterinário), abaixo do anexo na conversa */
+.msg-leitura { margin-top: 6px; padding: 7px 9px; border-radius: 8px; border-left: 3px solid #17a2d8; background: rgba(23,162,216,0.10); font-size: 12.5px; line-height: 1.4; max-width: 360px; }
+.msg-leitura.atencao { border-left-color: #f59e0b; background: rgba(245,158,11,0.10); }
+.msg-leitura.simples { border-left-color: #9ca3af; background: rgba(156,163,175,0.10); padding: 4px 8px; font-size: 11.5px; }
+.msg-leitura.simples span { opacity: .8; }
+.msg-leitura .ml-h { font-weight: 700; margin-bottom: 3px; }
+.msg-leitura .ml-h span { font-weight: 400; font-size: 10.5px; opacity: .7; margin-left: 4px; }
+.msg-leitura .ml-e { font-weight: 600; }
+.msg-leitura .ml-s { font-size: 11.5px; opacity: .9; margin-top: 2px; }
+.msg-leitura .ml-w { font-size: 11.5px; color: #f59e0b; margin-top: 3px; }
+.msg-leitura .ml-n { font-size: 10.5px; opacity: .6; margin-top: 3px; font-style: italic; }
 /* Retomada de orçamento: mensagem sugerida dentro do card 🟡/⚪ */
 .fu-ret { margin: 8px 0 0 42px; border: 1px dashed var(--border); border-radius: 8px; padding: 7px 8px; background: rgba(255,255,255,0.02); }
 .fu-ret-h { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 11px; margin-bottom: 5px; }
@@ -1066,7 +1077,18 @@ function renderMetricasVendas(r) {
     '<div style="font-size:11px;color:var(--text-muted);margin-top:6px">O DDD 31 junta BH, Contagem, Sete Lagoas, Itabira, Ouro Preto e Ipatinga. DDD é onde o chip foi comprado, não necessariamente onde a pessoa mora.</div>' +
   '</div>' : '';
 
-  document.getElementById('mtBody').innerHTML = kpis + '<div class="mt-grid">' + funil + mods + '</div>' + origens + regioes + porDia + motivos + sombraCard(r.sombra);
+  document.getElementById('mtBody').innerHTML = kpis + '<div class="mt-grid">' + funil + mods + '</div>' + origens + regioes + porDia + motivos + sombraCard(r.sombra) + leitorCard(r.leitor);
+}
+
+// ─── Leitor de anexos: quantas fotos e PDFs foram lidos e o que eram ─────────
+function leitorCard(l) {
+  if (!l) return '';
+  const nomes = { pedido_exame: '📋 pedidos de exame', resultado_exame: '🧪 resultados de exame', comprovante: '🧾 comprovantes', receita: '💊 receitas', foto_animal: '🐾 fotos do animal', outro: '📎 outros' };
+  const partes = Object.keys(nomes).filter(k => l.por_tipo && l.por_tipo[k]).map(k => l.por_tipo[k] + ' ' + nomes[k]);
+  return '<div class="mt-card"><div class="mt-h">📎 Leitor de anexos <small>(a IA transcreve a foto ou o PDF que o cliente manda; a leitura aparece abaixo do anexo na conversa · até ' + l.porDia + ' leituras por dia)</small></div>' +
+    (l.total ? '<div style="font-size:13px;line-height:1.6">' + l.total + ' anexos classificados no período, ' + l.por_ia + ' lidos pela IA' + (l.falhas ? ' · ' + l.falhas + ' com falha' : '') + '.<br>' + partes.join(' · ') +
+      (l.pedidos_confianca_baixa ? '<br><span style="color:#f59e0b">' + l.pedidos_confianca_baixa + ' pedidos com leitura de baixa confiança (letra difícil): conferir com a imagem.</span>' : '') + '</div>'
+      : '<div style="color:var(--text-muted);font-size:13px">Ainda sem anexos lidos neste período.</div>') + '</div>';
 }
 
 // ─── Modo sombra: o agente de IA redige em silêncio e é comparado com a recepção ──
@@ -1316,6 +1338,7 @@ function renderDetail() {
       } else {
         content = fmtWa(m.texto);
       }
+      content += leituraBloco(m);
       return '<div class="msg ' + m.direcao + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
         '<div class="msg-time">' + (m.created_at || '') + '</div></div>';
     }).join('');
@@ -2743,6 +2766,26 @@ function renderConversaChat() {
   renderMessagesInto(document.getElementById('chatMessagesArea'), c.mensagens);
 }
 
+// ─── Leitura automática de foto/PDF do cliente (pedido do veterinário etc.) ───
+// Vem do servidor em m.leitura. É só transcrição feita por IA: a recepção confere com a imagem.
+function leituraBloco(m) {
+  const l = m && m.leitura;
+  if (!l) return '';
+  if (l.tipo !== 'pedido_exame') {
+    return '<div class="msg-leitura simples" title="Classificado automaticamente' + (l.origem === 'regra' ? ' pelo nome do arquivo' : ' pela leitura do anexo') + '">' + l.icone + ' ' + esc(l.rotulo) +
+      (l.origem === 'ia' && l.resumo ? ' <span>· ' + esc(l.resumo) + '</span>' : '') + '</div>';
+  }
+  const baixa = l.confianca === 'baixa' || (l.ilegivel && l.ilegivel.length);
+  const linha = (r, v) => v ? '<div class="ml-s"><b>' + r + ':</b> ' + esc(v) + '</div>' : '';
+  return '<div class="msg-leitura' + (baixa ? ' atencao' : '') + '">' +
+    '<div class="ml-h">' + l.icone + ' Pedido de exame <span>leitura automática' + (l.confianca ? ' · confiança ' + esc(l.confianca === 'media' ? 'média' : l.confianca) : '') + '</span></div>' +
+    (l.exames && l.exames.length ? l.exames.map(e => '<div class="ml-e">• ' + esc(e) + '</div>').join('') : '<div class="ml-e">' + esc(l.resumo || 'exames não identificados') + '</div>') +
+    linha('Paciente', [l.pet, l.paciente].filter(Boolean).join(' · ')) + linha('Suspeita', l.suspeita) +
+    linha('Veterinário', [l.veterinario, l.clinica].filter(Boolean).join(' · ')) + linha('Data do pedido', l.data) +
+    (l.ilegivel && l.ilegivel.length ? '<div class="ml-w">Não deu para ler: ' + l.ilegivel.map(esc).join('; ') + '</div>' : '') +
+    '<div class="ml-n">Confira com a imagem antes de orçar.</div></div>';
+}
+
 function renderMessagesInto(area, mensagens) {
   if (!mensagens || mensagens.length === 0) {
     area.innerHTML = '<div class="empty"><div class="emoji">&#x1F4AC;</div>Nenhuma mensagem</div>';
@@ -2761,6 +2804,7 @@ function renderMessagesInto(area, mensagens) {
     } else {
       content = fmtWa(m.texto);
     }
+    content += leituraBloco(m);
     return '<div class="msg ' + m.direcao + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
       '<div class="msg-time">' + (m.created_at || '') + '</div></div>';
   }).join('');

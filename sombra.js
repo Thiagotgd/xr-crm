@@ -87,6 +87,13 @@ function textoMsg(m) {
   if (m.tipo === 'document') return '[documento: ' + (t && t !== '[document]' ? t : 'sem nome') + ']';
   return t;
 }
+// Foto ou PDF do cliente que o leitor (leitor.js) já transcreveu aparece com o conteúdo; senão, só o marcador.
+function textoComLeitura(db, m) {
+  if (m.direcao === 'in' && (m.tipo === 'image' || m.tipo === 'document')) {
+    try { const t = require('./leitor').textoParaAgente(db, m.id); if (t) return t; } catch {}
+  }
+  return textoMsg(m);
+}
 const quem = m => m.direcao === 'in' ? 'CLIENTE' : String(m.texto || '').includes(ATHENA_MARCA) ? 'ATHENA' : 'RECEPÇÃO';
 const ehAuto = m => m.direcao === 'out' && String(m.texto || '').includes(SAUDACAO_MARCA);
 const ehAthena = m => m.direcao === 'out' && String(m.texto || '').includes(ATHENA_MARCA);
@@ -132,7 +139,7 @@ function acharTurnos(db, agora = new Date(), opts = {}) {
       turnos.push({
         contato_id: id, in_ini: blocoIn[0].id, in_fim: blocoIn[blocoIn.length - 1].id, out_ini: blocoOut[0].id, out_fim: blocoOut[blocoOut.length - 1].id,
         quando: blocoIn[blocoIn.length - 1].created_at,
-        cliente: blocoIn.map(textoMsg).filter(Boolean).join('\n'),
+        cliente: blocoIn.map(m => textoComLeitura(db, m)).filter(Boolean).join('\n'),
         real: blocoOut.map(textoMsg).filter(Boolean).join('\n'),
       });
     }
@@ -192,8 +199,8 @@ function historico(db, turno, limite) {
   return msgs.map(m => {
     const d = dt(m.created_at);
     const quando = d ? `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}` : '';
-    let t = textoMsg(m); if (ehAthena(m)) t = limpaAthena(t);
-    return `${quando} ${quem(m)}: ${t.replace(/\s*\n\s*/g, ' / ').slice(0, 600)}`;
+    let t = textoComLeitura(db, m); if (ehAthena(m)) t = limpaAthena(t);
+    return `${quando} ${quem(m)}: ${t.replace(/\s*\n\s*/g, ' / ').slice(0, 900)}`;
   }).join('\n');
 }
 
@@ -213,7 +220,7 @@ function promptJuiz(db, turno, rasc) {
   const b = base();
   const anterior = db.prepare("SELECT id, direcao, texto, tipo, created_at FROM mensagens WHERE contato_id = ? AND id < ? ORDER BY id DESC LIMIT 12")
     .all(turno.contato_id, turno.in_ini).reverse().filter(m => !ehAuto(m))
-    .map(m => `${quem(m)}: ${(ehAthena(m) ? limpaAthena(textoMsg(m)) : textoMsg(m)).replace(/\s*\n\s*/g, ' / ').slice(0, 400)}`).join('\n');
+    .map(m => `${quem(m)}: ${(ehAthena(m) ? limpaAthena(textoMsg(m)) : textoComLeitura(db, m)).replace(/\s*\n\s*/g, ' / ').slice(0, 500)}`).join('\n');
   return `=== BASE (fatos válidos) ===\n${b.texto}\n\n=== CONTEXTO ANTERIOR ===\n${anterior || '(início da conversa)'}\n\n` +
     `=== MENSAGEM DO CLIENTE ===\n${turno.cliente.slice(0, 1500)}\n\n=== REAL (o que a recepção respondeu) ===\n${turno.real.slice(0, 2000)}\n\n` +
     `=== RASCUNHO (o que o agente faria) ===\nação: ${rasc.acao}\nmensagem: ${rasc.mensagem || '(nenhuma)'}\nmotivo: ${rasc.motivo || ''}\n\nDevolva o JSON da avaliação.`;
