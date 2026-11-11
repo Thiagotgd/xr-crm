@@ -25,7 +25,7 @@ if (dup.length) { erro++; console.log('  ERRO função duplicada:', dup.map(([k,
 else console.log(`  ok   ${Object.keys(nomes).length} funções, nenhuma duplicada`);
 
 // Chamadas a funções de origem que precisam existir
-for (const f of ['origemTag', 'renderFollowup', 'renderMetricasVendas', 'loadMetricasVendas']) {
+for (const f of ['origemTag', 'renderFollowup', 'renderMetricasVendas', 'loadMetricasVendas', 'fuRetBloco', 'fuRetInput', 'fuRetEnviar']) {
   if (!nomes[f]) { erro++; console.log('  ERRO função esperada não encontrada:', f); }
 }
 

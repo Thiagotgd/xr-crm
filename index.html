@@ -124,6 +124,16 @@ body { font-family: 'Segoe UI', Helvetica, Arial, 'Lucida Grande', sans-serif; b
 .fu-card .cc-avatar { width: 32px; height: 32px; flex-shrink: 0; }
 .fu-card .fu-name { font-size: 13px; }
 .fu-card .fu-tel { font-size: 11px; }
+/* Retomada de orçamento: mensagem sugerida dentro do card 🟡/⚪ */
+.fu-ret { margin: 8px 0 0 42px; border: 1px dashed var(--border); border-radius: 8px; padding: 7px 8px; background: rgba(255,255,255,0.02); }
+.fu-ret-h { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 11px; margin-bottom: 5px; }
+.fu-ret-h b { color: #25d366; }
+.fu-ret-h span { color: var(--text-muted, #9ca3af); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fu-ret-txt { width: 100%; box-sizing: border-box; min-height: 92px; resize: vertical; font: inherit; font-size: 12px; line-height: 1.35; padding: 6px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--card-bg, #1f2c33); color: inherit; }
+.fu-ret-txt.falta { border-color: #f59e0b; }
+.fu-ret-aviso { font-size: 10.5px; color: #f59e0b; margin-top: 3px; }
+.fu-ret-btns { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.fu-btn.wa { background: #25d366; border-color: #25d366; color: #06301a; font-weight: 700; }
 /* Origem do contato (anúncio Meta / Google) — etiqueta pequena ao lado do nome */
 .origem-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; color: #fff; vertical-align: middle; margin-left: 6px; white-space: nowrap; }
 .fu-ha { font-size: 12px; font-weight: 700; white-space: nowrap; }
@@ -994,6 +1004,9 @@ function renderMetricasVendas(r) {
     tile(r.tempo_fechar_dias.mediana != null ? r.tempo_fechar_dias.mediana + ' d' : '—', 'do orçamento ao agendamento', 'mediana · ' + r.tempo_fechar_dias.amostras + ' casos') +
     tile(fmtMin(rs.mediana_min), 'tempo de resposta ao cliente', rs.amostras ? rs.pct_ate_30min + '% em até 30 min · ' + rs.pct_ate_2h + '% em até 2 h · ' + rs.amostras + ' respostas' : 'sem amostra') +
     tile(fu.cobrados ? fu.taxa_recuperacao + '%' : '—', 'recuperados pelo follow-up', fu.cobrados ? fu.recuperados + ' marcaram de ' + fu.cobrados + ' cobrados' : 'começa a contar a partir de hoje') +
+    (r.retomadas ? tile(r.retomadas.contatos ? r.retomadas.contatos : '—', 'orçamentos retomados', r.retomadas.contatos
+      ? r.retomadas.responderam + ' responderam (' + r.retomadas.taxa_resposta + '%) · ' + r.retomadas.agendaram + ' agendaram (' + r.retomadas.taxa_agendou + '%) · ' + r.retomadas.mensagens + ' mensagens'
+      : 'mensagem de retomada enviada a quem estava parado · começa a contar em 11/11/2026') : '') +
   '</div>';
 
   // Funil (uma série, cor única; largura = proporção)
@@ -1072,8 +1085,56 @@ async function loadFollowup() {
     renderFollowup(r);
     // Auto-atualiza enquanto a aba estiver aberta
     if (fuTimer) clearInterval(fuTimer);
-    fuTimer = setInterval(() => { if (currentTab === 'followup') loadFollowup(); else { clearInterval(fuTimer); fuTimer = null; } }, 60000);
+    fuTimer = setInterval(() => {
+      if (currentTab !== 'followup') { clearInterval(fuTimer); fuTimer = null; return; }
+      // Não redesenha a lista enquanto alguém edita a mensagem de retomada (perderia o cursor).
+      const a = document.activeElement;
+      if (a && a.classList && a.classList.contains('fu-ret-txt')) return;
+      loadFollowup();
+    }, 60000);
   } catch(e) { toast('Erro: ' + e.message, 'err'); }
+}
+
+// ─── Retomada de orçamento: mensagem sugerida no card 🟡/⚪ ───────────────────
+// O texto vem pronto do servidor (1ª, 2ª ou última mensagem). A recepção ajusta,
+// copia e envia pelo WhatsApp dela. O CRM NÃO envia nada: só registra a retomada
+// quando a mensagem aparece na conversa.
+const fuRetEditado = {};   // id do contato → texto que a pessoa editou (sobrevive ao redesenho da lista)
+function fuRetBloco(c) {
+  const r = c.retomada;
+  if (!r || !r.texto) return '';
+  const chave = c.id + ':' + r.etapa;
+  const texto = fuRetEditado[chave] != null ? fuRetEditado[chave] : r.texto;
+  const falta = texto.indexOf('[') >= 0;
+  return '<div class="fu-ret" onclick="event.stopPropagation()">' +
+    '<div class="fu-ret-h"><b>💬 ' + esc(r.rotulo) + '</b><span title="' + esc(r.motivo) + '">' + esc(r.motivo) + (r.feitas ? ' · ' + r.feitas + ' já enviada' + (r.feitas > 1 ? 's' : '') : '') + '</span></div>' +
+    '<textarea class="fu-ret-txt' + (falta ? ' falta' : '') + '" id="fuRet' + c.id + '" data-chave="' + chave + '" oninput="fuRetInput(this)">' + esc(texto) + '</textarea>' +
+    '<div class="fu-ret-aviso" id="fuRetAv' + c.id + '"' + (falta ? '' : ' style="display:none"') + '>Troque o que está entre [colchetes] pelo dia e horário de verdade.</div>' +
+    '<div class="fu-ret-btns">' +
+      '<button class="fu-btn wa" onclick="fuRetEnviar(' + c.id + ',\'' + esc(String(c.telefone).replace(/\D/g, '')) + '\',true)" title="Copia a mensagem e abre a conversa no WhatsApp com o texto já colado">Copiar e abrir WhatsApp</button>' +
+      '<button class="fu-btn" onclick="fuRetEnviar(' + c.id + ',\'\',false)" title="Só copia a mensagem">Só copiar</button>' +
+    '</div>' +
+  '</div>';
+}
+function fuRetInput(el) {
+  fuRetEditado[el.dataset.chave] = el.value;
+  const falta = el.value.indexOf('[') >= 0;
+  el.classList.toggle('falta', falta);
+  const av = document.getElementById('fuRetAv' + el.id.replace('fuRet', ''));
+  if (av) av.style.display = falta ? '' : 'none';
+}
+async function fuRetEnviar(id, tel, abrir) {
+  const el = document.getElementById('fuRet' + id);
+  if (!el) return;
+  const texto = el.value.trim();
+  if (!texto) { toast('Mensagem vazia', 'err'); return; }
+  if (texto.indexOf('[') >= 0 && !confirm('A mensagem ainda tem trecho entre [colchetes] para preencher (dia e horário).\n\nCopiar mesmo assim?')) { el.focus(); return; }
+  try { await navigator.clipboard.writeText(texto); }
+  catch (e) { el.select(); try { document.execCommand('copy'); } catch (e2) {} }
+  if (abrir && tel) {
+    window.open('https://wa.me/' + tel + '?text=' + encodeURIComponent(texto), '_blank', 'noopener');
+    toast('Mensagem copiada. Confira e envie no WhatsApp: o card some da fila sozinho quando a mensagem sair.', 'ok');
+  } else toast('Mensagem copiada', 'ok');
 }
 
 function renderFollowup(r) {
@@ -1086,15 +1147,15 @@ function renderFollowup(r) {
 
   const grupos = [
     { n: 1, titulo: '🔴 Cliente esperando resposta', cor: '#ef4444', itens: fila.filter(c => c.followup_nivel === 1) },
-    { n: 2, titulo: '🟡 Orçamento sem retorno (12h+)', cor: '#f59e0b', itens: fila.filter(c => c.followup_nivel === 2) },
-    { n: 3, titulo: '⚪ Segunda tentativa (48h+)', cor: '#9ca3af', itens: fila.filter(c => c.followup_nivel === 3) },
+    { n: 2, titulo: '🟡 Orçamento sem retorno (dia seguinte)', cor: '#f59e0b', itens: fila.filter(c => c.followup_nivel === 2) },
+    { n: 3, titulo: '⚪ Segue mudo (2ª ou última mensagem)', cor: '#9ca3af', itens: fila.filter(c => c.followup_nivel === 3) },
   ];
 
   const el = document.getElementById('fuList');
   if (!total) { el.innerHTML = '<div class="fu-empty">🎉 Nenhum orçamento parado.</div>'; return; }
 
   // Três colunas lado a lado: 🔴 | 🟡 | ⚪ — triagem por posição, não por leitura.
-  const subt = { 1: 'falou por último, ninguém respondeu', 2: 'recebeu orçamento e sumiu', 3: 'já cobrado uma vez, segue mudo' };
+  const subt = { 1: 'falou por último, ninguém respondeu', 2: 'recebeu orçamento e sumiu · mande a mensagem sugerida', 3: 'parado há 2 dias ou já retomado · mensagem pronta no card' };
   el.innerHTML = '<div class="fu-board">' + grupos.map(g =>
     '<div class="fu-col" style="border-top-color:' + g.cor + '">' +
       '<div class="fu-col-h"><div><div style="color:' + g.cor + '">' + g.titulo + '</div><div class="fu-col-sub">' + subt[g.n] + '</div></div><span class="fu-count">' + g.itens.length + '</span></div>' +
@@ -1114,6 +1175,7 @@ function renderFollowup(r) {
             '<span class="fu-ha" style="color:' + g.cor + '">' + ha + '</span>' +
           '</div>' +
           (last ? '<div class="fu-last">' + last + '</div>' : '') +
+          fuRetBloco(c) +
           '<div class="fu-actions">' +
             '<button class="fu-btn primary" onclick="openDetail(' + c.id + ')">Abrir</button>' +
             '<button class="fu-btn good" onclick="fuAcao(' + c.id + ',\'marcou\',this)" title="Marcou o exame → Agendado">Marcou</button>' +

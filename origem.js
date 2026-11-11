@@ -147,7 +147,7 @@ function resumo(db, dias, athenaMarca) {
   `).all(desde).filter(c => !INTERNOS.includes(String(c.telefone).replace(/\D/g, '')));
 
   const agendou = db.prepare(`SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND texto NOT LIKE ?
-    AND (LOWER(texto) LIKE '%exame agendado%' OR LOWER(texto) LIKE '%exame marcado%' OR LOWER(texto) LIKE '%agendamos%'
+    AND (LOWER(texto) LIKE '%exame agendado%' OR LOWER(texto) LIKE '%exames agendados%' OR LOWER(texto) LIKE '%exame marcado%' OR LOWER(texto) LIKE '%exames marcados%' OR LOWER(texto) LIKE '%agendamos%'
       OR LOWER(texto) LIKE '%agendado para%' OR LOWER(texto) LIKE '%agendada para%' OR LOWER(texto) LIKE '%marcado para%'
       OR LOWER(texto) LIKE '%marcada para%' OR LOWER(texto) LIKE '%confirmado para%' OR LOWER(texto) LIKE '%confirmada para%') LIMIT 1`);
   const cmdMarcou = db.prepare("SELECT 1 FROM followup_eventos WHERE contato_id = ? AND ((tipo = 'comando' AND valor IN ('marcou','fechou','agendou')) OR (tipo = 'encerrado' AND valor LIKE 'agendado (confirma%')) LIMIT 1");

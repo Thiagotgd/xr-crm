@@ -36,7 +36,7 @@ function calcular(db, dias) {
   // OU a recepção marcou pela tela/WhatsApp. O etapa_historico sozinho mistura arrasto manual e correções.
   const msgAgendado = db.prepare(`SELECT MIN(created_at) AS t FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at >= ?
     AND texto NOT LIKE '%${followup.ATHENA_MARCA}%'
-    AND (LOWER(texto) LIKE '%exame agendado%' OR LOWER(texto) LIKE '%exame marcado%' OR LOWER(texto) LIKE '%agendamos%'
+    AND (LOWER(texto) LIKE '%exame agendado%' OR LOWER(texto) LIKE '%exames agendados%' OR LOWER(texto) LIKE '%exame marcado%' OR LOWER(texto) LIKE '%exames marcados%' OR LOWER(texto) LIKE '%agendamos%'
       OR LOWER(texto) LIKE '%agendado para%' OR LOWER(texto) LIKE '%agendada para%' OR LOWER(texto) LIKE '%marcado para%'
       OR LOWER(texto) LIKE '%marcada para%' OR LOWER(texto) LIKE '%confirmado para%' OR LOWER(texto) LIKE '%confirmada para%')`);
   const cmdMarcou = db.prepare("SELECT MIN(created_at) AS t FROM followup_eventos WHERE contato_id = ? AND created_at >= ? AND ((tipo = 'comando' AND valor IN ('marcou','fechou','agendou')) OR (tipo = 'encerrado' AND valor LIKE 'agendado (confirma%'))");
@@ -133,6 +133,8 @@ function calcular(db, dias) {
     modalidades, modalidades_estimadas: 0,
     resposta,
     followup: { cobrados: cobrados.length, recuperados, taxa_recuperacao: pct(recuperados, cobrados.length), urgentes_no_periodo: urgentesResolvidos },
+    // Retomadas de orçamento (mensagem enviada pela recepção a quem estava 🟡/⚪): quantos responderam e agendaram depois.
+    retomadas: require('./retomada').resumo(db, desde, (id, t) => { const a = histAgendadoDepois.get(id, t); return a && a.t; }),
     motivos_perda: Object.entries(motivos).map(([motivo, n]) => ({ motivo, n })).sort((a, b) => b.n - a.n),
     por_dia: porDia,
   };

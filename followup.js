@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const MEDIA_DIR = path.join(__dirname, 'media');
+const retomada = require('./retomada'); // ritmo e texto das mensagens de retomada (ele só carrega este módulo dentro das funções)
 
 // ─── Motor de follow-up do funil de orçamentos ─────────────────────────────────
 // Vigia quem recebeu orçamento (PDF) e não fechou. Marca nível no banco.
@@ -226,7 +227,7 @@ function encerrarPerdidos(db) {
   // o PDF era laudo — exame feito, não orçamento. Só vale pra PDF sem nome;
   // PDF novo já passa pelo filtro do webhook.
   const ultimoPdf = db.prepare("SELECT texto, media_path FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND tipo = 'document' ORDER BY id DESC LIMIT 1");
-  const agendadoAntes = db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at < ? AND created_at >= datetime(?, '-45 days') AND LOWER(texto) LIKE '%exame agendado%' LIMIT 1");
+  const agendadoAntes = db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at < ? AND created_at >= datetime(?, '-45 days') AND (LOWER(texto) LIKE '%exame agendado%' OR LOWER(texto) LIKE '%exames agendados%') LIMIT 1");
   const falaLaudoDepois = db.prepare("SELECT texto FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at >= ? AND LOWER(texto) LIKE '%laudo%' LIMIT 5");
   // Time falando como quem acabou de fazer o exame, até 10 dias antes do PDF.
   const posExameAntes = db.prepare("SELECT texto FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND created_at < ? AND created_at >= datetime(?, '-10 days') ORDER BY id DESC LIMIT 25");
@@ -377,6 +378,31 @@ function avaliar(db, agora = new Date()) {
     const m = ultimaMsg.get(c.id, athenaLike, saudacaoLike);
     c.luto = !!temLuto.get(c.id, ...argsLuto);
     let { nivel, motivo, desde } = decidir(c, m, agora);
+
+    // ── Retomadas já feitas neste orçamento (retomada.js) ditam o ritmo ──────
+    // Sem nenhuma retomada registrada, vale a régua de sempre (🟡 12h → ⚪ 48h → arquiva).
+    // Com retomada: some da fila até a próxima ficar devida (≈3º e ≈7º dia) e volta em ⚪;
+    // depois da 3ª e última, espera a resposta e arquiva.
+    if (nivel >= 2) {
+      const r = retomada.estado(db, c, agora);
+      if (r.esgotado) {
+        if (r.ultima && (agora - r.ultima) >= retomada.REGRAS.diasArquivarAposUltima * 86400000) {
+          arquivar.run(c.id); logArquivo.run(c.id);
+          registrarEvento(db, c.id, 'encerrado', `arquivado: sem resposta após ${r.feitas} retomadas`);
+          console.log(`[CRM] Follow-up: ${c.nome || c.telefone} arquivado (sem resposta após ${r.feitas} retomadas)`);
+          continue;
+        }
+        nivel = 0; motivo = ''; desde = null;
+      } else if (r.feitas > 0) {
+        if (r.proximaEm && agora < r.proximaEm) { nivel = 0; motivo = ''; desde = null; }
+        else {
+          nivel = 3;
+          motivo = `sem resposta à ${r.feitas}ª mensagem há ${humano(Math.floor((agora - r.ultima) / 60000))} — ${r.feitas === 2 ? 'última mensagem' : '2ª mensagem'}`;
+          desde = r.proximaEm || desde;
+        }
+      }
+    }
+
     if (nivel === 3 && desde && (agora - desde) >= msArquivar) {
       arquivar.run(c.id); logArquivo.run(c.id);
       registrarEvento(db, c.id, 'encerrado', `arquivado: sem resposta após 2 cobranças (${REGRAS.diasArquivarSegundaTentativa}d em ⚪)`);

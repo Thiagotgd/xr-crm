@@ -9,6 +9,7 @@ const followup = require('./followup');
 const alerta = require('./alerta');
 const metricas = require('./metricas');
 const origem = require('./origem');
+const retomada = require('./retomada');
 
 const PORT = process.env.PORT || 8095;
 const EVO_BASE = process.env.EVO_BASE || 'http://172.18.0.1:8085';
@@ -648,6 +649,8 @@ async function handleRequest(req, res) {
     const waJid = (waKey && waKey.remoteJid) || jidFromPhone(contato.telefone);
     db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, wa_msg_id, wa_remote_jid) VALUES (?, 'out', ?, 'text', ?, ?)").run(id, body.texto, waMsgId, waJid);
     db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(id);
+    // Mensagem enviada pela tela do CRM a um orçamento parado também conta como retomada.
+    try { retomada.registrarSeRetomada(db, Number(id), body.texto, 'text'); } catch (e) { console.error('[RETOMADA]', e.message); }
     return sendJSON(res, 200, { ok: true });
   }
 
@@ -877,6 +880,8 @@ async function handleRequest(req, res) {
       );
       // De onde o cliente veio (anúncio Meta, Google, direto) — só leitura das primeiras mensagens dele.
       if (!isFromMe) { try { origem.classificar(db, contato.id, texto || caption); } catch (e) { console.error('[ORIGEM]', e.message); } }
+      // A recepção escreveu para um orçamento parado (🟡/⚪)? Conta como retomada (1ª, 2ª ou última).
+      else { try { retomada.registrarSeRetomada(db, contato.id, texto || caption || docName || docCaption, tipo); } catch (e) { console.error('[RETOMADA]', e.message); } }
     }
 
     // ─── Auto-move to Orçamento when PDF sent outgoing ───────────────────
@@ -1422,6 +1427,13 @@ async function handleRequest(req, res) {
     `).all();
     const resumo = { urgente: 0, followup: 0, segunda: 0 };
     for (const f of fila) { if (f.followup_nivel === 1) resumo.urgente++; else if (f.followup_nivel === 2) resumo.followup++; else resumo.segunda++; }
+    // Orçamento parado (🟡/⚪): já vai com a mensagem de retomada sugerida (1ª, 2ª ou última).
+    const agoraFu = new Date();
+    for (const f of fila) {
+      if (f.followup_nivel < 2) continue;
+      try { const s = retomada.sugerir(db, f, agoraFu); f.retomada = { etapa: s.etapa, feitas: s.feitas, rotulo: s.rotulo, motivo: s.motivo, texto: s.texto, preencher: s.preencher }; }
+      catch (e) { console.error('[RETOMADA] sugerir:', e.message); }
+    }
     return sendJSON(res, 200, { resumo, regras: followup.REGRAS, fila });
   }
 
