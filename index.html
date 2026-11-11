@@ -609,6 +609,18 @@ button, input, textarea, select { font-family: inherit; }
   .header .crm-tabs { order: 3; flex: 0 0 100%; margin: 0; }
   .header .crm-tab { min-height: 36px; padding: 0 12px; }
 }
+
+/* Sugestão ao digitar (sem IA): até 3 textos acima do campo; Tab, seta para a direita ou clique colocam no campo */
+.sug-bar { position: absolute; left: 96px; right: 58px; bottom: 100%; display: none; gap: 6px; padding: 0 0 6px; z-index: 45; overflow: hidden; pointer-events: none; }
+.sug-bar.show { display: flex; }
+.reply-bar.show + .compose-bar .sug-bar { bottom: calc(100% + 56px); }
+.sug-chip { pointer-events: auto; display: inline-flex; align-items: center; gap: 7px; min-width: 0; flex: 0 1 auto; max-width: 30%; background: var(--wa-dropdown); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 16px; padding: 6px 12px; font-size: 13px; line-height: 1.2; cursor: pointer; box-shadow: 0 1px 5px rgba(11,20,26,.28); }
+.sug-chip.principal { flex: 1 1 auto; max-width: 62%; color: var(--text); border-color: var(--primary); }
+.sug-chip:hover { filter: brightness(1.08); }
+.sug-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sug-chip kbd { font-family: inherit; font-size: 10.5px; font-weight: 700; background: var(--primary); color: #fff; border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
+.sug-chip i { font-style: normal; color: var(--text-muted); font-size: 11.5px; flex-shrink: 0; }
+@media (max-width: 768px) { .sug-bar { left: 8px; right: 8px; } .sug-chip { max-width: 40%; } .sug-chip.principal { max-width: 100%; } .sug-chip:not(.principal) { display: none; } }
 </style>
 </head>
 <body>
@@ -669,10 +681,11 @@ button, input, textarea, select { font-family: inherit; }
       <div class="reply-bar" id="chatReplyBar"></div>
       <div class="compose-bar" style="position:relative">
         <div class="slash-popup" id="chatSlashPopup"></div>
+        <div class="sug-bar" id="chatSugestoes"></div>
         <button class="attach-btn" onclick="document.getElementById('chatFileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
         <button class="attach-btn" onclick="abrirOrcamentoChat()" title="Criar orçamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
         <input type="file" id="chatFileInput" multiple style="display:none" onchange="escolherArquivosChat(this)">
-        <textarea id="chatComposeInput" rows="1" placeholder="Digite uma mensagem ( / abre as mensagens rápidas )" onkeydown="handleChatComposeKey(event)" oninput="checkChatSlashTrigger(this);ajustarAltura(this)"></textarea>
+        <textarea id="chatComposeInput" rows="1" placeholder="Digite uma mensagem ( / abre as mensagens rápidas )" onkeydown="handleChatComposeKey(event)" oninput="checkChatSlashTrigger(this);ajustarAltura(this);sugDispensada=null;mostrarSugestoes()" onclick="mostrarSugestoes()" onkeyup="if(event.key.indexOf('Arrow')===0||event.key==='Home'||event.key==='End')mostrarSugestoes()"></textarea>
         <div class="envio-estado" id="chatEnvioEstado"></div>
         <button class="send-btn" onclick="sendChatMessage()" title="Enviar (Enter). Shift+Enter quebra a linha."><svg viewBox="0 0 24 24"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
       </div>
@@ -3273,6 +3286,8 @@ async function openConversaChat(id) {
     const input = document.getElementById('chatComposeInput');
     input.value = rascunhos[id] || '';
     ajustarAltura(input);
+    sugDispensada = input.value; // rascunho recuperado não dispara sugestão sozinho
+    mostrarSugestoes();
     if (window.innerWidth > 768) input.focus();
     // Update sidebar unread (mark as read happened on GET)
     const idx = conversasList.findIndex(x => x.id === id);
@@ -3528,12 +3543,85 @@ function sendChatMessage() {
   ajustarAltura(input);
   cancelarResposta();
   hideChatSlashPopup();
+  sugDispensada = null;
+  mostrarSugestoes();
   input.focus();
   estadoEnvio();
   processarFila();
 }
 
+// ─── Sugestão ao digitar (sem IA) ───────────────────────────────────────────────────────────────
+// Enquanto a pessoa digita, aparecem acima do campo até 3 textos que começam igual: primeiro as mensagens
+// rápidas, depois as frases que a recepção mais repete. Tab, seta para a direita ou clique colocam no campo.
+// Nada é enviado: o texto entra no campo e a pessoa confere antes do Enter.
+let frasesFrequentes = [];
+let sugAtuais = [];
+let sugDispensada = null;
+function normSug(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/^[^a-z0-9]+/, '').replace(/\s+/g, ' ');
+}
+async function loadFrases() {
+  try { const r = await api('GET', '/api/frases'); if (Array.isArray(r)) frasesFrequentes = r; } catch (e) {}
+}
+function saudacaoForaDeHora(n) {
+  const h = new Date().getHours();
+  if (/\bbom dia\b/.test(n) && h >= 12) return true;
+  if (/\bboa tarde\b/.test(n) && (h < 12 || h >= 18)) return true;
+  if (/\bboa noite\b/.test(n) && h < 18) return true;
+  return false;
+}
+function calcularSugestoes(texto) {
+  if (texto.indexOf('\n') >= 0 || texto.startsWith('/')) return [];
+  const q = normSug(texto);
+  if (q.length < 3) return [];
+  const out = [], visto = new Set();
+  const add = (t, peso, rotulo) => {
+    const k = normSug(t);
+    if (visto.has(k) || k === q.trim() || saudacaoForaDeHora(k)) return;
+    visto.add(k); out.push({ t, peso, rotulo });
+  };
+  for (const m of msgsRapidas) {
+    if (!m.texto || m.texto.length < 25) continue; // ignora cadastros de teste
+    if (normSug(m.texto).startsWith(q)) add(m.texto, 100000, '/' + m.titulo);
+    else if (normSug(m.titulo).startsWith(q.trim())) add(m.texto, 90000, '/' + m.titulo);
+  }
+  for (const f of frasesFrequentes) if (normSug(f.t).startsWith(q)) add(f.t, f.n || 1, '');
+  out.sort((a, b) => b.peso - a.peso);
+  return out.slice(0, 3);
+}
+function mostrarSugestoes() {
+  const input = document.getElementById('chatComposeInput');
+  const bar = document.getElementById('chatSugestoes');
+  if (!input || !bar) return;
+  const texto = input.value;
+  const noFim = input.selectionStart === texto.length && input.selectionEnd === texto.length;
+  sugAtuais = (currentChatContato && noFim && texto !== sugDispensada) ? calcularSugestoes(texto) : [];
+  if (!sugAtuais.length) { bar.classList.remove('show'); bar.innerHTML = ''; return; }
+  bar.innerHTML = sugAtuais.map((s, i) =>
+    '<button type="button" class="sug-chip' + (i === 0 ? ' principal' : '') + '" onmousedown="event.preventDefault()" onclick="aceitarSugestao(' + i + ')" title="' + esc(s.t) + '">' +
+      (i === 0 ? '<kbd>Tab</kbd>' : '') + '<span>' + esc(s.t.replace(/\s+/g, ' ')) + '</span>' + (s.rotulo ? '<i>' + esc(s.rotulo) + '</i>' : '') +
+    '</button>').join('');
+  bar.classList.add('show');
+}
+function aceitarSugestao(i) {
+  const s = sugAtuais[i];
+  const input = document.getElementById('chatComposeInput');
+  if (!s || !input) return;
+  input.value = s.t;
+  ajustarAltura(input);
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  sugDispensada = input.value;
+  mostrarSugestoes();
+}
+
 function handleChatComposeKey(e) {
+  // Tab ou seta para a direita (com o cursor no fim) aceitam a primeira sugestão
+  if ((e.key === 'Tab' || e.key === 'ArrowRight') && !e.shiftKey && !e.ctrlKey && !e.altKey && sugAtuais.length) {
+    const el = e.target;
+    if (el.selectionStart === el.value.length && el.selectionEnd === el.value.length) { e.preventDefault(); aceitarSugestao(0); return; }
+  }
+  if (e.key === 'Escape' && sugAtuais.length) { sugDispensada = e.target.value; mostrarSugestoes(); return; }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault(); // Enter envia; Shift+Enter quebra a linha
     if (chatSlashOpen) {
@@ -3741,6 +3829,8 @@ loadConversas();
 loadBoard();
 loadCustomTabs().then(() => refreshTabBadges());
 loadMsgsRapidas();
+loadFrases();
+setInterval(loadFrases, 30 * 60 * 1000);
 
 </script>
 </body>

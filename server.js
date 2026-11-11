@@ -439,6 +439,8 @@ function evoDeleteMessage(remoteJid, msgId, fromMe) {
   });
 }
 
+let frasesCache = {}; // frases frequentes da recepção (refeito a cada 15 min)
+
 // ─── Routes ────────────────────────────────────────────────────────────────────
 async function handleRequest(req, res) {
   const urlObj = new URL(req.url, 'http://localhost');
@@ -1363,6 +1365,26 @@ async function handleRequest(req, res) {
   }
 
   // ─── API: Mensagens Rápidas CRUD ──────────────────────────────────────────
+  // Sugestão ao digitar (sem IA): frases idênticas que a recepção mais enviou em 60 dias, a vários clientes.
+  // Fica de fora o que tem número (preço, hora, data mudam), nome de tutor ou de animal, e mensagens automáticas.
+  if (method === 'GET' && pathname === '/api/frases') {
+    const agora = Date.now();
+    if (!frasesCache.em || agora - frasesCache.em > 15 * 60 * 1000) {
+      const comuns = new Set('bom boa ola olá oi segue poderia temos estamos pode seria gostaria infelizmente precisamos assim irei vou qual como tudo para por me tem sim nao não certo combinado perfeito otimo ótimo obrigado obrigada ok claro isso aguardo aguardamos verifiquei consegue conseguimos realizamos hoje amanha amanhã segunda terca terça quarta quinta sexta sabado sábado clinica clínica pet dra dr vet xr tomografia ressonancia ressonância raio ultrassom exame exames laudo pedido petlove sol flor mel'.split(' '));
+      const contagem = {};
+      const conta = v => { const p = String(v || '').trim().split(/\s+/)[0].toLowerCase(); if (p.length >= 3 && /^[a-zà-ú]+$/.test(p)) contagem[p] = (contagem[p] || 0) + 1; };
+      for (const r of db.prepare("SELECT nome, pet_nome FROM contatos").all()) { conta(r.nome); conta(r.pet_nome); }
+      const temNome = t => (t.match(/[A-ZÀ-Ú][a-zà-ú]{2,}/g) || []).some(w => { const k = w.toLowerCase(); return !comuns.has(k) && (contagem[k] || 0) >= 2; });
+      const rows = db.prepare(`SELECT texto as t, COUNT(*) as n, COUNT(DISTINCT contato_id) as c FROM mensagens
+        WHERE direcao = 'out' AND tipo = 'text' AND length(texto) BETWEEN 12 AND 220 AND created_at >= datetime('now','localtime','-60 days')
+        GROUP BY texto HAVING n >= 5 AND c >= 4 ORDER BY n DESC LIMIT 800`).all();
+      frasesCache = { em: agora, lista: rows
+        .filter(r => !/\d/.test(r.t) && !/R\$/.test(r.t) && !r.t.includes(followup.ATHENA_MARCA) && !/agradece seu contato/i.test(r.t) && !temNome(r.t))
+        .slice(0, 250).map(r => ({ t: r.t.replace(/\u200e|\ufffd ?/g, '').trim(), n: r.n })) };
+    }
+    return sendJSON(res, 200, frasesCache.lista);
+  }
+
   if (method === 'GET' && pathname === '/api/msgs-rapidas') {
     return sendJSON(res, 200, db.prepare('SELECT * FROM msgs_rapidas ORDER BY ordem, id').all());
   }
