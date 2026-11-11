@@ -1445,7 +1445,7 @@ async function handleRequest(req, res) {
       const livres = slots.status === 200 && slots.json && Array.isArray(slots.json.available_slots) ? slots.json.available_slots.map(s => s.start_hour) : null;
       const marcados = eventos.filter(e => e.calendar_id === cal && String(e.start_date || '').startsWith(data))
         .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
-        .map(e => ({ hora: String(e.start_date).slice(11, 16), titulo: String(e.title || '').slice(0, 40) }));
+        .map(e => ({ hora: String(e.start_date).slice(11, 16), fim: String(e.end_date || '').slice(11, 16), titulo: String(e.title || '').slice(0, 40) }));
       return sendJSON(res, 200, { calendarios, livres: livres || [], marcados, aviso: livres ? '' : 'O CFAZ não informou os horários livres deste dia.' });
     } catch (e) { return sendJSON(res, 502, { error: e.message }); }
   }
@@ -1465,11 +1465,17 @@ async function handleRequest(req, res) {
       if (!c) return sendJSON(res, 400, { error: 'Essa agenda não está ligada no CFAZ.' });
       // O CFAZ aceita duas marcações no mesmo horário sem reclamar (visto no teste de 11/11/2026). A trava fica aqui:
       // se já existe marcação nesse horário e nessa agenda, só cria quando a pessoa confirmar na tela (forcar).
-      if (!body.forcar) {
-        const jaTem = (await cfazEventos(true)).find(e => e.calendar_id === cal && String(e.start_date || '').slice(0, 16) === data + 'T' + hora);
-        if (jaTem) return sendJSON(res, 409, { error: 'Já existe uma marcação às ' + hora + ' nessa agenda (' + String(jaTem.title || '').slice(0, 40) + ').' });
-      }
       const ini = new Date(data + 'T' + hora + ':00-03:00');
+      if (!body.forcar) {
+        // bate se o horário novo cai dentro de uma marcação existente ou encosta nela (cada uma dura o tempo padrão da agenda)
+        const fimNovo = ini.getTime() + (c.duracao || 20) * 60000;
+        const jaTem = (await cfazEventos(true)).find(e => {
+          if (e.calendar_id !== cal) return false;
+          const a = new Date(e.start_date).getTime(), b = e.end_date ? new Date(e.end_date).getTime() : a + 20 * 60000;
+          return a < fimNovo && b > ini.getTime();
+        });
+        if (jaTem) return sendJSON(res, 409, { error: 'Já existe uma marcação das ' + String(jaTem.start_date).slice(11, 16) + ' às ' + String(jaTem.end_date || '').slice(11, 16) + ' nessa agenda (' + String(jaTem.title || '').slice(0, 40) + ').' });
+      }
       const fim = new Date(ini.getTime() + (c.duracao || 20) * 60000);
       const iso = d => new Date(d.getTime() - 3 * 3600000).toISOString().replace('Z', '-03:00');
       // send_reminder false: igual às marcações que a recepção cria hoje; o CFAZ não manda lembrete a ninguém.

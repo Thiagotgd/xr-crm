@@ -637,6 +637,12 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 .ag-livres button { border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 12px; padding: 3px 9px; font-size: 12px; cursor: pointer; }
 .ag-livres button.sel { background: var(--primary); color: #fff; border-color: var(--primary); }
 .ag-marcados { font-size: 12.5px; color: var(--text-muted); margin-top: 12px; line-height: 1.4; }
+
+/* Agenda do dia no formulário: marcações existentes em vermelho, junto dos horários livres */
+.ag-livres { max-height: 150px; }
+.ag-livres button.ocupado { background: rgba(239,68,68,.16); border-color: var(--danger); color: var(--text); }
+.ag-livres button.ocupado b { font-weight: 600; }
+.ag-marcados b { color: var(--text-secondary); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -3616,8 +3622,15 @@ async function agendaCarregar(calPreferido) {
     agendaDados = r;
     sel.innerHTML = '<option value="">Escolha a agenda</option>' + (r.calendarios || []).map(k => '<option value="' + k.id + '"' + (k.id === cal ? ' selected' : '') + '>' + esc(k.nome) + '</option>').join('');
     const hora = document.getElementById('agHora').value;
-    document.getElementById('agLivres').innerHTML = (r.livres || []).map(h => '<button type="button"' + (h === hora ? ' class="sel"' : '') + ' onclick="agendaEscolherHora(\'' + h + '\')">' + h + '</button>').join('');
-    document.getElementById('agMarcados').textContent = !cal || !data ? '' : (r.marcados && r.marcados.length ? 'Já marcados nesse dia: ' + r.marcados.map(x => x.hora + ' (' + x.titulo + ')').join(', ') : 'Nenhuma marcação nesse dia ainda.');
+    // Agenda do dia numa grade só: o que já está marcado (em vermelho, com o exame) e os horários livres (clicáveis)
+    const grade = (r.marcados || []).map(x => ({ h: x.hora, ocupado: x })).concat((r.livres || []).map(h => ({ h })));
+    grade.sort((a, b) => a.h.localeCompare(b.h) || (a.ocupado ? -1 : 1));
+    document.getElementById('agLivres').innerHTML = grade.map(g => g.ocupado
+      ? '<button type="button" class="ocupado" title="Já marcado: ' + esc(g.ocupado.titulo) + ' (' + g.ocupado.hora + ' às ' + esc(g.ocupado.fim || '') + ')" onclick="agendaEscolherHora(\'' + g.h + '\')">' + g.h + ' <b>' + esc(g.ocupado.titulo || 'marcado') + '</b></button>'
+      : '<button type="button"' + (g.h === hora ? ' class="sel"' : '') + ' onclick="agendaEscolherHora(\'' + g.h + '\')">' + g.h + '</button>').join('');
+    document.getElementById('agMarcados').innerHTML = !cal || !data ? '' :
+      '<b>Agenda do dia:</b> ' + (r.marcados && r.marcados.length ? r.marcados.length + (r.marcados.length === 1 ? ' marcação' : ' marcações') + ' (em vermelho)' : 'nenhuma marcação ainda') +
+      ' e ' + (r.livres || []).length + ' horários livres. O CFAZ conta 20 minutos por marcação, seja qual for o exame.';
     if (r.aviso) document.getElementById('agAviso').innerHTML += (document.getElementById('agAviso').innerHTML ? '<br>' : '') + esc(r.aviso);
     agendaSituacao();
   } catch (e) {
@@ -3643,14 +3656,21 @@ function agendaEscolherHora(h) {
   document.querySelectorAll('#agLivres button').forEach(b => b.classList.toggle('sel', b.textContent === h));
   agendaSituacao();
 }
+// Marcação já existente que bate com o horário escolhido (mesma hora ou encostando: cada marcação dura 20 min)
+function agendaConflito(hora) {
+  if (!agendaDados || !hora) return null;
+  const min = s => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
+  const ini = min(hora), fim = ini + 20;
+  return (agendaDados.marcados || []).find(x => { const a = min(x.hora), b = x.fim ? min(x.fim) : a + 20; return a < fim && b > ini; }) || null;
+}
 function agendaSituacao() {
   const el = document.getElementById('agSit');
   const hora = document.getElementById('agHora').value;
   const cal = Number(document.getElementById('agCal').value || 0), data = document.getElementById('agData').value;
   el.className = 'ag-sit';
   if (!agendaDados || !cal || !data || !hora) { el.textContent = ''; return; }
-  const ocupado = (agendaDados.marcados || []).find(x => x.hora === hora);
-  if (ocupado) { el.textContent = 'Atenção: já existe uma marcação às ' + hora + ' nessa agenda (' + ocupado.titulo + ').'; el.className = 'ag-sit ruim'; }
+  const ocupado = agendaConflito(hora);
+  if (ocupado) { el.textContent = 'Atenção: já existe uma marcação das ' + ocupado.hora + ' às ' + ocupado.fim + ' nessa agenda (' + ocupado.titulo + ').'; el.className = 'ag-sit ruim'; }
   else if ((agendaDados.livres || []).indexOf(hora) >= 0) { el.textContent = hora + ' está livre no CFAZ.'; el.className = 'ag-sit ok'; }
   else el.textContent = hora + ' não está na lista de horários livres do CFAZ. Confira antes de criar.';
   document.querySelectorAll('#agLivres button').forEach(b => b.classList.toggle('sel', b.textContent === hora));
@@ -3663,9 +3683,9 @@ async function agendaCriar() {
   if (!cal || !data || !hora || !titulo) { sit.textContent = 'Preencha a agenda, o dia, o horário e o título.'; sit.className = 'ag-sit ruim'; return; }
   // O CFAZ aceita duas marcações no mesmo horário; por isso o CRM pergunta antes.
   let forcar = false;
-  const ocupado = agendaDados && (agendaDados.marcados || []).find(x => x.hora === hora);
+  const ocupado = agendaConflito(hora);
   if (ocupado) {
-    if (!confirm('Já existe uma marcação às ' + hora + ' nessa agenda (' + ocupado.titulo + ').\n\nCriar outra no mesmo horário?')) return;
+    if (!confirm('Já existe uma marcação das ' + ocupado.hora + ' às ' + ocupado.fim + ' nessa agenda (' + ocupado.titulo + ').\n\nCriar outra no mesmo horário?')) return;
     forcar = true;
   }
   const btn = document.getElementById('agCriar');
