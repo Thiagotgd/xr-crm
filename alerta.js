@@ -1,8 +1,10 @@
 'use strict';
 
 // ─── Alerta de follow-up pelo WhatsApp ─────────────────────────────────────────
-// Sai pelo número do PrevenVet (instância xr-prevenvet) e chega no WhatsApp da
-// recepção. É o único lugar do CRM que DISPARA mensagem automática.
+// Sai pelo número XR Staff (instância xr-staff, chip (31) 98374-6380, o mesmo dos avisos
+// de líquor e de laudos) e chega no WhatsApp da recepção. É o único lugar do CRM que
+// DISPARA mensagem automática. Até 11/11/2026 saía pelo PrevenVet (xr-prevenvet), que
+// ficou desconectado de 16/09 a 11/11 sem ninguém perceber; trocado a pedido do Thiago.
 //
 // REGRA INEGOCIÁVEL: este módulo só fala com UM número — o da recepção.
 // Não é configuração, é trava: qualquer tentativa de mandar para outro número
@@ -12,11 +14,11 @@ const http = require('http');
 
 const EVO_BASE = process.env.EVO_BASE || 'http://172.18.0.1:8085';
 const EVO_KEY = process.env.EVO_KEY || '';
-const ALERTA_INSTANCE = process.env.ALERTA_INSTANCE || 'xr-prevenvet';
+const ALERTA_INSTANCE = process.env.ALERTA_INSTANCE || 'xr-staff';
 
 // Lista branca. Um número. Só.
 const DESTINO = '553182043117'; // WhatsApp da recepção XR
-const ORIGEM  = '553183283626'; // número do PrevenVet — de onde o alerta sai (e onde a recepção responde)
+const ORIGEM  = process.env.ALERTA_ORIGEM || '553183746380'; // número XR Staff — de onde o alerta sai (e onde a recepção responde os comandos)
 const CRM_URL = 'https://crm.xrdiagnostico.tech';
 
 const HORA_DIGEST_MANHA = 8;    // 08:05 — sempre envia, mesmo vazio (é o heartbeat)
@@ -129,8 +131,8 @@ function montarDigest(db, opts = {}) {
 
   const titulos = {
     1: '🔴 *CLIENTE ESPERANDO RESPOSTA*',
-    2: '🟡 *ORÇAMENTO SEM RETORNO (12h+)*',
-    3: '⚪ *SEGUNDA TENTATIVA (48h+)*',
+    2: '🟡 *ORÇAMENTO SEM RETORNO — mandar a 1ª mensagem*',
+    3: '⚪ *SEGUE MUDO — 2ª ou última mensagem*',
   };
 
   const msgs = [];
@@ -151,7 +153,7 @@ function montarDigest(db, opts = {}) {
       msgs.push(`${cab}${titulos[n]} (${lista.length})${cont}\n${corpo.trimEnd()}`);
     }
   }
-  msgs[msgs.length - 1] += `\n\nRespondeu o cliente? Some sozinho.\nPor aqui: *marcou 123* · *desistiu 123* · *ok 123* · *ajuda*\n${CRM_URL}`;
+  msgs[msgs.length - 1] += `\n\nA mensagem pronta de cada orçamento está no card, na aba Follow-up do CRM.\nRespondeu o cliente? Some sozinho.\nPor aqui: *marcou 123* · *desistiu 123* · *ok 123* · *ajuda*\n${CRM_URL}`;
   return msgs;
 }
 
@@ -188,4 +190,4 @@ function iniciarDigest(db, emHorarioUtil) {
   return setInterval(tick, 60 * 1000);
 }
 
-module.exports = { DESTINO, ORIGEM, enviarRecepcao, enviarSequencia, notificarNovos, montarDigest, iniciarDigest };
+module.exports = { DESTINO, ORIGEM, INSTANCIA: ALERTA_INSTANCE, enviarRecepcao, enviarSequencia, notificarNovos, montarDigest, iniciarDigest };

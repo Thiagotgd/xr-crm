@@ -1501,7 +1501,7 @@ server.listen(PORT, () => {
   });
   // Digest 08:05 (sempre — é o heartbeat) e 13:05 (só se tiver pendência).
   alerta.iniciarDigest(db, followup.emHorarioUtil);
-  console.log(`[ALERTA] canal ativo → recepção ${alerta.DESTINO} via ${process.env.ALERTA_INSTANCE || 'xr-prevenvet'}`);
+  console.log(`[ALERTA] canal ativo → recepção ${alerta.DESTINO} via ${alerta.INSTANCIA} (${alerta.ORIGEM})`);
 
   // ─── Auto-finalize: contacts in "agendado" for 10+ days (once per hour) ────
   setInterval(() => {
