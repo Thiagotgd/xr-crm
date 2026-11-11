@@ -614,8 +614,8 @@ button, input, textarea, select { font-family: inherit; }
 .sug-bar { position: absolute; left: 96px; right: 58px; bottom: 100%; display: none; gap: 6px; padding: 0 0 6px; z-index: 45; overflow: hidden; pointer-events: none; }
 .sug-bar.show { display: flex; }
 .reply-bar.show + .compose-bar .sug-bar { bottom: calc(100% + 56px); }
-.sug-chip { pointer-events: auto; display: inline-flex; align-items: center; gap: 7px; min-width: 0; flex: 0 1 auto; max-width: 30%; background: var(--wa-dropdown); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 16px; padding: 6px 12px; font-size: 13px; line-height: 1.2; cursor: pointer; box-shadow: 0 1px 5px rgba(11,20,26,.28); }
-.sug-chip.principal { flex: 1 1 auto; max-width: 62%; color: var(--text); border-color: var(--primary); }
+.sug-chip { pointer-events: auto; display: inline-flex; align-items: center; gap: 7px; min-width: 0; flex: 0 1 auto; max-width: 48%; background: var(--wa-dropdown); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 16px; padding: 6px 12px; font-size: 13px; line-height: 1.2; cursor: pointer; box-shadow: 0 1px 5px rgba(11,20,26,.28); }
+.sug-chip.principal { flex: 0 0.4 auto; max-width: 70%; color: var(--text); border-color: var(--primary); }
 .sug-chip:hover { filter: brightness(1.08); }
 .sug-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .sug-chip kbd { font-family: inherit; font-size: 10.5px; font-weight: 700; background: var(--primary); color: #fff; border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
