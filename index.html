@@ -621,6 +621,22 @@ button, input, textarea, select { font-family: inherit; }
 .sug-chip kbd { font-family: inherit; font-size: 10.5px; font-weight: 700; background: var(--primary); color: #fff; border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
 .sug-chip i { font-style: normal; color: var(--text-muted); font-size: 11.5px; flex-shrink: 0; }
 @media (max-width: 768px) { .sug-bar { left: 8px; right: 8px; } .sug-chip { max-width: 40%; } .sug-chip.principal { max-width: 100%; } .sug-chip:not(.principal) { display: none; } }
+
+/* Agenda do CFAZ: botão embaixo da mensagem "Exame agendado" e formulário */
+.msg-agenda { align-self: flex-end; margin: 2px 0 6px; font-size: 12.5px; border-radius: 14px; padding: 5px 12px; flex-shrink: 0; }
+button.msg-agenda { background: var(--wa-header); color: var(--text); border: 1px solid var(--primary); cursor: pointer; }
+button.msg-agenda:hover { filter: brightness(1.1); }
+.msg-agenda.feito { color: var(--text-muted); background: var(--wa-dia-bg); }
+.msg-agenda.feito a { color: var(--wa-blue-tick); cursor: pointer; text-decoration: underline; }
+.ag-aviso { font-size: 12.5px; color: var(--warning); line-height: 1.4; }
+.ag-aviso:empty { display: none; }
+.ag-sit { font-size: 12.5px; margin-top: 8px; color: var(--text-muted); min-height: 16px; }
+.ag-sit.ok { color: var(--success); }
+.ag-sit.ruim { color: var(--warning); }
+.ag-livres { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; max-height: 86px; overflow-y: auto; }
+.ag-livres button { border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 12px; padding: 3px 9px; font-size: 12px; cursor: pointer; }
+.ag-livres button.sel { background: var(--primary); color: #fff; border-color: var(--primary); }
+.ag-marcados { font-size: 12.5px; color: var(--text-muted); margin-top: 12px; line-height: 1.4; }
 </style>
 </head>
 <body>
@@ -904,6 +920,37 @@ button, input, textarea, select { font-family: inherit; }
   </div>
 </div>
 
+
+<!-- Criar marcação na agenda do CFAZ a partir da conversa -->
+<div class="modal-overlay" id="agendaModal" onclick="if(event.target===this)fecharAgenda()">
+  <div class="modal">
+    <h2>Criar na agenda do CFAZ</h2>
+    <div class="ag-aviso" id="agAviso"></div>
+    <label>Agenda</label>
+    <select id="agCal" onchange="agendaCarregar()"></select>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1;min-width:0"><label>Dia</label><input type="date" id="agData" onchange="agendaCarregar()"></div>
+      <div style="flex:1;min-width:0"><label>Horário</label><input type="time" id="agHora" oninput="agendaSituacao()"></div>
+    </div>
+    <div class="ag-sit" id="agSit"></div>
+    <div class="ag-livres" id="agLivres"></div>
+    <label>Título (como aparece na agenda)</label>
+    <input type="text" id="agTitulo" placeholder="TC, RM 2 seg, ECO + ECG">
+    <label>Telefone</label>
+    <input type="text" id="agTel">
+    <label>Observação</label>
+    <input type="text" id="agDesc" placeholder="opcional">
+    <div class="ag-livres">
+      <button type="button" onclick="agendaObs('Aguardando exames pré-anestésicos')">+ Aguardando exames pré-anestésicos</button>
+      <button type="button" onclick="agendaObs('PetLove')">+ PetLove</button>
+    </div>
+    <div class="ag-marcados" id="agMarcados"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="fecharAgenda()">Cancelar</button>
+      <button class="btn btn-primary" id="agCriar" onclick="agendaCriar()">Criar marcação</button>
+    </div>
+  </div>
+</div>
 
 <!-- Prévia de arquivo antes de enviar (colar, arrastar ou escolher no clipe) -->
 <div class="modal-overlay" id="anexoModal" onclick="if(event.target===this)fecharAnexo()">
@@ -2726,6 +2773,7 @@ function renderConversaChat(rolar, chegouDoCliente) {
     '</div>' +
     '<div class="ch-actions">' +
       '<a href="https://wa.me/' + c.telefone + '" target="_blank" class="wa-link" style="font-size:14px">WhatsApp</a>' +
+      '<button class="btn btn-ghost btn-sm" onclick="abrirAgendaCfaz(null)" title="Criar uma marcação na agenda do CFAZ" style="font-size:12px;padding:4px 8px">&#x1F4C5; Agenda</button>' +
       '<button class="btn btn-ghost btn-sm" onclick="openEditModalChat()" style="font-size:12px;padding:4px 8px">Editar</button>' +
       '<button class="btn btn-ghost btn-sm" onclick="openTagModalChat()" style="font-size:12px;padding:4px 8px">&#x1F3F7;&#xFE0F;</button>' +
     '</div>';
@@ -2737,7 +2785,7 @@ function renderConversaChat(rolar, chegouDoCliente) {
   ).join('');
 
   // Messages (as 50 mais recentes + as anteriores que a pessoa pediu para carregar)
-  const ficouAcima = renderMessagesInto(document.getElementById('chatMessagesArea'), mensagensDoChat(), { rolar: rolar || 'auto', temMais: chatTemMais });
+  const ficouAcima = renderMessagesInto(document.getElementById('chatMessagesArea'), mensagensDoChat(), { rolar: rolar || 'auto', temMais: chatTemMais, agenda: true });
   mostrarAvisoNova(ficouAcima && chegouDoCliente);
 }
 
@@ -3242,7 +3290,7 @@ let chatReply = null;      // mensagem que está sendo respondida (citação)
 const rascunhos = {};      // texto digitado e não enviado, por conversa
 
 function assinaturaMsgs(msgs) {
-  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '')).join(',');
+  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' : '')).join(',');
 }
 // Todas as mensagens na tela, da mais nova para a mais antiga.
 function mensagensDoChat() {
@@ -3416,8 +3464,19 @@ function renderMessagesInto(area, mensagens, opts) {
     const dia = String(m.created_at || '').slice(0, 10);
     let faixa = '';
     if (dia && dia !== diaAtual) { diaAtual = dia; faixa = '<div class="msg-dia">' + rotuloDia(dia) + '</div>'; }
+    // Agenda do CFAZ: botão logo abaixo da mensagem "Exame agendado…" (ou o aviso de que já está na agenda)
+    let extra = '';
+    if (opts.agenda && m.direcao === 'out' && m.tipo === 'text') {
+      if (m.cfaz) {
+        const q = String(m.cfaz.inicio || '');
+        extra = '<div class="msg-agenda feito">&#x2713; Na agenda do CFAZ: ' + esc(m.cfaz.calendario || '') + ', ' + q.slice(8, 10) + '/' + q.slice(5, 7) + ' às ' + q.slice(11, 16) +
+          ' · <a onclick="desfazerAgenda(' + Number(m.cfaz.evento_id) + ')">desfazer</a></div>';
+      } else if (ehExameAgendado(m.texto) && String(m.created_at || '') >= agendaLimite()) {
+        extra = '<button class="msg-agenda" onclick="abrirAgendaCfaz(' + m.id + ')">&#x1F4C5; Criar na agenda do CFAZ</button>';
+      }
+    }
     return faixa + '<div class="msg ' + m.direcao + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
-      '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + horaMsg(m.created_at) + '</div></div>';
+      '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + horaMsg(m.created_at) + '</div></div>' + extra;
   }).join('');
   area.innerHTML = (opts.temMais ? '<button class="msg-mais" onclick="carregarAnteriores(this)">Carregar mensagens anteriores</button>' : '') + html;
 
@@ -3459,6 +3518,172 @@ function irParaUltima() {
   const area = document.getElementById('chatMessagesArea');
   area.scrollTop = area.scrollHeight;
   mostrarAvisoNova(false);
+}
+
+// ─── Agenda do CFAZ a partir da conversa ────────────────────────────────────────────────────────
+// Quando a recepção envia "Exame agendado: …", aparece um botão embaixo da mensagem. Ele lê da própria mensagem
+// o exame (que define a agenda), o dia e a hora, e do contato o telefone, o pet e o tutor. Abre um formulário já
+// preenchido; a marcação só é criada no CFAZ quando alguém aperta "Criar marcação".
+const AG_AGENDAS = { TC: 2713, RM: 2731, CARDIO: 4931, IMAGEM: 2723 }; // números das agendas no CFAZ
+let agendaMsgId = null;
+let agendaDados = null;
+function ehExameAgendado(t) { return /^\W{0,4}exame agendado/i.test(String(t || '')); }
+function agendaLimite() { const d = new Date(Date.now() - 10 * 86400000); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function lerAgendamento(texto) {
+  const r = { titulo: '', cal: 0, data: '', hora: '', pet: '', combinado: false };
+  const cab = String(texto || '').split(/\bpreparo\b/i)[0].split(/nosso endere[cç]o/i)[0].split(/o prazo para/i)[0];
+  const pars = Array.from(cab.matchAll(/\(([^)]{1,40})\)/g)).map(m => m[1].trim()).filter(p => !/aguardando|prazo|laudo|exame|\d/i.test(p));
+  if (pars.length) r.pet = pars[pars.length - 1];
+  // pendência escrita entre parênteses, ex.: "(aguardando ECO + ECG + exames de sangue)" → vai para a observação
+  const pend = Array.from(cab.matchAll(/\(([^)]{1,70})\)/g)).map(m => m[1].trim()).find(p => /aguardando|falta|pendente/i.test(p));
+  r.obs = pend ? pend.charAt(0).toUpperCase() + pend.slice(1) : '';
+  const n = cab.replace(/\([^)]*\)/g, ' ').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const itens = [];
+  if (/tomograf|\btc\b/.test(n)) itens.push('TC');
+  if (/ressonan|\brm\b/.test(n)) itens.push('RM');
+  if (/mielo/.test(n)) itens.push('Mielo');
+  if (/raio.?x|\brx\b|radiograf/.test(n)) itens.push('Rx');
+  if (/ultrass|\bus\b/.test(n)) itens.push('US');
+  if (/\beco\b|ecodoppler|ecocardio/.test(n)) itens.push('ECO');
+  if (/\becg\b|eletrocardio|\beletro\b/.test(n)) itens.push('ECG');
+  if (/hemograma|bioquim|sangue/.test(n)) itens.push('Sangue');
+  r.titulo = itens.join(' + ');
+  const p = itens[0];
+  r.cal = (p === 'TC' || p === 'Mielo') ? AG_AGENDAS.TC : p === 'RM' ? AG_AGENDAS.RM : (p === 'ECO' || p === 'ECG') ? AG_AGENDAS.CARDIO : (p === 'Rx' || p === 'US') ? AG_AGENDAS.IMAGEM : 0;
+  r.combinado = (itens.indexOf('TC') >= 0 || itens.indexOf('RM') >= 0) && (itens.indexOf('ECO') >= 0 || itens.indexOf('ECG') >= 0);
+  const md = n.match(/(\d{1,2})\s*\/\s*(\d{1,2})(?:\s*\/\s*(\d{2,4}))?/);
+  if (md) {
+    const hoje = new Date();
+    let ano = md[3] ? Number(md[3].length === 2 ? '20' + md[3] : md[3]) : hoje.getFullYear();
+    const dia = Number(md[1]), mes = Number(md[2]);
+    if (dia >= 1 && dia <= 31 && mes >= 1 && mes <= 12) {
+      if (!md[3] && new Date(ano, mes - 1, dia) < new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 2)) ano++; // "05/01" dito em dezembro é do ano que vem
+      r.data = ano + '-' + String(mes).padStart(2, '0') + '-' + String(dia).padStart(2, '0');
+    }
+    const resto = n.slice(md.index + md[0].length);
+    const mh = resto.match(/(\d{1,2})\s*[:h]\s*(\d{2})/) || resto.match(/(\d{1,2})\s*h\b/);
+    if (mh && Number(mh[1]) <= 23) r.hora = String(mh[1]).padStart(2, '0') + ':' + (mh[2] || '00');
+  }
+  return r;
+}
+function telefoneParaCfaz(tel) {
+  const d = String(tel || '').replace(/\D/g, '');
+  if (!d) return '';
+  return d.length >= 12 && d.startsWith('55') ? '+55 ' + d.slice(2) : '+55 ' + d;
+}
+function abrirAgendaCfaz(msgId) {
+  if (!currentChatContato) return;
+  const c = currentChatContato;
+  const m = msgId ? mensagensDoChat().find(x => String(x.id) === String(msgId)) : null;
+  const lido = m ? lerAgendamento(m.texto) : { titulo: '', cal: 0, data: '', hora: '', pet: '', combinado: false };
+  agendaMsgId = m ? m.id : null;
+  agendaDados = null;
+  document.getElementById('agTitulo').value = lido.titulo;
+  document.getElementById('agTel').value = telefoneParaCfaz(c.telefone);
+  document.getElementById('agDesc').value = [[lido.pet || c.pet_nome, c.nome].filter(Boolean).join(' - '), lido.obs].filter(Boolean).join(' · ');
+  document.getElementById('agData').value = lido.data;
+  document.getElementById('agHora').value = lido.hora;
+  const avisos = [];
+  if (m && (!lido.data || !lido.hora)) avisos.push('Não consegui ler o dia ou a hora na mensagem: preencha abaixo.');
+  if (m && !lido.cal) avisos.push('Não reconheci o exame na mensagem: escolha a agenda.');
+  if (lido.combinado) avisos.push('Este agendamento também tem ECO ou ECG: se for o caso, crie depois a marcação na agenda dos cardiologistas.');
+  document.getElementById('agAviso').innerHTML = avisos.map(esc).join('<br>');
+  document.getElementById('agCal').innerHTML = '<option value="">Carregando as agendas…</option>';
+  document.getElementById('agLivres').innerHTML = '';
+  document.getElementById('agMarcados').textContent = '';
+  document.getElementById('agSit').textContent = '';
+  document.getElementById('agCriar').disabled = false;
+  document.getElementById('agCriar').textContent = 'Criar marcação';
+  document.getElementById('agendaModal').classList.add('show');
+  agendaCarregar(lido.cal);
+}
+function fecharAgenda() { document.getElementById('agendaModal').classList.remove('show'); agendaMsgId = null; }
+async function agendaCarregar(calPreferido) {
+  const sel = document.getElementById('agCal');
+  const cal = Number(calPreferido || sel.value || 0);
+  const data = document.getElementById('agData').value;
+  document.getElementById('agSit').textContent = cal && data ? 'Consultando o CFAZ…' : '';
+  document.getElementById('agSit').className = 'ag-sit';
+  try {
+    const r = await api('GET', '/api/cfaz/agenda?cal=' + cal + '&data=' + encodeURIComponent(data));
+    agendaDados = r;
+    sel.innerHTML = '<option value="">Escolha a agenda</option>' + (r.calendarios || []).map(k => '<option value="' + k.id + '"' + (k.id === cal ? ' selected' : '') + '>' + esc(k.nome) + '</option>').join('');
+    const hora = document.getElementById('agHora').value;
+    document.getElementById('agLivres').innerHTML = (r.livres || []).map(h => '<button type="button"' + (h === hora ? ' class="sel"' : '') + ' onclick="agendaEscolherHora(\'' + h + '\')">' + h + '</button>').join('');
+    document.getElementById('agMarcados').textContent = !cal || !data ? '' : (r.marcados && r.marcados.length ? 'Já marcados nesse dia: ' + r.marcados.map(x => x.hora + ' (' + x.titulo + ')').join(', ') : 'Nenhuma marcação nesse dia ainda.');
+    if (r.aviso) document.getElementById('agAviso').innerHTML += (document.getElementById('agAviso').innerHTML ? '<br>' : '') + esc(r.aviso);
+    agendaSituacao();
+  } catch (e) {
+    document.getElementById('agSit').textContent = 'Não consegui consultar o CFAZ: ' + e.message;
+    document.getElementById('agSit').className = 'ag-sit ruim';
+  }
+}
+// Atalhos da observação (um clique põe ou tira), ex.: "Aguardando exames pré-anestésicos"
+function agendaObs(t) {
+  const el = document.getElementById('agDesc');
+  const partes = el.value.split(' · ').map(x => x.trim()).filter(Boolean);
+  const i = partes.findIndex(x => x.toLowerCase() === t.toLowerCase());
+  if (i >= 0) partes.splice(i, 1); else partes.push(t);
+  el.value = partes.join(' · ');
+}
+function agendaEscolherHora(h) {
+  document.getElementById('agHora').value = h;
+  document.querySelectorAll('#agLivres button').forEach(b => b.classList.toggle('sel', b.textContent === h));
+  agendaSituacao();
+}
+function agendaSituacao() {
+  const el = document.getElementById('agSit');
+  const hora = document.getElementById('agHora').value;
+  const cal = Number(document.getElementById('agCal').value || 0), data = document.getElementById('agData').value;
+  el.className = 'ag-sit';
+  if (!agendaDados || !cal || !data || !hora) { el.textContent = ''; return; }
+  const ocupado = (agendaDados.marcados || []).find(x => x.hora === hora);
+  if (ocupado) { el.textContent = 'Atenção: já existe uma marcação às ' + hora + ' nessa agenda (' + ocupado.titulo + ').'; el.className = 'ag-sit ruim'; }
+  else if ((agendaDados.livres || []).indexOf(hora) >= 0) { el.textContent = hora + ' está livre no CFAZ.'; el.className = 'ag-sit ok'; }
+  else el.textContent = hora + ' não está na lista de horários livres do CFAZ. Confira antes de criar.';
+  document.querySelectorAll('#agLivres button').forEach(b => b.classList.toggle('sel', b.textContent === hora));
+}
+async function agendaCriar() {
+  if (!currentChatContato) return;
+  const cal = Number(document.getElementById('agCal').value || 0), data = document.getElementById('agData').value, hora = document.getElementById('agHora').value;
+  const titulo = document.getElementById('agTitulo').value.trim();
+  const sit = document.getElementById('agSit');
+  if (!cal || !data || !hora || !titulo) { sit.textContent = 'Preencha a agenda, o dia, o horário e o título.'; sit.className = 'ag-sit ruim'; return; }
+  // O CFAZ aceita duas marcações no mesmo horário; por isso o CRM pergunta antes.
+  let forcar = false;
+  const ocupado = agendaDados && (agendaDados.marcados || []).find(x => x.hora === hora);
+  if (ocupado) {
+    if (!confirm('Já existe uma marcação às ' + hora + ' nessa agenda (' + ocupado.titulo + ').\n\nCriar outra no mesmo horário?')) return;
+    forcar = true;
+  }
+  const btn = document.getElementById('agCriar');
+  const destino = currentChatContato.id;
+  const corpo = { cal, data, hora, titulo, descricao: document.getElementById('agDesc').value.trim(), telefone: document.getElementById('agTel').value.trim(), msg_id: agendaMsgId };
+  const tentar = async (f) => {
+    btn.disabled = true; btn.textContent = 'Criando…';
+    const r = await api('POST', '/api/contato/' + destino + '/agenda-cfaz', Object.assign({ forcar: f }, corpo));
+    fecharAgenda();
+    toast('Marcação criada no CFAZ: ' + (r.calendario || '') + ', ' + data.slice(8, 10) + '/' + data.slice(5, 7) + ' às ' + hora);
+    if (currentChatContato && currentChatContato.id === destino) await recarregarChat('auto', true);
+  };
+  try {
+    await tentar(forcar);
+  } catch (e) {
+    // alguém marcou esse horário enquanto o formulário estava aberto
+    if (!forcar && /^Já existe uma marcação/.test(e.message) && confirm(e.message + '\n\nCriar outra no mesmo horário?')) {
+      try { await tentar(true); return; } catch (e2) { e = e2; }
+    }
+    sit.textContent = 'Não foi criada: ' + e.message; sit.className = 'ag-sit ruim';
+    btn.disabled = false; btn.textContent = 'Criar marcação';
+  }
+}
+async function desfazerAgenda(eventoId) {
+  if (!confirm('Apagar esta marcação da agenda do CFAZ?')) return;
+  try {
+    await api('DELETE', '/api/agenda-cfaz/' + eventoId);
+    toast('Marcação apagada do CFAZ');
+    await recarregarChat('auto', true);
+  } catch (e) { toast('Não foi apagada: ' + e.message, 'err'); }
 }
 
 // ─── Responder citando ──────────────────────────────────────────────────────────────────────────

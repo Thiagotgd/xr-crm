@@ -148,6 +148,11 @@ try { db.exec("ALTER TABLE contatos ADD COLUMN manual_unread INTEGER DEFAULT 0")
 // 11/11/2026: resposta citando uma mensagem. O trecho citado fica guardado junto da mensagem (de = 'in' cliente, 'out' recepção).
 try { db.exec("ALTER TABLE mensagens ADD COLUMN citacao_texto TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN citacao_de TEXT DEFAULT ''"); } catch {}
+// 11/11/2026: marcações criadas no CFAZ a partir da conversa (para mostrar "já está na agenda" e permitir desfazer)
+db.exec(`CREATE TABLE IF NOT EXISTS agenda_cfaz (
+  evento_id INTEGER PRIMARY KEY, contato_id INTEGER NOT NULL, msg_id INTEGER,
+  calendario_id INTEGER, calendario_nome TEXT, inicio TEXT, titulo TEXT,
+  created_at TEXT DEFAULT (datetime('now','localtime')))`);
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_mensagens_contato_data ON mensagens(contato_id, created_at)"); } catch (e) { console.error('[CRM] índice de mensagens:', e.message); }
 try { db.exec("ALTER TABLE contatos ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN favorito INTEGER DEFAULT 0"); } catch {}
@@ -441,6 +446,67 @@ function evoDeleteMessage(remoteJid, msgId, fromMe) {
 
 let frasesCache = {}; // frases frequentes da recepção (refeito a cada 15 min)
 
+// ─── CFAZ: agenda ───────────────────────────────────────────────────────────────────────────────
+// Mesma credencial que a fila usa; fica em secrets/cfaz.key (fora do git) ou na variável CFAZ_API_TOKEN.
+const CFAZ_BASE = process.env.CFAZ_BASE || 'https://max.cfaz.net';
+let CFAZ_TOKEN = process.env.CFAZ_API_TOKEN || '';
+try { if (!CFAZ_TOKEN) CFAZ_TOKEN = fs.readFileSync(path.join(__dirname, 'secrets', 'cfaz.key'), 'utf8').trim(); } catch {}
+function cfaz(method, caminho, corpo) {
+  return new Promise((resolve, reject) => {
+    if (!CFAZ_TOKEN) return reject(new Error('credencial do CFAZ não configurada no CRM'));
+    const u = new URL(CFAZ_BASE + caminho);
+    const lib = u.protocol === 'https:' ? https : http;
+    const payload = corpo ? JSON.stringify(corpo) : null;
+    const headers = { 'Authorization': 'Token token=' + CFAZ_TOKEN, 'Accept': 'application/json' };
+    if (payload) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = Buffer.byteLength(payload); }
+    const req = lib.request({ hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: u.pathname + u.search, method, headers }, res => {
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => { let j = null; try { j = d ? JSON.parse(d) : null; } catch {} resolve({ status: res.statusCode, json: j, texto: d }); });
+    });
+    req.on('error', e => reject(new Error('o CFAZ não respondeu: ' + e.message)));
+    req.setTimeout(25000, () => { req.destroy(); reject(new Error('o CFAZ demorou mais de 25 s')); });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+let cfazCalCache = { em: 0, lista: [] };
+async function cfazCalendarios() {
+  if (cfazCalCache.lista.length && Date.now() - cfazCalCache.em < 15 * 60 * 1000) return cfazCalCache.lista;
+  const r = await cfaz('GET', '/api/v1/calendars.json');
+  const L = Array.isArray(r.json) ? r.json : (r.json && r.json.data) || [];
+  if (r.status !== 200 || !L.length) throw new Error('o CFAZ não devolveu as agendas (código ' + r.status + ')');
+  cfazCalCache = { em: Date.now(), lista: L.filter(c => c.enabled).map(c => ({ id: c.id, nome: String(c.name || '').trim(), duracao: Number(c.default_event_duration) || 20 })) };
+  return cfazCalCache.lista;
+}
+let cfazEvCache = { em: 0, lista: [] };
+async function cfazEventos(forcar) {
+  if (!forcar && cfazEvCache.em && Date.now() - cfazEvCache.em < 45 * 1000) return cfazEvCache.lista;
+  const todos = [], vistos = new Set();
+  for (let p = 1; p <= 8; p++) {
+    const r = await cfaz('GET', '/api/v1/events.json?per_page=100&page=' + p);
+    const L = Array.isArray(r.json) ? r.json : (r.json && r.json.data);
+    if (r.status !== 200 || !Array.isArray(L)) throw new Error('o CFAZ não devolveu as marcações (código ' + r.status + ')');
+    const novos = L.filter(e => !vistos.has(e.id));
+    if (!novos.length) break;
+    for (const e of novos) { vistos.add(e.id); todos.push(e); }
+  }
+  cfazEvCache = { em: Date.now(), lista: todos };
+  return todos;
+}
+function telefoneCfaz(tel) {
+  const d = String(tel || '').replace(/\D/g, '');
+  if (!d) return '';
+  return d.length >= 12 && d.startsWith('55') ? '+55 ' + d.slice(2) : '+55 ' + d;
+}
+// Junta a cada mensagem a marcação do CFAZ criada a partir dela (se houver).
+function anexarAgenda(mensagens) {
+  if (!mensagens || !mensagens.length) return;
+  const ids = mensagens.map(m => m.id);
+  const rows = db.prepare('SELECT * FROM agenda_cfaz WHERE msg_id IN (' + ids.map(() => '?').join(',') + ')').all(...ids);
+  const por = {}; for (const r of rows) por[r.msg_id] = r;
+  for (const m of mensagens) if (por[m.id]) m.cfaz = { evento_id: por[m.id].evento_id, calendario: por[m.id].calendario_nome, inicio: por[m.id].inicio, titulo: por[m.id].titulo };
+}
+
 // ─── Routes ────────────────────────────────────────────────────────────────────
 async function handleRequest(req, res) {
   const urlObj = new URL(req.url, 'http://localhost');
@@ -566,6 +632,7 @@ async function handleRequest(req, res) {
     const temMais = msgs.length > 50;
     if (temMais) msgs.pop();
     try { leitor.anexarLeituras(db, msgs); } catch (e) { console.error('[LEITOR] anexar:', e.message); }
+    try { anexarAgenda(msgs); } catch (e) { console.error('[CFAZ] anexar:', e.message); }
     return sendJSON(res, 200, { mensagens: msgs, tem_mais: temMais });
   }
 
@@ -578,6 +645,7 @@ async function handleRequest(req, res) {
     if (contato.tem_mais) contato.mensagens.pop();
     // Foto ou PDF do cliente já lido pela IA (pedido do veterinário etc.): a leitura vai junto da mensagem.
     try { leitor.anexarLeituras(db, contato.mensagens); } catch (e) { console.error('[LEITOR] anexar:', e.message); }
+    try { anexarAgenda(contato.mensagens); } catch (e) { console.error('[CFAZ] anexar:', e.message); }
     contato.etiquetas = db.prepare('SELECT e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id WHERE ce.contato_id = ?').all(id);
     // 11/11/2026: a tela atualiza a conversa aberta a cada 5 s. Quando a aba do CRM está em segundo plano ela
     // manda ?visto=0, e aí NÃO se marca como lido: antes, uma conversa esquecida aberta apagava o aviso verde
@@ -1365,6 +1433,79 @@ async function handleRequest(req, res) {
   }
 
   // ─── API: Mensagens Rápidas CRUD ──────────────────────────────────────────
+  // ─── Agenda do CFAZ a partir da conversa ───────────────────────────────────────────────────
+  // Horários livres e já marcados de uma agenda num dia (o cálculo de livres é do próprio CFAZ).
+  if (method === 'GET' && pathname === '/api/cfaz/agenda') {
+    try {
+      const calendarios = await cfazCalendarios();
+      const cal = Number(urlObj.searchParams.get('cal') || 0);
+      const data = urlObj.searchParams.get('data') || '';
+      if (!cal || !/^\d{4}-\d{2}-\d{2}$/.test(data)) return sendJSON(res, 200, { calendarios, livres: [], marcados: [] });
+      const [slots, eventos] = await Promise.all([cfaz('GET', '/api/v1/calendars/' + cal + '/available_slots.json?date=' + data), cfazEventos()]);
+      const livres = slots.status === 200 && slots.json && Array.isArray(slots.json.available_slots) ? slots.json.available_slots.map(s => s.start_hour) : null;
+      const marcados = eventos.filter(e => e.calendar_id === cal && String(e.start_date || '').startsWith(data))
+        .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)))
+        .map(e => ({ hora: String(e.start_date).slice(11, 16), titulo: String(e.title || '').slice(0, 40) }));
+      return sendJSON(res, 200, { calendarios, livres: livres || [], marcados, aviso: livres ? '' : 'O CFAZ não informou os horários livres deste dia.' });
+    } catch (e) { return sendJSON(res, 502, { error: e.message }); }
+  }
+
+  // Cria a marcação no CFAZ. Nada é criado sem alguém apertar "Criar marcação" na tela.
+  if (method === 'POST' && pathname.match(/^\/api\/contato\/\d+\/agenda-cfaz$/)) {
+    const id = Number(pathname.split('/')[3]);
+    const body = await parseBody(req);
+    const contato = db.prepare('SELECT id, nome, telefone, etapa FROM contatos WHERE id = ?').get(id);
+    if (!contato) return sendJSON(res, 404, { error: 'Contato não encontrado' });
+    const cal = Number(body.cal || 0), data = String(body.data || ''), hora = String(body.hora || ''), titulo = String(body.titulo || '').trim();
+    if (!cal || !/^\d{4}-\d{2}-\d{2}$/.test(data) || !/^\d{2}:\d{2}$/.test(hora) || !titulo) return sendJSON(res, 400, { error: 'Informe agenda, dia, horário e título.' });
+    if (body.msg_id && db.prepare('SELECT 1 FROM agenda_cfaz WHERE msg_id = ?').get(body.msg_id)) return sendJSON(res, 400, { error: 'Esta mensagem já tem uma marcação criada no CFAZ.' });
+    try {
+      const cals = await cfazCalendarios();
+      const c = cals.find(x => x.id === cal);
+      if (!c) return sendJSON(res, 400, { error: 'Essa agenda não está ligada no CFAZ.' });
+      // O CFAZ aceita duas marcações no mesmo horário sem reclamar (visto no teste de 11/11/2026). A trava fica aqui:
+      // se já existe marcação nesse horário e nessa agenda, só cria quando a pessoa confirmar na tela (forcar).
+      if (!body.forcar) {
+        const jaTem = (await cfazEventos(true)).find(e => e.calendar_id === cal && String(e.start_date || '').slice(0, 16) === data + 'T' + hora);
+        if (jaTem) return sendJSON(res, 409, { error: 'Já existe uma marcação às ' + hora + ' nessa agenda (' + String(jaTem.title || '').slice(0, 40) + ').' });
+      }
+      const ini = new Date(data + 'T' + hora + ':00-03:00');
+      const fim = new Date(ini.getTime() + (c.duracao || 20) * 60000);
+      const iso = d => new Date(d.getTime() - 3 * 3600000).toISOString().replace('Z', '-03:00');
+      // send_reminder false: igual às marcações que a recepção cria hoje; o CFAZ não manda lembrete a ninguém.
+      const evento = { calendar_id: cal, title: titulo.slice(0, 120), description: String(body.descricao || '').slice(0, 300), start_date: iso(ini), end_date: iso(fim), status: 0, send_reminder: false };
+      const tel = telefoneCfaz(body.telefone !== undefined ? body.telefone : contato.telefone);
+      if (tel) evento.phone = tel;
+      const r = await cfaz('POST', '/api/v1/events.json', { event: evento });
+      const criado = r.json && (r.json.data || r.json.event || r.json);
+      if (!(r.status === 200 || r.status === 201) || !criado || !criado.id) {
+        const motivo = r.json && Array.isArray(r.json.errors) ? r.json.errors.join('; ') : ('código ' + r.status);
+        console.error('[CFAZ] criação recusada:', motivo);
+        return sendJSON(res, 400, { error: 'O CFAZ não aceitou: ' + motivo });
+      }
+      db.prepare('INSERT OR REPLACE INTO agenda_cfaz (evento_id, contato_id, msg_id, calendario_id, calendario_nome, inicio, titulo) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+        criado.id, id, body.msg_id || null, cal, c.nome, data + ' ' + hora, titulo);
+      cfazEvCache.em = 0;
+      console.log(`[CFAZ] marcação ${criado.id} criada: ${c.nome} ${data} ${hora} "${titulo}" (contato ${id})`);
+      return sendJSON(res, 200, { ok: true, evento_id: criado.id, calendario: c.nome, inicio: data + ' ' + hora });
+    } catch (e) { console.error('[CFAZ] erro criando:', e.message); return sendJSON(res, 502, { error: e.message }); }
+  }
+
+  // Desfaz uma marcação criada pelo CRM (apaga no CFAZ). Só as que o próprio CRM criou.
+  if (method === 'DELETE' && pathname.match(/^\/api\/agenda-cfaz\/\d+$/)) {
+    const eventoId = Number(pathname.split('/').pop());
+    const row = db.prepare('SELECT * FROM agenda_cfaz WHERE evento_id = ?').get(eventoId);
+    if (!row) return sendJSON(res, 404, { error: 'Essa marcação não foi criada pelo CRM.' });
+    try {
+      const r = await cfaz('DELETE', '/api/v1/events/' + eventoId + '.json');
+      if (r.status !== 200 && r.status !== 204 && r.status !== 404) return sendJSON(res, 400, { error: 'O CFAZ não deixou apagar (código ' + r.status + ').' });
+      db.prepare('DELETE FROM agenda_cfaz WHERE evento_id = ?').run(eventoId);
+      cfazEvCache.em = 0;
+      console.log(`[CFAZ] marcação ${eventoId} apagada pelo CRM (contato ${row.contato_id})`);
+      return sendJSON(res, 200, { ok: true });
+    } catch (e) { return sendJSON(res, 502, { error: e.message }); }
+  }
+
   // Sugestão ao digitar (sem IA): frases idênticas que a recepção mais enviou em 60 dias, a vários clientes.
   // Fica de fora o que tem número (preço, hora, data mudam), nome de tutor ou de animal, e mensagens automáticas.
   if (method === 'GET' && pathname === '/api/frases') {
