@@ -159,6 +159,8 @@ try { db.exec("ALTER TABLE mensagens ADD COLUMN cartao TEXT DEFAULT ''"); } catc
 try { db.exec("ALTER TABLE mensagens ADD COLUMN previa TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN citacao_wa_id TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE grupo_mensagens ADD COLUMN wa_msg_id TEXT DEFAULT ''"); } catch {}
+for (const col of ['reacoes', 'citacao_texto', 'citacao_de', 'citacao_wa_id']) { try { db.exec(`ALTER TABLE grupo_mensagens ADD COLUMN ${col} TEXT DEFAULT ''`); } catch {} }
+try { db.exec("ALTER TABLE grupo_mensagens ADD COLUMN editada INTEGER DEFAULT 0"); } catch {}
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_grupo_msgs_wa ON grupo_mensagens(wa_msg_id)"); } catch {}
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_grupo_msgs_data ON grupo_mensagens(grupo_id, created_at)"); } catch {}
 db.exec("CREATE TABLE IF NOT EXISTS agenda (telefone TEXT PRIMARY KEY, nome TEXT NOT NULL, importado_em TEXT DEFAULT (datetime('now','localtime')))");
@@ -544,6 +546,23 @@ function gravarReacao(waMsgId, quem, emoji) {
   if (emoji) r[quem] = String(emoji).slice(0, 16); else delete r[quem];
   db.prepare('UPDATE mensagens SET reacoes = ? WHERE id = ?').run(Object.keys(r).length ? JSON.stringify(r) : '', m.id);
   return true;
+}
+
+// Reação numa mensagem de grupo: uma por participante ("me" = a recepção). Emoji vazio tira.
+function gravarReacaoGrupo(waMsgId, quem, emoji) {
+  const m = db.prepare('SELECT id, reacoes FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(String(waMsgId || ''));
+  if (!m) return false;
+  let r = {};
+  try { r = JSON.parse(m.reacoes || '{}') || {}; } catch {}
+  if (emoji) r[quem] = String(emoji).slice(0, 16); else delete r[quem];
+  db.prepare('UPDATE grupo_mensagens SET reacoes = ? WHERE id = ?').run(Object.keys(r).length ? JSON.stringify(r) : '', m.id);
+  return true;
+}
+// Chave do WhatsApp de uma mensagem de grupo (para citar, reagir): a de outra pessoa leva o participante
+function chaveDeGrupo(gm, jid) {
+  const chave = { id: gm.wa_msg_id, remoteJid: jid, fromMe: gm.remetente === 'me' };
+  if (gm.remetente !== 'me' && String(gm.remetente || '').includes('@')) chave.participant = gm.remetente;
+  return chave;
 }
 
 // Endereço da conversa como a Evolution guardou (pode ser o endereço novo do WhatsApp, em LID)
@@ -1354,6 +1373,9 @@ async function handleRequest(req, res) {
       if (!jid.includes('@g.us') && reacao.key && reacao.key.id) {
         const achou = gravarReacao(reacao.key.id, key.fromMe ? 'out' : 'in', String(reacao.text || ''));
         console.log(`[CRM] reação ${key.fromMe ? 'da recepção' : 'do cliente'}: ${reacao.text || '(tirou)'}${achou ? '' : ' (mensagem não encontrada)'}`);
+      } else if (jid.includes('@g.us') && reacao.key && reacao.key.id) {
+        // em grupo cada participante tem a sua reação: {"me":"👍","<participante>":"❤️"}
+        gravarReacaoGrupo(reacao.key.id, key.fromMe ? 'me' : String(key.participant || data.pushName || '?'), String(reacao.text || ''));
       }
       return sendJSON(res, 200, { ok: true, reacao: true });
     }
@@ -1377,11 +1399,18 @@ async function handleRequest(req, res) {
       // o que a recepção manda pelo celular entra como "Eu", igual ao que sai pelo CRM
       const remetente = key.fromMe ? 'me' : (key.participant || data.pushName || '');
       const remetenteNome = key.fromMe ? 'Eu' : (data.pushName || '');
+      // resposta que cita outra mensagem do grupo
+      const citaG = citacaoDoContexto(msg, data, jid);
+      let citaGDe = '';
+      if (citaG.id) {
+        const og = db.prepare('SELECT remetente FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(citaG.id);
+        if (og) citaGDe = og.remetente === 'me' ? 'out' : 'in';
+      }
 
       if (texto || tipo !== 'text') {
         // grava primeiro (a repetição que chega em seguida já é reconhecida) e baixa o arquivo depois
-        const nova = db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo, wa_msg_id) VALUES (?, ?, ?, ?, ?, ?)").run(
-          grupo.id, remetente, remetenteNome, texto || `[${tipo}]`, tipo, waId
+        const nova = db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo, wa_msg_id, citacao_texto, citacao_de, citacao_wa_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+          grupo.id, remetente, remetenteNome, texto || `[${tipo}]`, tipo, waId, citaG.texto || '', citaGDe, citaG.id || ''
         );
         if (tipo !== 'text') {
           try {
@@ -1670,19 +1699,75 @@ async function handleRequest(req, res) {
     const grupo = db.prepare('SELECT * FROM grupos WHERE id = ?').get(id);
     if (!grupo) return sendJSON(res, 404, { error: 'Grupo not found' });
 
+    // responder citando uma mensagem do grupo (só as que têm o identificador do WhatsApp)
+    let quotedG = null, citadaG = null;
+    if (body.citar) {
+      citadaG = db.prepare('SELECT * FROM grupo_mensagens WHERE id = ? AND grupo_id = ?').get(body.citar, id);
+      if (citadaG && citadaG.wa_msg_id) quotedG = { key: chaveDeGrupo(citadaG, grupo.jid), message: { conversation: resumoParaCitar(citadaG) } };
+      else citadaG = null;
+    }
     let chaveG = {};
     try {
-      const r = await evoSendText(grupo.jid, body.texto);
+      const r = await evoSendText(grupo.jid, body.texto, quotedG);
       chaveG = (r && r.key) || {};
     } catch (e) {
       console.error('[CRM] Erro enviando msg grupo:', e.message);
       return sendJSON(res, 500, { error: 'Falha ao enviar: ' + e.message });
     }
-    // se o WhatsApp já devolveu esta mesma mensagem pelo webhook, não grava de novo
-    if (!chaveG.id || !db.prepare('SELECT 1 FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(String(chaveG.id))) {
-      db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo, wa_msg_id) VALUES (?, 'me', 'Eu', ?, 'text', ?)").run(id, body.texto, String(chaveG.id || ''));
+    const citaTxt = citadaG ? resumoParaCitar(citadaG).slice(0, 300) : '';
+    const citaDeG = citadaG ? (citadaG.remetente === 'me' ? 'out' : 'in') : '';
+    const citaWa = citadaG ? citadaG.wa_msg_id : '';
+    // se o WhatsApp já devolveu esta mesma mensagem pelo webhook, não grava de novo (só completa a citação)
+    const jaVeio = chaveG.id ? db.prepare('SELECT id FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(String(chaveG.id)) : null;
+    if (jaVeio) {
+      if (citadaG) db.prepare('UPDATE grupo_mensagens SET citacao_texto = ?, citacao_de = ?, citacao_wa_id = ? WHERE id = ?').run(citaTxt, citaDeG, citaWa, jaVeio.id);
+    } else {
+      db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo, wa_msg_id, citacao_texto, citacao_de, citacao_wa_id) VALUES (?, 'me', 'Eu', ?, 'text', ?, ?, ?, ?)").run(
+        id, body.texto, String(chaveG.id || ''), citaTxt, citaDeG, citaWa);
     }
-    return sendJSON(res, 200, { ok: true });
+    return sendJSON(res, 200, { ok: true, sem_citacao: !!body.citar && !citadaG });
+  }
+
+  // ─── Reagir a uma mensagem de grupo (emoji vazio tira a reação) ───────────────
+  if (method === 'POST' && pathname.match(/^\/api\/grupo-msg\/\d+\/reacao$/)) {
+    const gmId = pathname.split('/')[3];
+    const body = await parseBody(req);
+    const emoji = String(body.emoji || '').trim().slice(0, 16);
+    const gm = db.prepare('SELECT gm.*, g.jid FROM grupo_mensagens gm JOIN grupos g ON g.id = gm.grupo_id WHERE gm.id = ?').get(gmId);
+    if (!gm) return sendJSON(res, 404, { error: 'Mensagem não encontrada' });
+    if (!gm.wa_msg_id) return sendJSON(res, 400, { error: 'Não dá para reagir a esta mensagem (ela é antiga, de antes de o CRM guardar o identificador do WhatsApp).' });
+    try {
+      const r = await evoPost('/message/sendReaction/' + EVO_INSTANCE, { key: chaveDeGrupo(gm, gm.jid), reaction: emoji });
+      if (r.status >= 400) {
+        const m = r.json && r.json.response && r.json.response.message ? JSON.stringify(r.json.response.message) : (r.json && (r.json.error || r.json.message)) || ('código ' + r.status);
+        console.error('[CRM] reação em grupo recusada:', String(m).slice(0, 200));
+        return sendJSON(res, 400, { error: 'O WhatsApp não aceitou a reação: ' + String(m).slice(0, 160) });
+      }
+      gravarReacaoGrupo(gm.wa_msg_id, 'me', emoji);
+      return sendJSON(res, 200, { ok: true });
+    } catch (e) { console.error('[CRM] erro reagindo em grupo:', e.message); return sendJSON(res, 502, { error: e.message }); }
+  }
+
+  // ─── Editar mensagem de texto que a recepção mandou no grupo (até 15 minutos) ────
+  if (method === 'PUT' && pathname.match(/^\/api\/grupo-msg\/\d+$/)) {
+    const gmId = pathname.split('/')[3];
+    const body = await parseBody(req);
+    const texto = String(body.texto || '').trim();
+    if (!texto) return sendJSON(res, 400, { error: 'A mensagem não pode ficar vazia.' });
+    const gm = db.prepare('SELECT gm.*, g.jid FROM grupo_mensagens gm JOIN grupos g ON g.id = gm.grupo_id WHERE gm.id = ?').get(gmId);
+    if (!gm) return sendJSON(res, 404, { error: 'Mensagem não encontrada' });
+    if (gm.remetente !== 'me' || gm.tipo !== 'text' || !gm.wa_msg_id) return sendJSON(res, 400, { error: 'Só dá para editar mensagem de texto enviada pela XR.' });
+    const idade = Date.now() - new Date(String(gm.created_at).replace(' ', 'T') + '-03:00').getTime();
+    if (!(idade < 15 * 60000)) return sendJSON(res, 400, { error: 'O WhatsApp só deixa editar até 15 minutos depois do envio.' });
+    try {
+      const r = await evoPost('/chat/updateMessage/' + EVO_INSTANCE, { number: gm.jid, text: texto, key: { remoteJid: gm.jid, fromMe: true, id: gm.wa_msg_id } });
+      if (r.status >= 400) {
+        const m = r.json && r.json.response && r.json.response.message ? JSON.stringify(r.json.response.message) : (r.json && (r.json.error || r.json.message)) || ('código ' + r.status);
+        return sendJSON(res, 400, { error: 'O WhatsApp não aceitou a edição: ' + String(m).slice(0, 160) });
+      }
+      db.prepare('UPDATE grupo_mensagens SET texto = ?, editada = 1 WHERE id = ?').run(texto, gmId);
+      return sendJSON(res, 200, { ok: true });
+    } catch (e) { console.error('[CRM] erro editando em grupo:', e.message); return sendJSON(res, 502, { error: e.message }); }
   }
 
   // ─── Enviar arquivo (foto, PDF…) para um grupo ──────────────────────────────
@@ -2093,6 +2178,7 @@ async function handleRequest(req, res) {
   if (method === 'POST' && pathname === '/api/forward') {
     const body = await parseBody(req);
     // Várias de uma vez: vão na ordem em que foram escritas na conversa; arquivo sai com o nome original e a legenda.
+    if (body.deGrupo && body.msgId && !Array.isArray(body.msgIds)) body.msgIds = [body.msgId];
     if (Array.isArray(body.msgIds)) {
       const ids = body.msgIds.map(Number).filter(n => n > 0).slice(0, 30);
       if (!ids.length) return sendJSON(res, 400, { error: 'Nenhuma mensagem selecionada.' });
@@ -2106,7 +2192,7 @@ async function handleRequest(req, res) {
         if (!paraGrupo) return sendJSON(res, 404, { error: 'Grupo não encontrado' });
         alvo = paraGrupo.jid;
       } else return sendJSON(res, 400, { error: 'Escolha para quem encaminhar.' });
-      const msgs = db.prepare('SELECT * FROM mensagens WHERE id IN (' + ids.map(() => '?').join(',') + ') ORDER BY created_at, id').all(...ids);
+      const msgs = db.prepare('SELECT * FROM ' + (body.deGrupo ? 'grupo_mensagens' : 'mensagens') + ' WHERE id IN (' + ids.map(() => '?').join(',') + ') ORDER BY created_at, id').all(...ids);
       let enviadas = 0, puladas = 0;
       for (const msg of msgs) {
         try {

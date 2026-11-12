@@ -2614,6 +2614,7 @@ function showMsgContextMenu(msgEl, x, y) {
   // "Editar" só aparece em mensagem de texto nossa, enviada há menos de 15 minutos
   const ctxE = document.getElementById('ctxEditar');
   if (ctxE) ctxE.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato && podeEditar(mensagensDoChat().find(x => String(x.id) === String(msgEl.dataset.msgId)))) ? '' : 'none';
+  menuDaMensagemNoGrupo(msgEl);
   const menuW = 220, menuH = 340;
   let left = x, top = y;
   if (left + menuW > window.innerWidth) left = window.innerWidth - menuW - 10;
@@ -2645,6 +2646,7 @@ function contextCopy() {
 }
 
 async function contextDelete() {
+  if (chatGrupo) { hideMsgContextMenu(); return; } // mensagem de grupo não é apagada por aqui
   if (!contextMsgId) return;
   const id = contextMsgId;
   hideMsgContextMenu();
@@ -3433,16 +3435,34 @@ async function abrirGrupoConversa(gid) {
   g.nao_lidas = 0;
   renderConversasList();
 }
-async function recarregarGrupo(rolar) {
+async function recarregarGrupo(rolar, forcar) {
   if (!chatGrupo) return;
   const id = chatGrupo.id;
   const msgs = await api('GET', '/api/grupo/' + id + '/mensagens' + (telaNaFrente() ? '' : '?visto=0'));
   if (!chatGrupo || chatGrupo.id !== id) return; // trocou de conversa enquanto buscava
-  const ass = (msgs || []).map(m => m.id + (m.media_path ? 'M' : '')).join(',');
-  if (ass === grupoAssinatura && rolar !== 'fim') return;
+  const ass = (msgs || []).map(m => m.id + (m.media_path ? 'M' : '') + (m.reacoes ? 'R' + m.reacoes : '') + (m.editada ? 'E' + String(m.texto || '').length : '') + (m.citacao_texto ? 'C' : '')).join(',');
+  if (ass === grupoAssinatura && rolar !== 'fim' && !forcar) return;
   grupoAssinatura = ass;
   chatGrupo.mensagens = msgs || [];
   desenharGrupo(rolar || 'auto');
+}
+// Mensagens do grupo aberto no mesmo formato das mensagens de contato (para responder, reagir, editar, encaminhar)
+function msgsDoGrupo() {
+  return ((chatGrupo && chatGrupo.mensagens) || []).map(function (m) {
+    let reac = '';
+    if (m.reacoes) {
+      try {
+        // no grupo cada participante tem a sua: {"me":"👍","<participante>":"❤️"} → "out" é a nossa, "in" as dos outros
+        const r = JSON.parse(m.reacoes) || {};
+        const outros = Object.keys(r).filter(k => k !== 'me').map(k => r[k]);
+        const o = {};
+        if (outros.length) o.in = Array.from(new Set(outros)).join('') + (outros.length > 1 ? ' ' + outros.length : '');
+        if (r.me) o.out = r.me;
+        if (o.in || o.out) reac = JSON.stringify(o);
+      } catch (e) {}
+    }
+    return Object.assign({}, m, { direcao: m.remetente === 'me' ? 'out' : 'in', reacoes: reac });
+  });
 }
 // Cor do nome de cada participante (sempre a mesma para a mesma pessoa)
 function corDoParticipante(quem) {
@@ -3454,41 +3474,23 @@ function corDoParticipante(quem) {
 }
 function desenharGrupo(rolar) {
   const area = document.getElementById('chatMessagesArea');
-  const msgs = (chatGrupo && chatGrupo.mensagens) || [];
-  const estavaNoFim = area.scrollHeight - area.scrollTop - area.clientHeight < 140;
-  const antesTopo = area.scrollTop;
+  const msgs = mensagensDoChat();
   if (!msgs.length) { area.innerHTML = '<div class="empty"><div class="emoji">&#x1F4AC;</div>Nenhuma mensagem guardada deste grupo ainda</div>'; return; }
-  let diaAtual = '';
-  area.innerHTML = msgs.slice().reverse().map(m => {
-    const eu = m.remetente === 'me';
-    let content = eu ? '' : '<div class="mg-nome" style="color:' + corDoParticipante(m.remetente || m.remetente_nome) + '">' + esc(m.remetente_nome || 'Participante') + '</div>';
-    if (m.media_path && m.tipo === 'image') {
-      content += '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="abrirVisor(\'/media/' + esc(m.media_path) + '\',\'image\')" alt="imagem" title="Clique para ver maior (Esc fecha)">';
-      if (m.texto && m.texto !== '[image]') content += '<div>' + fmtWa(m.texto) + '</div>';
-    } else if (m.media_path && m.tipo === 'audio') {
-      content += '<audio controls src="/media/' + esc(m.media_path) + '" style="max-width:250px"></audio>';
-    } else if (m.media_path && (m.tipo === 'document' || m.tipo === 'video')) {
-      const arq = rotuloArquivo(m);
-      if (/\.pdf$/i.test(m.media_path)) content += '<div class="msg-pdf-box" data-pdf="/media/' + esc(m.media_path) + '" data-nome="' + esc(arq.rotulo) + '" onclick="abrirVisor(this.dataset.pdf, \'pdf\', this.dataset.nome)" title="Abrir o PDF (Esc fecha)"><span>PDF</span></div>';
-      content += '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link" title="Abrir o arquivo" data-nome="' + esc(arq.rotulo) + '" onclick="return abrirArquivo(event, this)">&#x1F4CE; <span>' + esc(arq.rotulo) + '</span></a>';
-      if (arq.legenda) content += '<div>' + fmtWa(arq.legenda) + '</div>';
-    } else {
-      content += fmtWa(m.texto === '[image]' ? '📷 Foto' : m.texto === '[audio]' ? '🎤 Áudio' : m.texto === '[document]' ? '📎 Documento' : m.texto === '[video]' ? '🎥 Vídeo' : m.texto);
-    }
-    const dia = String(m.created_at || '').slice(0, 10);
-    let faixa = '';
-    if (dia && dia !== diaAtual) { diaAtual = dia; faixa = '<div class="msg-dia">' + rotuloDia(dia) + '</div>'; }
-    return faixa + '<div class="msg ' + (eu ? 'out' : 'in') + ' de-grupo">' + content + '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + horaMsg(m.created_at) + '</div></div>';
-  }).join('');
-  ligarPdfPrevias(area);
-  const irAoFim = () => { area.scrollTop = area.scrollHeight; };
-  if (rolar === 'fim' || estavaNoFim) {
-    irAoFim();
-    area.querySelectorAll('img, audio').forEach(el => { el.addEventListener('load', irAoFim); el.addEventListener('loadeddata', irAoFim); });
-    setTimeout(irAoFim, 200);
-  } else {
-    area.scrollTop = antesTopo;
-  }
+  renderMessagesInto(area, msgs, { rolar: rolar === 'fim' ? 'fim' : 'auto', grupo: true });
+}
+// No grupo: o menu do botão direito mostra o que vale para mensagem de grupo (apagar fica só nas conversas com contato)
+function menuDaMensagemNoGrupo(msgEl) {
+  const menu = document.getElementById('msgContextMenu');
+  const apagar = menu.querySelector('[onclick="contextDelete()"]');
+  if (apagar) apagar.style.display = chatGrupo ? 'none' : '';
+  if (!chatGrupo || !msgEl.closest('#chatMessagesArea')) return;
+  const m = mensagensDoChat().find(x => String(x.id) === String(msgEl.dataset.msgId));
+  const comId = !!(m && m.wa_msg_id);
+  const mostra = (id, sim) => { const el = document.getElementById(id); if (el) el.style.display = sim ? '' : 'none'; };
+  mostra('ctxReagir', comId);
+  mostra('ctxResponder', comId);
+  mostra('ctxEditar', podeEditar(m));
+  mostra('ctxSelecionar', true);
 }
 let enviandoGrupo = false;
 async function enviarParaGrupo() {
@@ -3497,14 +3499,17 @@ async function enviarParaGrupo() {
   const texto = input.value.replace(/\s+$/, '').replace(/^\n+/, '');
   if (!texto.trim()) return;
   const id = chatGrupo.id;
+  const citar = chatReply ? chatReply.id : null;
   enviandoGrupo = true;
+  cancelarResposta();
   input.value = '';
   ajustarAltura(input);
   hideChatSlashPopup();
   sugDispensada = null;
   mostrarSugestoes();
   try {
-    await api('POST', '/api/grupo/' + id + '/mensagem', { texto: texto });
+    const r = await api('POST', '/api/grupo/' + id + '/mensagem', { texto: texto, citar: citar });
+    if (r && r.sem_citacao) toast('Enviada, mas sem a citação (a mensagem citada é antiga).');
     if (chatGrupo && chatGrupo.id === id) await recarregarGrupo('fim');
     atualizarGrupos();
   } catch (e) {
@@ -3760,6 +3765,7 @@ function assinaturaMsgs(msgs) {
 }
 // Todas as mensagens na tela, da mais nova para a mais antiga.
 function mensagensDoChat() {
+  if (chatGrupo) return msgsDoGrupo();
   if (!currentChatContato) return [];
   const mapa = new Map();
   for (const m of (currentChatContato.mensagens || [])) mapa.set(m.id, m);
@@ -3915,6 +3921,7 @@ function renderMessagesInto(area, mensagens, opts) {
   let diaAtual = '';
   const html = mensagens.slice().reverse().map(m => {
     let content = '';
+    if (opts.grupo && m.direcao !== 'out') content += '<div class="mg-nome" style="color:' + corDoParticipante(m.remetente || m.remetente_nome) + '">' + esc(m.remetente_nome || 'Participante') + '</div>';
     if (m.citacao_texto) {
       // Na conversa aberta a citação é clicável (leva até a mensagem original) e mostra a miniatura quando a citada é foto
       const naConversa = area.id === 'chatMessagesArea';
@@ -3922,7 +3929,7 @@ function renderMessagesInto(area, mensagens, opts) {
       const mini = orig && orig.tipo === 'image' && orig.media_path ? '<img class="mc-mini" src="/media/' + esc(orig.media_path) + '" alt="">' : '';
       content += '<div class="msg-cita' + (naConversa ? ' clicavel' : '') + (mini ? ' com-mini' : '') + '"' +
         (naConversa ? ' onclick="event.stopPropagation();irParaCitada(' + m.id + ')" title="Ir para a mensagem citada"' : '') + '>' +
-        '<div class="mc-cita-txt"><b>' + (m.citacao_de === 'out' ? 'XR Diagnóstico' : m.citacao_de === 'in' ? esc(nomeDoCliente()) : 'Mensagem citada') + '</b>' + esc(String(m.citacao_texto).slice(0, 220)) + '</div>' + mini + '</div>';
+        '<div class="mc-cita-txt"><b>' + (m.citacao_de === 'out' ? (opts.grupo ? 'Você' : 'XR Diagnóstico') : opts.grupo ? esc((orig && orig.remetente_nome) || 'Participante') : m.citacao_de === 'in' ? esc(nomeDoCliente()) : 'Mensagem citada') + '</b>' + esc(String(m.citacao_texto).slice(0, 220)) + '</div>' + mini + '</div>';
     }
     if (m.media_path && (m.tipo === 'image')) {
       content += '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="abrirVisor(\'/media/' + esc(m.media_path) + '\',\'image\')" alt="imagem" title="Clique para ver maior (Esc fecha)">';
@@ -3964,7 +3971,7 @@ function renderMessagesInto(area, mensagens, opts) {
     if (m.reacoes) {
       try {
         const r = JSON.parse(m.reacoes) || {};
-        const quem = [r.in ? 'Cliente: ' + r.in : '', r.out ? 'XR: ' + r.out : ''].filter(Boolean).join('  ·  ');
+        const quem = [r.in ? (opts.grupo ? 'Participantes: ' : 'Cliente: ') + r.in : '', r.out ? 'XR: ' + r.out : ''].filter(Boolean).join('  ·  ');
         if (quem) {
           temReac = true;
           reac = '<div class="msg-reac" title="' + esc(quem) + '"' + (area.id === 'chatMessagesArea' ? ' onclick="event.stopPropagation();abrirReacoes(' + m.id + ', this)"' : '') + '>' +
@@ -4360,13 +4367,13 @@ function destacarMsg(id) {
 }
 let indoParaCitada = false;
 async function irParaCitada(msgId) {
-  if (!currentChatContato || indoParaCitada) return;
-  const id = currentChatContato.id;
+  if (!(currentChatContato || chatGrupo) || indoParaCitada) return;
+  const id = currentChatContato ? currentChatContato.id : 0;
   let todas = mensagensDoChat();
   const m = todas.find(x => String(x.id) === String(msgId));
   if (!m) return;
   let alvo = acharCitada(m, todas);
-  if (!alvo && m.citacao_wa_id && chatTemMais && todas.length) {
+  if (!alvo && m.citacao_wa_id && chatTemMais && todas.length && currentChatContato) {
     // a mensagem citada é mais antiga do que o que está carregado: busca de uma vez tudo até ela
     indoParaCitada = true;
     try {
@@ -4387,13 +4394,13 @@ async function irParaCitada(msgId) {
 
 // ─── Responder citando ──────────────────────────────────────────────────────────────────────────
 function responderMsg(id) {
-  if (!currentChatContato) return;
+  if (!(currentChatContato || chatGrupo)) return;
   if (chatEdit) cancelarEdicao();
   const m = mensagensDoChat().find(x => String(x.id) === String(id));
   if (!m) return;
   chatReply = { id: m.id, de: m.direcao, texto: resumoCitar(m) };
   const bar = document.getElementById('chatReplyBar');
-  bar.innerHTML = '<div class="rb-box"><b>' + (m.direcao === 'out' ? 'XR Diagnóstico' : esc(nomeDoCliente())) + '</b><span>' + esc(chatReply.texto.slice(0, 160)) + '</span></div>' +
+  bar.innerHTML = '<div class="rb-box"><b>' + (m.direcao === 'out' ? (chatGrupo ? 'Você' : 'XR Diagnóstico') : esc(chatGrupo ? (m.remetente_nome || 'Participante') : nomeDoCliente())) + '</b><span>' + esc(chatReply.texto.slice(0, 160)) + '</span></div>' +
     '<button class="rb-x" onclick="cancelarResposta()" title="Cancelar a resposta (Esc)">&#x2715;</button>';
   bar.classList.add('show');
   document.getElementById('chatComposeInput').focus();
@@ -4460,9 +4467,9 @@ async function processarFila() {
 }
 
 function sendChatMessage() {
+  if (chatEdit) { salvarEdicao(); return; }
   if (chatGrupo) { enviarParaGrupo(); return; }
   if (!currentChatContato) return;
-  if (chatEdit) { salvarEdicao(); return; }
   const input = document.getElementById('chatComposeInput');
   const texto = input.value.replace(/\s+$/, '').replace(/^\n+/, '');
   if (!texto.trim()) return;
@@ -4723,7 +4730,7 @@ function podeEditar(m) {
   return !isNaN(t) && Date.now() - t < EDITAR_MINUTOS * 60000;
 }
 function editarMsg(id) {
-  if (!currentChatContato) return;
+  if (!(currentChatContato || chatGrupo)) return;
   const m = mensagensDoChat().find(x => String(x.id) === String(id));
   if (!m) return;
   if (!podeEditar(m)) { toast('O WhatsApp só deixa editar mensagem de texto enviada há menos de ' + EDITAR_MINUTOS + ' minutos', 'err'); return; }
@@ -4755,21 +4762,22 @@ function contextEditar() {
   if (id) editarMsg(id);
 }
 async function salvarEdicao() {
-  if (!chatEdit || !currentChatContato) return;
+  if (!chatEdit || !(currentChatContato || chatGrupo)) return;
   const input = document.getElementById('chatComposeInput');
   const texto = input.value.replace(/\s+$/, '').replace(/^\n+/, '');
   if (!texto.trim()) { toast('A mensagem não pode ficar vazia. Para apagar, use o botão direito e "Apagar".', 'err'); return; }
   if (texto === chatEdit.original) { cancelarEdicao(); return; }
-  const id = chatEdit.id, destino = currentChatContato.id;
+  const id = chatEdit.id, noGrupo = !!chatGrupo, destino = noGrupo ? chatGrupo.id : currentChatContato.id;
   input.disabled = true;
   try {
-    await api('PUT', '/api/mensagem/' + id, { texto });
+    await api('PUT', (noGrupo ? '/api/grupo-msg/' : '/api/mensagem/') + id, { texto });
     chatEdit = null;
     const bar = document.getElementById('chatReplyBar');
     bar.classList.remove('show'); bar.innerHTML = '';
     input.value = ''; ajustarAltura(input);
     toast('Mensagem editada');
-    if (currentChatContato && currentChatContato.id === destino) await recarregarChat('auto', true);
+    if (noGrupo) { if (chatGrupo && chatGrupo.id === destino) await recarregarGrupo('auto', true); }
+    else if (currentChatContato && currentChatContato.id === destino) await recarregarChat('auto', true);
   } catch (e) { toast('Não foi editada: ' + e.message, 'err'); }
   input.disabled = false;
   input.focus();
@@ -5097,7 +5105,7 @@ function selAlternar(id) {
 function contextSelecionar() {
   const id = contextMsgId;
   hideMsgContextMenu();
-  if (!id || !currentChatContato) return;
+  if (!id || !(currentChatContato || chatGrupo)) return;
   selAtiva = true;
   fecharReacoes();
   if (!selMsgs.has(String(id))) selAlternar(id); else selDesenhar();
@@ -5125,12 +5133,15 @@ async function encaminharPara(destino) {
   encaminhando = true;
   try {
     toast(varias && varias.length > 1 ? 'Encaminhando ' + varias.length + ' mensagens…' : 'Encaminhando...');
-    const r = await api('POST', '/api/forward', Object.assign(varias ? { msgIds: varias } : { msgId: forwardMsgId }, destino));
+    const corpo = Object.assign(varias ? { msgIds: varias } : { msgId: forwardMsgId }, destino);
+    if (chatGrupo) corpo.deGrupo = true; // as mensagens escolhidas são de um grupo
+    const r = await api('POST', '/api/forward', corpo);
     if (varias) toast(r.enviadas + (r.enviadas === 1 ? ' mensagem encaminhada' : ' mensagens encaminhadas') + (r.puladas ? ' (' + r.puladas + ' sem o arquivo guardado, não foram)' : ''));
     else toast('Encaminhada!');
     closeForwardModal();
     if (varias) sairDaSelecao();
     if (currentChatContato && destino.toContatoId === currentChatContato.id) recarregarChat('fim', true);
+    if (chatGrupo && destino.toGrupoId === chatGrupo.id) recarregarGrupo('fim', true);
     loadConversas(true);
   } catch (e) { toast('Erro: ' + e.message, 'err'); }
   encaminhando = false;
@@ -5208,8 +5219,8 @@ async function reagir(i) {
   if (emoji && emoji === minhaReacao(id)) emoji = ''; // mesmo emoji de novo = tirar
   fecharReacoes();
   try {
-    await api('POST', '/api/mensagem/' + id + '/reacao', { emoji: emoji });
-    await recarregarChat('auto', true);
+    await api('POST', (chatGrupo ? '/api/grupo-msg/' : '/api/mensagem/') + id + '/reacao', { emoji: emoji });
+    if (chatGrupo) await recarregarGrupo('auto', true); else await recarregarChat('auto', true);
   } catch (e) { toast('Não consegui reagir: ' + e.message, 'err'); }
 }
 function contextReagir() {
