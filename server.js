@@ -468,7 +468,7 @@ function evoDownloadMedia(messageKey) {
 function evoSendMedia(phone, mediatype, base64, caption, fileName, mimetype) {
   return new Promise((resolve, reject) => {
     const url = new URL(`${EVO_BASE}/message/sendMedia/${EVO_INSTANCE}`);
-    const corpo = { number: phone.replace(/\D/g, ''), mediatype, media: base64, caption: caption || '', fileName: fileName || '' };
+    const corpo = { number: phone.includes('@g.us') ? phone : phone.replace(/\D/g, ''), mediatype, media: base64, caption: caption || '', fileName: fileName || '' };
     if (mimetype) corpo.mimetype = mimetype;
     const payload = JSON.stringify(corpo);
     const req = http.request({
@@ -1791,6 +1791,62 @@ async function handleRequest(req, res) {
   // ─── API: Forward message ────────────────────────────────────────────────
   if (method === 'POST' && pathname === '/api/forward') {
     const body = await parseBody(req);
+    // Várias de uma vez: vão na ordem em que foram escritas na conversa; arquivo sai com o nome original e a legenda.
+    if (Array.isArray(body.msgIds)) {
+      const ids = body.msgIds.map(Number).filter(n => n > 0).slice(0, 30);
+      if (!ids.length) return sendJSON(res, 400, { error: 'Nenhuma mensagem selecionada.' });
+      let alvo = '', paraContato = null, paraGrupo = null;
+      if (body.toContatoId) {
+        paraContato = db.prepare('SELECT * FROM contatos WHERE id = ?').get(body.toContatoId);
+        if (!paraContato) return sendJSON(res, 404, { error: 'Contato não encontrado' });
+        alvo = paraContato.telefone;
+      } else if (body.toGrupoId) {
+        paraGrupo = db.prepare('SELECT * FROM grupos WHERE id = ?').get(body.toGrupoId);
+        if (!paraGrupo) return sendJSON(res, 404, { error: 'Grupo não encontrado' });
+        alvo = paraGrupo.jid;
+      } else return sendJSON(res, 400, { error: 'Escolha para quem encaminhar.' });
+      const msgs = db.prepare('SELECT * FROM mensagens WHERE id IN (' + ids.map(() => '?').join(',') + ') ORDER BY created_at, id').all(...ids);
+      let enviadas = 0, puladas = 0;
+      for (const msg of msgs) {
+        try {
+          let r = null;
+          const texto = String(msg.texto || '');
+          const arq = (msg.media_path && msg.tipo !== 'text') ? path.join(MEDIA_DIR, msg.media_path) : '';
+          if (arq) {
+            if (!fs.existsSync(arq)) { puladas++; continue; } // o arquivo não está mais guardado no servidor
+            const ext = path.extname(msg.media_path).toLowerCase();
+            const mediatype = ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) ? 'image' : ext === '.mp4' ? 'video' : ['.ogg', '.mp3', '.opus'].includes(ext) ? 'audio' : 'document';
+            let nome = msg.media_path, legenda = texto.startsWith('[') ? '' : texto;
+            if (mediatype === 'document') {
+              // documento é gravado como "nome do arquivo" + (linha de baixo) legenda
+              const linhas = legenda.split('\n');
+              if (linhas[0] && /\.[a-z0-9]{2,5}$/i.test(linhas[0].trim())) { nome = linhas[0].trim(); legenda = linhas.slice(1).join('\n'); }
+            }
+            r = await evoSendMedia(alvo, mediatype, fs.readFileSync(arq).toString('base64'), mediatype === 'audio' ? '' : legenda, nome);
+          } else {
+            if (!texto || msg.tipo !== 'text') { puladas++; continue; }
+            r = await evoSendText(alvo, texto);
+          }
+          const chave = (r && r.key) || {};
+          if (paraContato) {
+            db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid) VALUES (?, 'out', ?, ?, ?, ?, ?)").run(
+              paraContato.id, texto, msg.tipo, msg.media_path || '', chave.id || '', chave.remoteJid || jidFromPhone(paraContato.telefone));
+          } else {
+            db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo) VALUES (?, 'me', 'Eu', ?, ?)").run(paraGrupo.id, texto || '[mídia encaminhada]', msg.tipo);
+          }
+          enviadas++;
+          await new Promise(ok => setTimeout(ok, 350)); // respiro para chegarem na ordem
+        } catch (e) {
+          console.error('[CRM] encaminhar várias: parou na mensagem ' + msg.id + ':', e.message);
+          if (paraContato && enviadas) db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(paraContato.id);
+          return sendJSON(res, 500, { error: (enviadas ? 'Foram ' + enviadas + ' de ' + msgs.length + '; parou porque ' : 'Falha ao encaminhar: ') + e.message, enviadas });
+        }
+      }
+      if (paraContato && enviadas) db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(paraContato.id);
+      console.log('[CRM] encaminhadas ' + enviadas + ' mensagens' + (puladas ? ' (' + puladas + ' sem arquivo, puladas)' : '') + ' para ' + (paraContato ? 'contato ' + paraContato.id : 'grupo ' + paraGrupo.id));
+      return sendJSON(res, 200, { ok: true, enviadas, puladas });
+    }
+
     const { msgId, toContatoId, toGrupoId } = body;
     if (!msgId) return sendJSON(res, 400, { error: 'msgId required' });
     if (!toContatoId && !toGrupoId) return sendJSON(res, 400, { error: 'toContatoId or toGrupoId required' });

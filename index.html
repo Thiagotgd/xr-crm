@@ -715,6 +715,29 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 
 /* 12/11/2026: botão de fixar no cabeçalho da conversa */
 .ch-fixar.ativo { background: rgba(0,168,132,.18); color: #00a884; border-color: rgba(0,168,132,.55); }
+
+/* ── 12/11/2026: selecionar várias mensagens para encaminhar ── */
+.messages-area.selecionando .msg { cursor: pointer; }
+.messages-area.selecionando .msg-reagir { display: none; }
+.messages-area.selecionando .msg::after { content: ''; position: absolute; top: 50%; width: 18px; height: 18px; margin-top: -9px; border-radius: 50%; border: 2px solid rgba(134,150,160,.7); box-sizing: border-box; }
+.messages-area.selecionando .msg.in::after { right: -30px; }
+.messages-area.selecionando .msg.out::after { left: -30px; }
+.messages-area.selecionando .msg.marcada::after { border-color: #00a884; background: #00a884 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.4l2.9 2.9 6.1-6.3' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/12px no-repeat; }
+.msg.marcada { box-shadow: 0 0 0 2px #00a884; }
+.sel-bar { display: none; align-items: center; gap: 10px; padding: 9px 14px; background: var(--wa-header); border-top: 1px solid rgba(134,150,160,.18); font-size: 13.5px; color: var(--text); }
+.sel-bar.show { display: flex; }
+.sel-bar .sel-txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sel-bar .sel-dica { color: var(--text-muted); font-size: 12.5px; }
+.sel-bar button { border: none; border-radius: 16px; padding: 7px 14px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.sel-bar .sel-enc { background: #00a884; color: #fff; font-weight: 600; }
+.sel-bar .sel-enc:disabled { opacity: .45; cursor: default; }
+.sel-bar .sel-x { background: rgba(134,150,160,.2); color: var(--text); }
+@media (max-width: 768px) { .sel-bar .sel-dica { display: none; } .messages-area.selecionando .msg::after { display: none; } }
+
+/* ── 12/11/2026: filtros da coluna das conversas — todos à vista (quebram em duas linhas se não couber) e o menu
+   "Etiquetas" abre inteiro. Antes a fileira rolava de lado e cortava o menu. ── */
+.conversas-filters { flex-wrap: wrap; row-gap: 6px; overflow: visible; }
+.etiquetas-dropdown-menu { z-index: 200; }
 </style>
 </head>
 <body>
@@ -1061,6 +1084,7 @@ button.msg-agenda:hover { filter: brightness(1.1); }
   <div class="msg-context-item" id="ctxResponder" onclick="contextResponder()">&#x21A9;&#xFE0F; Responder</div>
   <div class="msg-context-item" id="ctxEditar" onclick="contextEditar()">&#x270F;&#xFE0F; Editar</div>
   <div class="msg-context-item" onclick="contextForward()">&#x21AA;&#xFE0F; Encaminhar</div>
+  <div class="msg-context-item" id="ctxSelecionar" onclick="contextSelecionar()">&#x2611;&#xFE0F; Selecionar várias</div>
   <div class="msg-context-item" onclick="contextCopy()">&#x1F4CB; Copiar texto</div>
   <div class="msg-context-item danger" onclick="contextDelete()">&#x1F5D1;&#xFE0F; Apagar</div>
 </div>
@@ -2511,6 +2535,8 @@ function showMsgContextMenu(msgEl, x, y) {
   // "Responder" só existe na conversa da aba Conversas
   const ctxR = document.getElementById('ctxResponder');
   if (ctxR) ctxR.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato) ? '' : 'none';
+  const ctxS = document.getElementById('ctxSelecionar');
+  if (ctxS) ctxS.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato) ? '' : 'none';
   const ctxG = document.getElementById('ctxReagir');
   if (ctxG) ctxG.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato) ? '' : 'none';
   menu.style.display = 'block';
@@ -2518,7 +2544,7 @@ function showMsgContextMenu(msgEl, x, y) {
   // "Editar" só aparece em mensagem de texto nossa, enviada há menos de 15 minutos
   const ctxE = document.getElementById('ctxEditar');
   if (ctxE) ctxE.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato && podeEditar(mensagensDoChat().find(x => String(x.id) === String(msgEl.dataset.msgId)))) ? '' : 'none';
-  const menuW = 200, menuH = 290;
+  const menuW = 220, menuH = 340;
   let left = x, top = y;
   if (left + menuW > window.innerWidth) left = window.innerWidth - menuW - 10;
   if (top + menuH > window.innerHeight) top = y - menuH;
@@ -2623,6 +2649,9 @@ function openForwardModal(msgId, tipo, mediaPath) {
 function closeForwardModal() {
   document.getElementById('forwardModal').classList.remove('show');
   forwardMsgId = null;
+  forwardMsgIds = null;
+  const tit = document.querySelector('#forwardModal h2');
+  if (tit) tit.textContent = 'Encaminhar para...';
 }
 
 async function loadForwardList() {
@@ -2691,23 +2720,9 @@ function filterForwardList() {
   });
 }
 
-async function forwardToContato(contatoId) {
-  try {
-    toast('Encaminhando...');
-    await api('POST', '/api/forward', { msgId: forwardMsgId, toContatoId: contatoId });
-    toast('Encaminhada!');
-    closeForwardModal();
-  } catch(e) { toast('Erro: ' + e.message, 'err'); }
-}
+function forwardToContato(contatoId) { return encaminharPara({ toContatoId: contatoId }); }
 
-async function forwardToGrupo(grupoId) {
-  try {
-    toast('Encaminhando...');
-    await api('POST', '/api/forward', { msgId: forwardMsgId, toGrupoId: grupoId });
-    toast('Encaminhada!');
-    closeForwardModal();
-  } catch(e) { toast('Erro: ' + e.message, 'err'); }
-}
+function forwardToGrupo(grupoId) { return encaminharPara({ toGrupoId: grupoId }); }
 
 // ─── Orçamento integration ──────────────────────────────────────────────────
 function abrirOrcamento() {
@@ -2888,6 +2903,12 @@ function toggleEtiquetasDropdown() {
         '</div>'
       ).join('');
   dd.classList.add('show');
+  // posição calculada na tela, logo abaixo do botão, para o menu aparecer inteiro por cima da lista
+  const b = dd.parentNode.getBoundingClientRect();
+  dd.style.position = 'fixed';
+  dd.style.right = 'auto';
+  dd.style.top = (b.bottom + 4) + 'px';
+  dd.style.left = Math.max(8, Math.min(b.left, window.innerWidth - dd.offsetWidth - 8)) + 'px';
 }
 
 function filterByTag(tagId) {
@@ -3498,6 +3519,7 @@ function guardarRascunho() {
 async function openConversaChat(id) {
   try {
     guardarRascunho();
+    if (!currentChatContato || currentChatContato.id !== id) sairDaSelecao(); // seleção para encaminhar é de uma conversa só
     const c = await api('GET', '/api/contato/' + id);
     currentChatContato = c;
     chatAntigas = [];
@@ -3674,7 +3696,8 @@ function renderMessagesInto(area, mensagens, opts) {
     if (area.id === 'chatMessagesArea' && m.wa_msg_id) {
       reac += '<button class="msg-reagir" onclick="event.stopPropagation();abrirReacoes(' + m.id + ', this)" title="Reagir">&#x1F642;</button>';
     }
-    return faixa + '<div class="msg ' + m.direcao + (temReac ? ' tem-reac' : '') + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
+    const marcada = area.id === 'chatMessagesArea' && selMsgs.has(String(m.id)); // seleção para encaminhar sobrevive ao redesenho
+    return faixa + '<div class="msg ' + m.direcao + (temReac ? ' tem-reac' : '') + (marcada ? ' marcada' : '') + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
       '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + (m.editada ? 'Editada · ' : '') + horaMsg(m.created_at) + '</div>' + reac + '</div>' + extra;
   }).join('');
   area.innerHTML = (opts.temMais ? '<button class="msg-mais" onclick="carregarAnteriores(this)">Carregar mensagens anteriores</button>' : '') + html;
@@ -4474,6 +4497,99 @@ async function enviarArquivoPronto(i) {
     document.getElementById('anexoLegenda').value = a.legenda;
   } catch (e) { toast('Não consegui carregar o arquivo: ' + e.message, 'err'); }
 }
+
+// ─── Selecionar várias mensagens/arquivos para encaminhar de uma vez ───────────────────────────────────
+// Botão direito na mensagem → "Selecionar". Daí em diante, clicar nas mensagens marca e desmarca; a barra acima
+// do campo mostra quantas estão marcadas e o botão Encaminhar. Esc ou Cancelar sai.
+const SEL_MAX = 30;
+const selMsgs = new Set();   // ids (texto) das mensagens marcadas
+let selAtiva = false;
+let forwardMsgIds = null;    // quando o "Encaminhar para…" foi aberto com várias mensagens
+let encaminhando = false;
+function selBarra() {
+  let b = document.getElementById('chatSelBar');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'chatSelBar';
+    b.className = 'sel-bar';
+    const compose = document.querySelector('#chatActivePanel .compose-bar');
+    compose.parentNode.insertBefore(b, compose);
+  }
+  return b;
+}
+function selDesenhar() {
+  const b = selBarra();
+  const area = document.getElementById('chatMessagesArea');
+  if (area) area.classList.toggle('selecionando', selAtiva);
+  b.classList.toggle('show', selAtiva);
+  if (!selAtiva) { b.innerHTML = ''; return; }
+  const n = selMsgs.size;
+  b.innerHTML = '<span class="sel-txt"><b>' + n + '</b> ' + (n === 1 ? 'selecionada' : 'selecionadas') + ' <span class="sel-dica">· clique nas mensagens para marcar ou desmarcar</span></span>' +
+    '<button class="sel-enc" onclick="encaminharSelecionadas()"' + (n ? '' : ' disabled') + '>&#x21AA;&#xFE0F; Encaminhar</button>' +
+    '<button class="sel-x" onclick="sairDaSelecao()" title="Sair da seleção (Esc)">Cancelar</button>';
+}
+function selAlternar(id) {
+  id = String(id);
+  if (selMsgs.has(id)) selMsgs.delete(id);
+  else if (selMsgs.size >= SEL_MAX) { toast('Dá para encaminhar até ' + SEL_MAX + ' de cada vez.', 'err'); return; }
+  else selMsgs.add(id);
+  const el = document.querySelector('#chatMessagesArea .msg[data-msg-id="' + id + '"]');
+  if (el) el.classList.toggle('marcada', selMsgs.has(id));
+  selDesenhar();
+}
+function contextSelecionar() {
+  const id = contextMsgId;
+  hideMsgContextMenu();
+  if (!id || !currentChatContato) return;
+  selAtiva = true;
+  fecharReacoes();
+  if (!selMsgs.has(String(id))) selAlternar(id); else selDesenhar();
+}
+function sairDaSelecao() {
+  if (!selAtiva && !selMsgs.size) return;
+  selAtiva = false;
+  selMsgs.clear();
+  document.querySelectorAll('#chatMessagesArea .msg.marcada').forEach(el => el.classList.remove('marcada'));
+  selDesenhar();
+}
+function encaminharSelecionadas() {
+  if (!selMsgs.size) return;
+  const ids = Array.from(selMsgs).map(Number);
+  openForwardModal(ids[0], 'text', '');
+  forwardMsgIds = ids;
+  const h = document.querySelector('#forwardModal h2');
+  if (h) h.textContent = 'Encaminhar ' + ids.length + (ids.length === 1 ? ' mensagem' : ' mensagens') + ' para...';
+}
+// Envia o que está no "Encaminhar para…": uma mensagem (botão direito → Encaminhar) ou as selecionadas.
+async function encaminharPara(destino) {
+  if (encaminhando) return;
+  const varias = forwardMsgIds && forwardMsgIds.length ? forwardMsgIds.slice() : null;
+  if (!varias && !forwardMsgId) return;
+  encaminhando = true;
+  try {
+    toast(varias && varias.length > 1 ? 'Encaminhando ' + varias.length + ' mensagens…' : 'Encaminhando...');
+    const r = await api('POST', '/api/forward', Object.assign(varias ? { msgIds: varias } : { msgId: forwardMsgId }, destino));
+    if (varias) toast(r.enviadas + (r.enviadas === 1 ? ' mensagem encaminhada' : ' mensagens encaminhadas') + (r.puladas ? ' (' + r.puladas + ' sem o arquivo guardado, não foram)' : ''));
+    else toast('Encaminhada!');
+    closeForwardModal();
+    if (varias) sairDaSelecao();
+    if (currentChatContato && destino.toContatoId === currentChatContato.id) recarregarChat('fim', true);
+    loadConversas(true);
+  } catch (e) { toast('Erro: ' + e.message, 'err'); }
+  encaminhando = false;
+}
+// Em modo de seleção, o clique na mensagem só marca/desmarca (não abre foto, arquivo nem reação)
+document.addEventListener('click', function (e) {
+  if (!selAtiva) return;
+  const msg = e.target.closest && e.target.closest('#chatMessagesArea .msg[data-msg-id]');
+  if (!msg) return;
+  e.preventDefault();
+  e.stopPropagation();
+  selAlternar(msg.dataset.msgId);
+}, true);
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && selAtiva && !document.getElementById('forwardModal').classList.contains('show')) sairDaSelecao();
+});
 
 // ─── Fixar a conversa aberta no topo da lista (botão no cabeçalho da conversa) ─────────────────────────
 async function fixarConversaAberta() {
