@@ -749,6 +749,7 @@ button.msg-agenda:hover { filter: brightness(1.1); }
         <div class="sug-bar" id="chatSugestoes"></div>
         <button class="attach-btn" onclick="document.getElementById('chatFileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
         <button class="attach-btn" onclick="abrirOrcamentoChat()" title="Criar orçamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
+        <button class="attach-btn" onclick="enviarArquivoPronto(0)" title="Enviar a imagem das recomendações de tomografia e ressonância (atalho: /foto)" style="font-size:16px;padding:2px 4px">&#x1F4CB;</button>
         <input type="file" id="chatFileInput" multiple style="display:none" onchange="escolherArquivosChat(this)">
         <textarea id="chatComposeInput" rows="1" placeholder="Digite uma mensagem ( / abre as mensagens rápidas )" onkeydown="handleChatComposeKey(event)" oninput="checkChatSlashTrigger(this);ajustarAltura(this);sugDispensada=null;mostrarSugestoes()" onclick="mostrarSugestoes()" onkeyup="if(event.key.indexOf('Arrow')===0||event.key==='Home'||event.key==='End')mostrarSugestoes()"></textarea>
         <div class="envio-estado" id="chatEnvioEstado"></div>
@@ -2982,7 +2983,7 @@ function showChatSlashPopup(filter) {
       '<span class="slash-cmd">/' + esc(m.titulo) + '</span>' +
       '<span class="slash-preview">' + esc(m.texto) + '</span>' +
     '</div>'
-  ).join('');
+  ).join('') + arquivosProntosNoMenu();
   if (filter) {
     popup.querySelectorAll('.slash-item').forEach(item => {
       item.style.display = item.dataset.filter.includes(filter) ? '' : 'none';
@@ -4369,6 +4370,36 @@ document.addEventListener('mouseover', function (e) {
     if (document.activeElement && document.activeElement.tagName === 'IFRAME') { document.activeElement.blur(); window.focus(); }
   }
 });
+
+// ─── Arquivos prontos da recepção (botão ao lado do orçamento e atalho "/foto") ────────────────────────
+// Abre a prévia de envio já com o arquivo e a legenda; a pessoa só confere e aperta Enter. Para acrescentar
+// outro arquivo pronto: pôr o arquivo na pasta "arquivos" do CRM e acrescentar uma linha nesta lista.
+const ARQUIVOS_PRONTOS = [
+  { atalho: 'foto', nome: 'Recomendações de tomografia e ressonância', url: '/arquivos/recomendacoes-tc-rm.jpg', arquivo: 'Recomendacoes-TC-RM.jpg', tipo: 'image/jpeg',
+    legenda: 'Recomendações e Exames necessários', busca: 'foto recomendacoes recomendações exames necessarios necessários preparo imagem' },
+];
+function arquivosProntosNoMenu() {
+  return ARQUIVOS_PRONTOS.map((a, i) =>
+    '<div class="slash-item" data-filter="' + esc(a.busca) + '" onclick="enviarArquivoPronto(' + i + ')">' +
+      '<span class="slash-cmd">/' + esc(a.atalho) + ' &#x1F5BC;&#xFE0F;</span>' +
+      '<span class="slash-preview">Imagem: ' + esc(a.nome) + ' · legenda "' + esc(a.legenda) + '"</span>' +
+    '</div>').join('');
+}
+async function enviarArquivoPronto(i) {
+  const a = ARQUIVOS_PRONTOS[i];
+  if (!a || !currentChatContato) return;
+  hideChatSlashPopup();
+  const input = document.getElementById('chatComposeInput');
+  if (input.value.startsWith('/')) { input.value = ''; ajustarAltura(input); }
+  try {
+    const r = await fetch(a.url, { redirect: 'manual' });
+    if (sessaoCaiu(r)) { irParaLogin(); return; }
+    if (!r.ok || String(r.headers.get('content-type') || '').indexOf(a.tipo.split('/')[0]) !== 0) throw new Error('arquivo não encontrado no servidor');
+    const blob = await r.blob();
+    abrirAnexos([new File([blob], a.arquivo, { type: a.tipo })]);
+    document.getElementById('anexoLegenda').value = a.legenda;
+  } catch (e) { toast('Não consegui carregar o arquivo: ' + e.message, 'err'); }
+}
 
 // ─── Atualização automática ─────────────────────────────────────────────────────────────────────
 // Um "relógio" em segundo plano avisa a cada 5 s. Diferente do setInterval, ele não é freado pelo

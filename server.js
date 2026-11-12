@@ -578,6 +578,15 @@ async function handleRequest(req, res) {
   }
 
   // ─── Serve media files ────────────────────────────────────────────────────
+  if (method === 'GET' && pathname.startsWith('/arquivos/')) {
+    const nome = path.basename(pathname);
+    const arq = path.join(__dirname, 'arquivos', nome);
+    if (!/^[\w.-]+$/.test(nome) || !fs.existsSync(arq)) { res.writeHead(404); return res.end('Not found'); }
+    const tipos = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.pdf': 'application/pdf' };
+    res.writeHead(200, { 'Content-Type': tipos[path.extname(nome).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' });
+    return fs.createReadStream(arq).pipe(res);
+  }
+
   if (method === 'GET' && pathname.startsWith('/media/')) {
     const filename = path.basename(pathname);
     const filePath = path.join(MEDIA_DIR, filename);
