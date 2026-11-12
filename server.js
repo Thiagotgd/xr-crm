@@ -400,16 +400,12 @@ function evoDownloadMedia(messageKey) {
   });
 }
 
-function evoSendMedia(phone, mediatype, base64, caption, fileName) {
+function evoSendMedia(phone, mediatype, base64, caption, fileName, mimetype) {
   return new Promise((resolve, reject) => {
     const url = new URL(`${EVO_BASE}/message/sendMedia/${EVO_INSTANCE}`);
-    const payload = JSON.stringify({
-      number: phone.replace(/\D/g, ''),
-      mediatype,
-      media: base64,
-      caption: caption || '',
-      fileName: fileName || ''
-    });
+    const corpo = { number: phone.replace(/\D/g, ''), mediatype, media: base64, caption: caption || '', fileName: fileName || '' };
+    if (mimetype) corpo.mimetype = mimetype;
+    const payload = JSON.stringify(corpo);
     const req = http.request({
       hostname: url.hostname, port: url.port, path: url.pathname,
       method: 'POST',
@@ -766,7 +762,7 @@ async function handleRequest(req, res) {
     if (!body.etapa) return sendJSON(res, 400, { error: 'etapa required' });
     const old = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(id);
     db.prepare("UPDATE contatos SET etapa = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(body.etapa, id);
-    if (old) db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, ?)").run(id, old.etapa, body.etapa);
+    if (old && old.etapa !== body.etapa) db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, ?)").run(id, old.etapa, body.etapa);
     return sendJSON(res, 200, { ok: true });
   }
 
@@ -914,7 +910,9 @@ async function handleRequest(req, res) {
     // Send via Evolution
     let mediaKey = null;
     try {
-      const r = await evoSendMedia(contato.telefone, body.mediatype, body.base64, body.caption || '', body.fileName || '');
+      // o gerador de orçamento manda "data:application/pdf;...;base64,XXXX": a Evolution só aceita a parte XXXX
+      const soBase64 = body.base64.includes(',') ? body.base64.split(',').pop() : body.base64;
+      const r = await evoSendMedia(contato.telefone, body.mediatype, soBase64, body.caption || '', body.fileName || '', body.mimetype || '');
       if (r && r.key) mediaKey = r.key;
     } catch (e) {
       console.error('[CRM] Erro enviando media:', e.message);
@@ -935,6 +933,26 @@ async function handleRequest(req, res) {
       id, msgTexto, body.mediatype === 'image' ? 'image' : 'document', filename,
       (mediaKey && mediaKey.id) || '', (mediaKey && mediaKey.remoteJid) || jidFromPhone(contato.telefone)
     );
+    // PDF de orçamento enviado pelo CRM (botão "Enviar via CRM" do gerador): mesma marcação que o webhook faz quando o
+    // PDF sai pelo WhatsApp — etapa Orçamento, relógio do follow-up, modalidade e nome do pet tirados do nome do arquivo.
+    if (body.mediatype !== 'image' && /or[cç]amento/i.test(String(body.fileName || '') + ' ' + String(body.caption || ''))) {
+      const dn = String(body.fileName || '');
+      const modalidade = /tomograf/i.test(dn) ? 'TC' : /resson/i.test(dn) ? 'RM' : /radiograf|raio/i.test(dn) ? 'RX' : /ultrass/i.test(dn) ? 'US' : '';
+      const petMatch = dn.match(/-\s*([^()]+?)\s*\(/);
+      const pet = petMatch ? petMatch[1].trim().replace(/\.pdf$/i, '') : '';
+      const atual = db.prepare('SELECT etapa, pet_nome FROM contatos WHERE id = ?').get(id);
+      if (atual) {
+        // relógio do follow-up e modalidade valem em qualquer etapa; a etapa só muda sozinha para quem está em "novo"
+        // (o gerador de orçamento chama /mover logo em seguida, como sempre fez)
+        db.prepare("UPDATE contatos SET orcamento_enviado_at = datetime('now','localtime'), orcamento_modalidade = COALESCE(NULLIF(?, ''), orcamento_modalidade), updated_at = datetime('now','localtime') WHERE id = ?").run(modalidade, id);
+        if (atual.etapa === 'novo') {
+          db.prepare("UPDATE contatos SET etapa = 'orcamento' WHERE id = ?").run(id);
+          db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, 'novo', 'orcamento')").run(id);
+        }
+        if (pet && !atual.pet_nome) db.prepare('UPDATE contatos SET pet_nome = ? WHERE id = ?').run(pet, id);
+        console.log(`[CRM] orçamento enviado pelo CRM: contato ${id} (${modalidade || 'PDF'}${pet ? ' · ' + pet : ''})`);
+      }
+    }
     db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(id);
     return sendJSON(res, 200, { ok: true });
   }
