@@ -156,6 +156,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS agenda_cfaz (
   created_at TEXT DEFAULT (datetime('now','localtime')))`);
 try { db.exec("ALTER TABLE mensagens ADD COLUMN reacoes TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN cartao TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE mensagens ADD COLUMN previa TEXT DEFAULT ''"); } catch {}
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_mensagens_contato_data ON mensagens(contato_id, created_at)"); } catch (e) { console.error('[CRM] índice de mensagens:', e.message); }
 try { db.exec("ALTER TABLE contatos ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN favorito INTEGER DEFAULT 0"); } catch {}
@@ -362,6 +363,132 @@ function evoPost(caminho, corpo) {
     req.write(payload);
     req.end();
   });
+}
+
+// ─── Prévia de link ─────────────────────────────────────────────────────────────
+const dns = require('dns');
+const PREVIA_LIGADA = process.env.PREVIA !== '0';
+function ipInterno(ip) {
+  const s = String(ip || '').toLowerCase();
+  if (s.includes(':')) return s === '::1' || s === '::' || s.startsWith('fc') || s.startsWith('fd') || s.startsWith('fe80') || s.startsWith('::ffff:');
+  const p = s.split('.').map(Number);
+  if (p.length !== 4 || p.some(n => !(n >= 0 && n <= 255))) return true;
+  return p[0] === 0 || p[0] === 10 || p[0] === 127 || (p[0] === 169 && p[1] === 254) || (p[0] === 172 && p[1] >= 16 && p[1] <= 31) ||
+    (p[0] === 192 && p[1] === 168) || (p[0] === 100 && p[1] >= 64 && p[1] <= 127) || p[0] >= 224;
+}
+// O nome só é aceito se apontar para a internet: link mandado por cliente não pode fazer o servidor bater na rede interna.
+function resolverSoExterno(host, opts, cb) {
+  if (typeof opts === 'function') { cb = opts; opts = {}; }
+  dns.lookup(host, opts, (err, endereco, familia) => {
+    if (err) return cb(err);
+    const lista = Array.isArray(endereco) ? endereco.map(e => e.address) : [endereco];
+    if (!lista.length || lista.some(ipInterno)) return cb(new Error('endereço interno recusado'));
+    cb(null, endereco, familia);
+  });
+}
+function baixarDeFora(endereco, limite, saltos) {
+  return new Promise((resolve, reject) => {
+    let u;
+    try { u = new URL(endereco); } catch (e) { return reject(new Error('endereço inválido')); }
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return reject(new Error('só http e https'));
+    if (u.port && u.port !== '80' && u.port !== '443') return reject(new Error('porta recusada'));
+    if (u.hostname.includes(':') || u.hostname.startsWith('[') || (/^[\d.]+$/.test(u.hostname) && ipInterno(u.hostname)) || !u.hostname.includes('.')) return reject(new Error('endereço interno recusado'));
+    const lib = u.protocol === 'https:' ? https : http;
+    const req = lib.get(u, { lookup: resolverSoExterno, timeout: 12000, headers: { 'User-Agent': 'WhatsApp/2.23.20.0', 'Accept': 'text/html,image/*;q=0.9,*/*;q=0.5', 'Accept-Language': 'pt-BR,pt;q=0.9' } }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        if (saltos <= 0) return reject(new Error('redirecionamentos demais'));
+        let prox;
+        try { prox = new URL(res.headers.location, u).href; } catch (e) { return reject(new Error('redirecionamento inválido')); }
+        return resolve(baixarDeFora(prox, limite, saltos - 1));
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error('código ' + res.statusCode)); }
+      const partes = [];
+      let total = 0;
+      res.on('data', c => { total += c.length; if (total > limite) { req.destroy(); return reject(new Error('grande demais')); } partes.push(c); });
+      res.on('end', () => resolve({ corpo: Buffer.concat(partes), tipo: String(res.headers['content-type'] || ''), final: u.href }));
+      res.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new Error('demorou a responder')));
+    req.on('error', reject);
+  });
+}
+function desentidade(s) {
+  const letra = n => { try { return String.fromCodePoint(n); } catch (e) { return ''; } };
+  return String(s).replace(/&#x([0-9a-f]+);/gi, (_, h) => letra(parseInt(h, 16))).replace(/&#(\d+);/g, (_, d) => letra(Number(d)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+}
+function metaDoHtml(html) {
+  const m = {};
+  for (const tag of html.match(/<meta\b[^>]*>/gi) || []) {
+    const chave = (tag.match(/\b(?:property|name)\s*=\s*["']([^"']+)["']/i) || [])[1];
+    const valor = (tag.match(/\bcontent\s*=\s*"([^"]*)"/i) || tag.match(/\bcontent\s*=\s*'([^']*)'/i) || [])[1];
+    if (chave && valor !== undefined && !(chave.toLowerCase() in m)) m[chave.toLowerCase()] = desentidade(valor).trim();
+  }
+  const t = (html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1];
+  if (t) m.title = desentidade(t).trim();
+  return m;
+}
+async function buscarPrevia(endereco) {
+  const pag = await baixarDeFora(endereco, 1500000, 4);
+  const saida = { titulo: '', descricao: '', site: '', imagem: null };
+  if (/^image\/(jpeg|png|webp|gif)/i.test(pag.tipo)) { saida.imagem = pag; return saida; } // o link já é uma imagem
+  if (!/html/i.test(pag.tipo)) return saida;
+  const m = metaDoHtml(pag.corpo.toString('utf8').slice(0, 700000));
+  saida.titulo = String(m['og:title'] || m['twitter:title'] || m.title || '').replace(/^Adobe Acrobat - /, '').slice(0, 140);
+  saida.descricao = String(m['og:description'] || m['twitter:description'] || m.description || '').slice(0, 200);
+  saida.site = String(m['og:site_name'] || new URL(pag.final).hostname.replace(/^www\./, '')).slice(0, 60);
+  let img = m['og:image'] || m['og:image:secure_url'] || m['twitter:image'] || '';
+  if (img) {
+    try {
+      img = new URL(img, pag.final).href;
+      // Adobe Acrobat: a imagem é a 1ª página do documento. Pede maior, para dar para ler ao abrir.
+      if (/cdn-sharing\.adobecc\.com\/rendition\//.test(img)) img = img.replace(/size=\d+/, 'size=1200');
+      const r = await baixarDeFora(img, 4000000, 3);
+      if (/^image\/(jpeg|png|webp|gif)/i.test(r.tipo)) saida.imagem = r;
+    } catch (e) {}
+  }
+  return saida;
+}
+const previaFila = [];
+const previaVistas = new Set();
+let previaRodando = false;
+function agendarPrevia(msgId, texto) {
+  if (!PREVIA_LIGADA || previaVistas.has(msgId)) return;
+  let url = (String(texto || '').match(/https?:\/\/[^\s<"]+/) || [])[0];
+  if (!url) return;
+  if (previaVistas.size > 8000) previaVistas.clear();
+  previaVistas.add(msgId);
+  url = url.replace(/[.,;:!?)\]]+$/, '');
+  let host = '';
+  try { host = new URL(url).hostname; } catch (e) {}
+  // endereços da própria XR e do WhatsApp não têm o que mostrar
+  if (!host || /(^|\.)xrdiagnostico\.tech$/i.test(host) || /^(wa\.me|api\.whatsapp\.com|chat\.whatsapp\.com)$/i.test(host)) {
+    try { db.prepare("UPDATE mensagens SET previa = '-' WHERE id = ?").run(msgId); } catch (e) {}
+    return;
+  }
+  previaFila.push({ msgId, url });
+  rodarPrevias();
+}
+async function rodarPrevias() {
+  if (previaRodando) return;
+  previaRodando = true;
+  while (previaFila.length) {
+    const t = previaFila.shift();
+    let gravar = '-'; // '-' = já tentei e não há prévia
+    try {
+      const p = await buscarPrevia(t.url);
+      let arquivo = '';
+      if (p.imagem) {
+        arquivo = 'previa_' + t.msgId + (/png/i.test(p.imagem.tipo) ? '.png' : /webp/i.test(p.imagem.tipo) ? '.webp' : /gif/i.test(p.imagem.tipo) ? '.gif' : '.jpg');
+        fs.writeFileSync(path.join(MEDIA_DIR, arquivo), p.imagem.corpo);
+      }
+      if (arquivo || p.titulo) gravar = JSON.stringify({ url: t.url, titulo: p.titulo, descricao: p.descricao, site: p.site, imagem: arquivo });
+      console.log('[PREVIA] mensagem ' + t.msgId + ': ' + (arquivo ? 'com imagem' : p.titulo ? 'só título' : 'nada'));
+    } catch (e) { console.log('[PREVIA] mensagem ' + t.msgId + ': sem prévia (' + e.message + ')'); }
+    try { db.prepare('UPDATE mensagens SET previa = ? WHERE id = ?').run(gravar, t.msgId); } catch (e) {}
+  }
+  previaRodando = false;
 }
 
 // ─── Cartão de contato ─────────────────────────────────────────────────────────
@@ -678,7 +805,7 @@ async function handleRequest(req, res) {
     const nome = path.basename(pathname);
     const arq = path.join(__dirname, 'arquivos', nome);
     if (!/^[\w.-]+$/.test(nome) || !fs.existsSync(arq)) { res.writeHead(404); return res.end('Not found'); }
-    const tipos = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.pdf': 'application/pdf' };
+    const tipos = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.pdf': 'application/pdf', '.js': 'application/javascript; charset=utf-8' };
     res.writeHead(200, { 'Content-Type': tipos[path.extname(nome).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' });
     return fs.createReadStream(arq).pipe(res);
   }
@@ -785,6 +912,14 @@ async function handleRequest(req, res) {
     contato.mensagens = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? ORDER BY created_at DESC, id DESC LIMIT 51').all(id);
     contato.tem_mais = contato.mensagens.length > 50;
     if (contato.tem_mais) contato.mensagens.pop();
+    // links ainda sem prévia (mensagens de antes de 12/11/2026): busca em segundo plano; aparece na atualização seguinte
+    try {
+      let n = 0;
+      for (const m of contato.mensagens) {
+        if (n >= 6) break;
+        if (m.tipo === 'text' && !m.previa && /https?:\/\//.test(m.texto || '')) { agendarPrevia(m.id, m.texto); n++; }
+      }
+    } catch (e) {}
     // Foto ou PDF do cliente já lido pela IA (pedido do veterinário etc.): a leitura vai junto da mensagem.
     try { leitor.anexarLeituras(db, contato.mensagens); } catch (e) { console.error('[LEITOR] anexar:', e.message); }
     try { anexarAgenda(contato.mensagens); } catch (e) { console.error('[CFAZ] anexar:', e.message); }
@@ -1327,6 +1462,10 @@ async function handleRequest(req, res) {
         contato.id, direcao, texto || caption || [docName, docCaption].filter(Boolean).join('\n') || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid, cita.texto, cita.de
       );
       if (cartoes.length && waMsgId) db.prepare('UPDATE mensagens SET cartao = ? WHERE wa_msg_id = ?').run(JSON.stringify(cartoes), waMsgId);
+      // mensagem com link (pedido no Adobe, LoopVet…): busca a prévia em segundo plano
+      if (tipo === 'text' && waMsgId && /https?:\/\//.test(texto)) {
+        try { const nv = db.prepare('SELECT id FROM mensagens WHERE wa_msg_id = ?').get(waMsgId); if (nv) agendarPrevia(nv.id, texto); } catch (e) {}
+      }
       // De onde o cliente veio (anúncio Meta, Google, direto) — só leitura das primeiras mensagens dele.
       if (!isFromMe) { try { origem.classificar(db, contato.id, texto || caption); } catch (e) { console.error('[ORIGEM]', e.message); } }
       // A recepção escreveu para um orçamento parado (🟡/⚪)? Conta como retomada (1ª, 2ª ou última).

@@ -757,6 +757,21 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 /* ── 12/11/2026: links clicáveis nas mensagens ── */
 a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; cursor: pointer; }
 :root[data-theme="light"] a.msg-link { color: #027eb5; }
+
+/* ── 12/11/2026: prévia de link e miniatura de PDF nas mensagens ── */
+.msg-previa { width: 300px; max-width: 100%; margin: -1px -2px 6px; border-radius: 6px; overflow: hidden; background: rgba(11,20,26,.18); }
+.msg-previa .mp-img { height: 170px; background-color: #fff; background-size: cover; background-position: top center; background-repeat: no-repeat; cursor: zoom-in; }
+.msg-previa .mp-txt { display: block; padding: 7px 10px 8px; text-decoration: none; color: inherit; }
+.msg-previa .mp-txt b { display: block; font-size: 13.5px; font-weight: 600; line-height: 1.3; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.msg-previa .mp-txt span { display: block; font-size: 12px; opacity: .7; margin-top: 2px; }
+.msg-previa .mp-txt:hover b { text-decoration: underline; }
+.msg-pdf-box { width: 260px; max-width: 100%; height: 150px; margin: -1px -2px 6px; border-radius: 6px; background-color: rgba(11,20,26,.18); background-size: cover; background-position: top center; background-repeat: no-repeat; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.msg-pdf-box span { font-size: 12px; font-weight: 700; letter-spacing: .08em; opacity: .5; }
+.msg-pdf-box.pronta { background-color: #fff; box-shadow: inset 0 0 0 1px rgba(11,20,26,.12); }
+.msg-pdf-box.pronta span { display: none; }
+
+/* texto de exemplo do campo de mensagem sempre em uma linha só */
+#chatComposeInput::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>
 </head>
 <body>
@@ -3522,7 +3537,7 @@ let chatReply = null;      // mensagem que está sendo respondida (citação)
 const rascunhos = {};      // texto digitado e não enviado, por conversa
 
 function assinaturaMsgs(msgs) {
-  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' + (Array.isArray(m.cfaz) ? m.cfaz.length : 1) : '') + (m.editada ? 'E' + String(m.texto || '').length : '') + (m.reacoes ? 'R' + m.reacoes : '')).join(',');
+  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' + (Array.isArray(m.cfaz) ? m.cfaz.length : 1) : '') + (m.editada ? 'E' + String(m.texto || '').length : '') + (m.reacoes ? 'R' + m.reacoes : '') + (m.previa && m.previa.length > 2 ? 'P' : '')).join(',');
 }
 // Todas as mensagens na tela, da mais nova para a mais antiga.
 function mensagensDoChat() {
@@ -3689,11 +3704,14 @@ function renderMessagesInto(area, mensagens, opts) {
       content += '<audio controls src="/media/' + esc(m.media_path) + '" style="max-width:250px"></audio>';
     } else if (m.media_path && (m.tipo === 'document' || m.tipo === 'video')) {
       const arq = rotuloArquivo(m);
+      // PDF: miniatura da 1ª página em cima do nome do arquivo (clicar abre o PDF no visualizador)
+      if (/\.pdf$/i.test(m.media_path)) content += '<div class="msg-pdf-box" data-pdf="/media/' + esc(m.media_path) + '" data-nome="' + esc(arq.rotulo) + '" onclick="abrirVisor(this.dataset.pdf, \'pdf\', this.dataset.nome)" title="Abrir o PDF (Esc fecha)"><span>PDF</span></div>';
       content += '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link" title="Abrir o arquivo" data-nome="' + esc(arq.rotulo) + '" onclick="return abrirArquivo(event, this)">&#x1F4CE; <span>' + esc(arq.rotulo) + '</span></a>';
       if (arq.legenda) content += '<div>' + fmtWa(arq.legenda) + '</div>';
     } else if (m.tipo === 'contact' && m.cartao) {
       content += cartaoHtml(m.cartao, area.id === 'chatMessagesArea');
     } else {
+      content += previaHtml(m); // link com prévia (título e imagem): cartão em cima do texto
       content += fmtWa(m.texto === '[image]' ? '📷 Foto' : m.texto === '[audio]' ? '🎤 Áudio' : m.texto === '[document]' ? '📎 Documento' : m.texto);
     }
     content += leituraBloco(m);
@@ -3735,6 +3753,7 @@ function renderMessagesInto(area, mensagens, opts) {
       '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + (m.editada ? 'Editada · ' : '') + horaMsg(m.created_at) + '</div>' + reac + '</div>' + extra;
   }).join('');
   area.innerHTML = (opts.temMais ? '<button class="msg-mais" onclick="carregarAnteriores(this)">Carregar mensagens anteriores</button>' : '') + html;
+  ligarPdfPrevias(area);
 
   const irAoFim = () => { area.scrollTop = area.scrollHeight; };
   if (rolar === 'topo') {
@@ -4109,6 +4128,8 @@ document.addEventListener('dblclick', function (e) {
 // ─── Campo de mensagem ──────────────────────────────────────────────────────────────────────────
 function ajustarAltura(el) {
   if (!el || el.tagName !== 'TEXTAREA') return;
+  // campo vazio = uma linha (o texto de exemplo, quando quebra em duas linhas, não deve esticar o campo)
+  if (!el.value) { el.style.height = '39px'; return; }
   el.style.height = 'auto';
   el.style.height = Math.max(39, Math.min(el.scrollHeight, 140)) + 'px';
 }
@@ -4530,6 +4551,102 @@ async function enviarArquivoPronto(i) {
     abrirAnexos([new File([blob], a.arquivo, { type: a.tipo })]);
     document.getElementById('anexoLegenda').value = a.legenda;
   } catch (e) { toast('Não consegui carregar o arquivo: ' + e.message, 'err'); }
+}
+
+// ─── Prévia de link (título e imagem que o servidor buscou; no Adobe é a 1ª página do pedido) ───────────────
+function previaHtml(m) {
+  if (!m.previa || m.previa.length < 3) return '';
+  let p = null;
+  try { p = JSON.parse(m.previa); } catch (e) { return ''; }
+  if (!p || !(p.imagem || p.titulo)) return '';
+  const nome = p.titulo || p.site || 'Prévia do link';
+  return '<div class="msg-previa">' +
+    (p.imagem ? '<div class="mp-img" data-img="/media/' + esc(p.imagem) + '" data-nome="' + esc(nome) + '" style="background-image:url(/media/' + encodeURI(p.imagem) + ')" ' +
+      'onclick="event.stopPropagation();abrirVisor(this.dataset.img, \'image\', this.dataset.nome)" title="Ver a prévia maior (Esc fecha)"></div>' : '') +
+    '<a class="mp-txt" href="' + esc(p.url) + '" target="_blank" rel="noopener noreferrer" title="Abrir o link em outra aba">' +
+      '<b>' + esc(nome) + '</b>' + (p.site && p.site !== nome ? '<span>' + esc(p.site) + '</span>' : '') +
+    '</a>' +
+  '</div>';
+}
+
+// ─── Miniatura da 1ª página dos PDFs da conversa (desenhada aqui no navegador, com o pdf.js) ──────────────
+const pdfPrevias = new Map();   // endereço do PDF → imagem pronta, ou '' quando não deu para desenhar
+let pdfJsPromessa = null;
+let pdfFila = Promise.resolve();
+let pdfObs = null;
+function carregarPdfJs() {
+  if (!pdfJsPromessa) pdfJsPromessa = new Promise(function (ok, erro) {
+    const s = document.createElement('script');
+    s.src = '/arquivos/pdf.min.js';
+    s.onload = function () {
+      try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/arquivos/pdf.worker.min.js'; ok(window.pdfjsLib); } catch (e) { erro(e); }
+    };
+    s.onerror = function () { erro(new Error('pdf.js não carregou')); };
+    document.head.appendChild(s);
+  });
+  return pdfJsPromessa;
+}
+function pintarPdfPrevia(url) {
+  const img = pdfPrevias.get(url);
+  if (!img) return;
+  document.querySelectorAll('.msg-pdf-box').forEach(function (b) {
+    if (b.dataset.pdf === url && !b.classList.contains('pronta')) { b.style.backgroundImage = 'url(' + img + ')'; b.classList.add('pronta'); }
+  });
+}
+function desenharPdfPrevia(url) {
+  if (pdfPrevias.has(url)) { pintarPdfPrevia(url); return; }
+  // um PDF de cada vez, para não pesar
+  pdfFila = pdfFila.then(async function () {
+    if (pdfPrevias.has(url)) return;
+    try {
+      const lib = await carregarPdfJs();
+      const doc = await lib.getDocument({ url: url }).promise;
+      const pag = await doc.getPage(1);
+      const base = pag.getViewport({ scale: 1 });
+      const vp = pag.getViewport({ scale: 520 / base.width });
+      const c = document.createElement('canvas');
+      c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+      await pag.render({ canvasContext: ctx, viewport: vp }).promise;
+      // fica só a parte de cima da página, como a prévia de documento do WhatsApp
+      const corte = document.createElement('canvas');
+      corte.width = c.width; corte.height = Math.min(c.height, Math.round(c.width * 0.62));
+      corte.getContext('2d').drawImage(c, 0, 0);
+      pdfPrevias.set(url, corte.toDataURL('image/jpeg', 0.82));
+      try { doc.destroy(); } catch (e) {}
+    } catch (e) { pdfPrevias.set(url, ''); }
+  }).then(function () { pintarPdfPrevia(url); });
+}
+// Desenha as miniaturas dos PDFs que estão na parte visível da conversa (e um pouco acima e abaixo)
+function verPdfPrevias(area) {
+  const r = area.getBoundingClientRect();
+  if (!r.height) return;
+  area.querySelectorAll('.msg-pdf-box[data-pdf]:not(.pronta)').forEach(function (b) {
+    const url = b.dataset.pdf;
+    if (pdfPrevias.has(url)) { pintarPdfPrevia(url); return; }
+    const q = b.getBoundingClientRect();
+    if (q.bottom > r.top - 400 && q.top < r.bottom + 400) desenharPdfPrevia(url);
+  });
+}
+function ligarPdfPrevias(area) {
+  const caixas = area.querySelectorAll('.msg-pdf-box[data-pdf]');
+  if (!caixas.length) return;
+  caixas.forEach(function (b) {
+    const pronta = pdfPrevias.get(b.dataset.pdf);
+    if (pronta) { b.style.backgroundImage = 'url(' + pronta + ')'; b.classList.add('pronta'); }
+  });
+  if (!area.dataset.pdfRolagem) {
+    area.dataset.pdfRolagem = '1';
+    let espera = null;
+    area.addEventListener('scroll', function () {
+      if (espera) return;
+      espera = setTimeout(function () { espera = null; verPdfPrevias(area); }, 200);
+    }, { passive: true });
+  }
+  // depois que a conversa rolou para o lugar certo
+  setTimeout(function () { verPdfPrevias(area); }, 60);
+  setTimeout(function () { verPdfPrevias(area); }, 600);
 }
 
 // ─── Cartão de contato: mostrar na conversa e enviar (botão 👤 ao lado do clipe) ───────────────────────
