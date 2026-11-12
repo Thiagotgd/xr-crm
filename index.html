@@ -643,6 +643,15 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 .ag-livres button.ocupado { background: rgba(239,68,68,.16); border-color: var(--danger); color: var(--text); }
 .ag-livres button.ocupado b { font-weight: 600; }
 .ag-marcados b { color: var(--text-secondary); font-weight: 600; }
+
+/* Agendamento com mais de uma marcação (ex.: ressonância + ecocardiograma): cada marcação no seu bloco */
+.ag-linha { border: 1px solid var(--border); border-radius: 10px; padding: 4px 12px 12px; margin-top: 12px; }
+.ag-linha-topo { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 13px; color: var(--text-secondary); }
+.ag-linha-topo a { color: var(--wa-blue-tick); cursor: pointer; font-size: 12.5px; text-decoration: underline; }
+.ag-linha .ag-livres { max-height: 112px; }
+.ag-atalhos { margin-top: 6px; }
+.ag-mais { display: block; width: 100%; margin-top: 12px; padding: 9px; border: 1px dashed var(--primary); border-radius: 8px; background: none; color: var(--text); font-size: 13.5px; cursor: pointer; }
+.ag-mais:hover { background: var(--card-hover); }
 </style>
 </head>
 <body>
@@ -932,28 +941,12 @@ button.msg-agenda:hover { filter: brightness(1.1); }
   <div class="modal">
     <h2>Criar na agenda do CFAZ</h2>
     <div class="ag-aviso" id="agAviso"></div>
-    <label>Agenda</label>
-    <select id="agCal" onchange="agendaCarregar()"></select>
     <div style="display:flex;gap:10px">
-      <div style="flex:1;min-width:0"><label>Dia</label><input type="date" id="agData" onchange="agendaCarregar()"></div>
-      <div style="flex:1;min-width:0"><label>Horário</label><input type="time" id="agHora" oninput="agendaSituacao()"></div>
+      <div style="flex:1;min-width:0"><label>Dia</label><input type="date" id="agData" onchange="agendaCarregarTudo()"></div>
+      <div style="flex:1;min-width:0"><label>Telefone</label><input type="text" id="agTel"></div>
     </div>
-    <div class="ag-sit" id="agSit"></div>
-    <div class="ag-livres" id="agLivres"></div>
-    <label>Título (como aparece na agenda)</label>
-    <input type="text" id="agTitulo" placeholder="TC, RM 2 seg, ECO + ECG">
-    <label>Telefone</label>
-    <input type="text" id="agTel">
-    <label>Observação</label>
-    <input type="text" id="agDesc" placeholder="opcional">
-    <div class="ag-livres">
-      <button type="button" onclick="agendaObs('1 segmento')">+ 1 segmento</button>
-      <button type="button" onclick="agendaObs('2 segmentos')">+ 2 segmentos</button>
-      <button type="button" onclick="agendaObs('3 segmentos')">+ 3 segmentos</button>
-      <button type="button" onclick="agendaObs('Aguardando exames pré-anestésicos')">+ Aguardando exames pré-anestésicos</button>
-      <button type="button" onclick="agendaObs('PetLove')">+ PetLove</button>
-    </div>
-    <div class="ag-marcados" id="agMarcados"></div>
+    <div id="agLinhas"></div>
+    <button type="button" class="ag-mais" id="agMais" onclick="agendaAdicionarLinha()">+ Marcar também em outra agenda (ex.: cardiologistas)</button>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="fecharAgenda()">Cancelar</button>
       <button class="btn btn-primary" id="agCriar" onclick="agendaCriar()">Criar marcação</button>
@@ -3299,7 +3292,7 @@ let chatReply = null;      // mensagem que está sendo respondida (citação)
 const rascunhos = {};      // texto digitado e não enviado, por conversa
 
 function assinaturaMsgs(msgs) {
-  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' : '')).join(',');
+  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' + (Array.isArray(m.cfaz) ? m.cfaz.length : 1) : '')).join(',');
 }
 // Todas as mensagens na tela, da mais nova para a mais antiga.
 function mensagensDoChat() {
@@ -3476,12 +3469,15 @@ function renderMessagesInto(area, mensagens, opts) {
     // Agenda do CFAZ: botão logo abaixo da mensagem "Exame agendado…" (ou o aviso de que já está na agenda)
     let extra = '';
     if (opts.agenda && m.direcao === 'out' && m.tipo === 'text') {
-      if (m.cfaz) {
-        const q = String(m.cfaz.inicio || '');
-        extra = '<div class="msg-agenda feito">&#x2713; Na agenda do CFAZ: ' + esc(m.cfaz.calendario || '') + ', ' + q.slice(8, 10) + '/' + q.slice(5, 7) + ' às ' + q.slice(11, 16) +
-          ' · <a onclick="desfazerAgenda(' + Number(m.cfaz.evento_id) + ')">desfazer</a></div>';
-      } else if (ehExameAgendado(m.texto) && String(m.created_at || '') >= agendaLimite()) {
-        extra = '<button class="msg-agenda" onclick="abrirAgendaCfaz(' + m.id + ')">&#x1F4C5; Criar na agenda do CFAZ</button>';
+      // uma mensagem pode ter várias marcações (ex.: ressonância + ecocardiograma)
+      const feitas = Array.isArray(m.cfaz) ? m.cfaz : (m.cfaz ? [m.cfaz] : []);
+      extra = feitas.map(f => {
+        const q = String(f.inicio || '');
+        return '<div class="msg-agenda feito">&#x2713; Na agenda do CFAZ: ' + esc(f.calendario || '') + ', ' + q.slice(8, 10) + '/' + q.slice(5, 7) + ' às ' + q.slice(11, 16) +
+          ' · <a onclick="desfazerAgenda(' + Number(f.evento_id) + ')">desfazer</a></div>';
+      }).join('');
+      if (ehExameAgendado(m.texto) && String(m.created_at || '') >= agendaLimite()) {
+        extra += '<button class="msg-agenda" onclick="abrirAgendaCfaz(' + m.id + ')">&#x1F4C5; ' + (feitas.length ? 'Marcar em outra agenda' : 'Criar na agenda do CFAZ') + '</button>';
       }
     }
     return faixa + '<div class="msg ' + m.direcao + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
@@ -3531,38 +3527,51 @@ function irParaUltima() {
 
 // ─── Agenda do CFAZ a partir da conversa ────────────────────────────────────────────────────────
 // Quando a recepção envia "Exame agendado: …", aparece um botão embaixo da mensagem. Ele lê da própria mensagem
-// o exame (que define a agenda), o dia e a hora, e do contato o telefone, o pet e o tutor. Abre um formulário já
-// preenchido; a marcação só é criada no CFAZ quando alguém aperta "Criar marcação".
+// os exames (que definem as agendas), o dia e as horas, e do contato o telefone e o pet. Abre um formulário já
+// preenchido; nada é criado no CFAZ antes de alguém apertar "Criar".
+// 12/11/2026: um agendamento pode ter mais de uma marcação (ex.: ressonância + ecocardiograma), cada uma na sua agenda.
 const AG_AGENDAS = { TC: 2713, RM: 2731, CARDIO: 4931, IMAGEM: 2723 }; // números das agendas no CFAZ
+const AG_MAX = 4;
 let agendaMsgId = null;
-let agendaDados = null;
+let agendaLinhas = [];        // [{cal, hora, titulo, desc, dados}]
+let agendaCalendarios = [];
 function ehExameAgendado(t) { return /^\W{0,4}exame agendado/i.test(String(t || '')); }
 function agendaLimite() { const d = new Date(Date.now() - 10 * 86400000); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+
+// Lê a mensagem "Exame agendado". Devolve o dia, o pet, a pendência, os segmentos e uma linha por agenda.
 function lerAgendamento(texto) {
-  const r = { titulo: '', cal: 0, data: '', hora: '', pet: '', combinado: false };
+  const r = { data: '', pet: '', obs: '', seg: '', linhas: [], titulo: '', cal: 0, hora: '', combinado: false };
   const cab = String(texto || '').split(/\bpreparo\b/i)[0].split(/nosso endere[cç]o/i)[0].split(/o prazo para/i)[0];
   const pars = Array.from(cab.matchAll(/\(([^)]{1,40})\)/g)).map(m => m[1].trim()).filter(p => !/aguardando|prazo|laudo|exame|\d/i.test(p));
   if (pars.length) r.pet = pars[pars.length - 1];
-  // pendência escrita entre parênteses, ex.: "(aguardando ECO + ECG + exames de sangue)" → vai para a observação
   const pend = Array.from(cab.matchAll(/\(([^)]{1,70})\)/g)).map(m => m[1].trim()).find(p => /aguardando|falta|pendente/i.test(p));
   r.obs = pend ? pend.charAt(0).toUpperCase() + pend.slice(1) : '';
-  // segmentos, quando a mensagem diz ("2 segmentos", "2 seg")
   const ms = cab.match(/(\d)\s*seg(?:mento)?s?\b/i);
   r.seg = ms ? (ms[1] === '1' ? '1 segmento' : ms[1] + ' segmentos') : '';
   const n = cab.replace(/\([^)]*\)/g, ' ').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const itens = [];
-  if (/tomograf|\btc\b/.test(n)) itens.push('TC');
-  if (/ressonan|\brm\b/.test(n)) itens.push('RM');
-  if (/mielo/.test(n)) itens.push('Mielo');
-  if (/raio.?x|\brx\b|radiograf/.test(n)) itens.push('Rx');
-  if (/ultrass|\bus\b/.test(n)) itens.push('US');
-  if (/\beco\b|ecodoppler|ecocardio/.test(n)) itens.push('ECO');
-  if (/\becg\b|eletrocardio|\beletro\b/.test(n)) itens.push('ECG');
-  if (/hemograma|bioquim|sangue/.test(n)) itens.push('Sangue');
-  r.titulo = itens.join(' + ');
-  const p = itens[0];
-  r.cal = (p === 'TC' || p === 'Mielo') ? AG_AGENDAS.TC : p === 'RM' ? AG_AGENDAS.RM : (p === 'ECO' || p === 'ECG') ? AG_AGENDAS.CARDIO : (p === 'Rx' || p === 'US') ? AG_AGENDAS.IMAGEM : 0;
-  r.combinado = (itens.indexOf('TC') >= 0 || itens.indexOf('RM') >= 0) && (itens.indexOf('ECO') >= 0 || itens.indexOf('ECG') >= 0);
+  const RE = {
+    TC: /tomograf|\btc\b/, Mielo: /mielo/, RM: /ressonan|\brm\b/, Rx: /raio.?x|\brx\b|radiograf/, US: /ultrass|\bus\b/,
+    ECO: /\beco\b|ecodoppler|ecocardio/, ECG: /\becg\b|eletrocardio|\beletro\b/, Sangue: /hemograma|bioquim|sangue/
+  };
+  const tem = k => RE[k].test(n);
+  const itens = ['TC', 'RM', 'Mielo', 'Rx', 'US', 'ECO', 'ECG', 'Sangue'].filter(tem);
+  const cardio = ['ECO', 'ECG'].filter(tem);
+  // uma linha por agenda: tomografia, ressonância, imagem (RX/US) e cardiologistas
+  const grupos = [];
+  if (tem('TC') || tem('Mielo')) grupos.push({ g: 'TC', cal: AG_AGENDAS.TC, re: [RE.TC, RE.Mielo] });
+  if (tem('RM')) grupos.push({ g: 'RM', cal: AG_AGENDAS.RM, re: [RE.RM] });
+  if (tem('Rx') || tem('US')) grupos.push({ g: 'IMAGEM', cal: AG_AGENDAS.IMAGEM, re: [RE.Rx, RE.US] });
+  if (cardio.length) grupos.push({ g: 'CARDIO', cal: AG_AGENDAS.CARDIO, re: [RE.ECO, RE.ECG] });
+  const principal = grupos.find(x => x.g !== 'CARDIO') || grupos[0];
+  for (const gr of grupos) {
+    if (gr === principal) {
+      // título no padrão da recepção: o exame principal e o que vai junto ("RM + ECG", "TC + Mielo + ECG")
+      const fora = grupos.filter(x => x !== gr && x.g !== 'CARDIO').map(x => x.g);
+      gr.titulo = itens.filter(k => !(fora.indexOf('TC') >= 0 && (k === 'TC' || k === 'Mielo')) && !(fora.indexOf('RM') >= 0 && k === 'RM') && !(fora.indexOf('IMAGEM') >= 0 && (k === 'Rx' || k === 'US'))).join(' + ');
+    } else if (gr.g === 'CARDIO') gr.titulo = cardio.join(' + ');
+    else gr.titulo = (gr.g === 'IMAGEM' ? ['Rx', 'US'].filter(tem) : gr.g === 'TC' ? ['TC', 'Mielo'].filter(tem) : ['RM']).join(' + ');
+  }
+  // dia e horas
   const md = n.match(/(\d{1,2})\s*\/\s*(\d{1,2})(?:\s*\/\s*(\d{2,4}))?/);
   if (md) {
     const hoje = new Date();
@@ -3572,10 +3581,21 @@ function lerAgendamento(texto) {
       if (!md[3] && new Date(ano, mes - 1, dia) < new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() - 2)) ano++; // "05/01" dito em dezembro é do ano que vem
       r.data = ano + '-' + String(mes).padStart(2, '0') + '-' + String(dia).padStart(2, '0');
     }
+    // cada hora vale para o exame escrito logo depois dela ("09:00 ECG - 10:00 Ressonância", "10h - ECO / 11:00 - Ultrassom")
     const resto = n.slice(md.index + md[0].length);
-    const mh = resto.match(/(\d{1,2})\s*[:h]\s*(\d{2})/) || resto.match(/(\d{1,2})\s*h\b/);
-    if (mh && Number(mh[1]) <= 23) r.hora = String(mh[1]).padStart(2, '0') + ':' + (mh[2] || '00');
+    const horas = Array.from(resto.matchAll(/(\d{1,2})\s*(?::\s*(\d{2})|h\s*(\d{2})?)(?![\d\/])/g)).filter(h => Number(h[1]) <= 23);
+    const fmt = h => String(h[1]).padStart(2, '0') + ':' + (h[2] || h[3] || '00');
+    horas.forEach((h, i) => {
+      const trecho = resto.slice(h.index + h[0].length, i + 1 < horas.length ? horas[i + 1].index : resto.length);
+      for (const gr of grupos) if (!gr.hora && gr.re.some(x => x.test(trecho))) gr.hora = fmt(h);
+    });
+    if (horas.length && principal && !grupos.some(x => x.hora)) principal.hora = fmt(horas[0]);            // formato padrão: uma hora só
+    else if (horas.length === 1 && principal && !principal.hora && grupos.length === 1) principal.hora = fmt(horas[0]);
   }
+  r.linhas = grupos.map(gr => ({ cal: gr.cal, titulo: gr.titulo || '', hora: gr.hora || '', g: gr.g }));
+  // campos antigos, usados em outros pontos
+  if (principal) { r.titulo = principal.titulo; r.cal = principal.cal; r.hora = principal.hora || ''; }
+  r.combinado = r.linhas.length > 1;
   return r;
 }
 function telefoneParaCfaz(tel) {
@@ -3583,131 +3603,218 @@ function telefoneParaCfaz(tel) {
   if (!d) return '';
   return d.length >= 12 && d.startsWith('55') ? '+55 ' + d.slice(2) : '+55 ' + d;
 }
+
+// guarda no estado o que a pessoa digitou, antes de redesenhar as linhas
+function agendaColher() {
+  agendaLinhas.forEach((l, i) => {
+    const g = id => document.getElementById(id + i);
+    if (!g('agCal')) return;
+    // enquanto a lista de agendas não chegou do CFAZ, a caixa está vazia: não pode apagar a agenda lida da mensagem
+    if (g('agCal').options.length > 1) l.cal = Number(g('agCal').value || 0);
+    l.hora = g('agHora').value; l.titulo = g('agTitulo').value; l.desc = g('agDesc').value;
+  });
+}
+function agendaDesenharLinhas() {
+  const opcoes = cal => '<option value="">Escolha a agenda</option>' + agendaCalendarios.map(k => '<option value="' + k.id + '"' + (k.id === cal ? ' selected' : '') + '>' + esc(k.nome) + '</option>').join('');
+  document.getElementById('agLinhas').innerHTML = agendaLinhas.map((l, i) =>
+    '<div class="ag-linha">' +
+      '<div class="ag-linha-topo"><b>' + (agendaLinhas.length > 1 ? 'Marcação ' + (i + 1) : 'Marcação') + '</b>' +
+        (agendaLinhas.length > 1 ? '<a onclick="agendaTirarLinha(' + i + ')">tirar esta</a>' : '') + '</div>' +
+      '<div style="display:flex;gap:10px">' +
+        '<div style="flex:1.5;min-width:0"><label>Agenda</label><select id="agCal' + i + '" onchange="agendaCarregar(' + i + ')">' + opcoes(l.cal) + '</select></div>' +
+        '<div style="flex:1;min-width:0"><label>Horário</label><input type="time" id="agHora' + i + '" value="' + esc(l.hora || '') + '" oninput="agendaSituacao(' + i + ')"></div>' +
+      '</div>' +
+      '<div class="ag-sit" id="agSit' + i + '"></div>' +
+      '<div class="ag-livres" id="agLivres' + i + '"></div>' +
+      '<div class="ag-marcados" id="agMarcados' + i + '"></div>' +
+      '<label>Título (como aparece na agenda)</label><input type="text" id="agTitulo' + i + '" value="' + esc(l.titulo || '') + '" placeholder="TC, RM 2 seg, ECO + ECG">' +
+      '<label>Observação</label><input type="text" id="agDesc' + i + '" value="' + esc(l.desc || '') + '" placeholder="opcional">' +
+      '<div class="ag-livres ag-atalhos">' +
+        ['1 segmento', '2 segmentos', '3 segmentos', 'Aguardando exames pré-anestésicos', 'PetLove'].map(t => '<button type="button" onclick="agendaObs(' + i + ',\'' + t + '\')">+ ' + t + '</button>').join('') +
+      '</div>' +
+    '</div>').join('');
+  document.getElementById('agMais').style.display = agendaLinhas.length >= AG_MAX ? 'none' : '';
+  document.getElementById('agCriar').textContent = agendaLinhas.length > 1 ? 'Criar as ' + agendaLinhas.length + ' marcações' : 'Criar marcação';
+  agendaLinhas.forEach((l, i) => agendaDesenharDia(i));
+}
 function abrirAgendaCfaz(msgId) {
   if (!currentChatContato) return;
   const c = currentChatContato;
   const m = msgId ? mensagensDoChat().find(x => String(x.id) === String(msgId)) : null;
-  const lido = m ? lerAgendamento(m.texto) : { titulo: '', cal: 0, data: '', hora: '', pet: '', combinado: false };
+  const lido = m ? lerAgendamento(m.texto) : { data: '', pet: '', obs: '', seg: '', linhas: [] };
   agendaMsgId = m ? m.id : null;
-  agendaDados = null;
-  document.getElementById('agTitulo').value = lido.titulo;
+  const pet = lido.pet || c.pet_nome || '';
+  // Observação no padrão da recepção: pet, segmentos e pendência. Sem o nome do tutor (pedido do Thiago).
+  const obsPrincipal = [pet, lido.seg, lido.obs].filter(Boolean).join(' · ');
+  const principal = lido.linhas.find(l => l.g !== 'CARDIO') || lido.linhas[0];
+  // ao reabrir uma mensagem que já tem marcação, não repete a agenda que já foi marcada
+  const jaFeitas = m ? (Array.isArray(m.cfaz) ? m.cfaz : (m.cfaz ? [m.cfaz] : [])) : [];
+  const faltam = lido.linhas.filter(l => !jaFeitas.some(f => Number(f.calendario_id) === l.cal));
+  agendaLinhas = (faltam.length ? faltam : [{ cal: 0, titulo: '', hora: '' }]).map(l => ({
+    cal: l.cal, hora: l.hora, titulo: l.titulo, dados: null,
+    // na agenda dos cardiologistas a recepção anota a qual exame o pré-exame pertence
+    desc: l === principal || !principal ? obsPrincipal : [pet, principal.titulo.split(' + ')[0]].filter(Boolean).join(' · ')
+  }));
   document.getElementById('agTel').value = telefoneParaCfaz(c.telefone);
-  // Observação no padrão da recepção: nome do pet, segmentos e pendência. Sem o nome do tutor (pedido do Thiago).
-  document.getElementById('agDesc').value = [lido.pet || c.pet_nome, lido.seg, lido.obs].filter(Boolean).join(' · ');
-  document.getElementById('agData').value = lido.data;
-  document.getElementById('agHora').value = lido.hora;
+  document.getElementById('agData').value = lido.data || '';
   const avisos = [];
-  if (m && (!lido.data || !lido.hora)) avisos.push('Não consegui ler o dia ou a hora na mensagem: preencha abaixo.');
-  if (m && !lido.cal) avisos.push('Não reconheci o exame na mensagem: escolha a agenda.');
-  if (lido.combinado) avisos.push('Este agendamento também tem ECO ou ECG: se for o caso, crie depois a marcação na agenda dos cardiologistas.');
+  if (m && !lido.data) avisos.push('Não consegui ler o dia na mensagem: preencha abaixo.');
+  if (m && !lido.linhas.length) avisos.push('Não reconheci o exame na mensagem: escolha a agenda.');
+  if (m && lido.linhas.some(l => !l.hora)) avisos.push(lido.linhas.length > 1 ? 'A mensagem traz um horário só: confira o horário de cada marcação.' : 'Não consegui ler a hora na mensagem: preencha abaixo.');
   document.getElementById('agAviso').innerHTML = avisos.map(esc).join('<br>');
-  document.getElementById('agCal').innerHTML = '<option value="">Carregando as agendas…</option>';
-  document.getElementById('agLivres').innerHTML = '';
-  document.getElementById('agMarcados').textContent = '';
-  document.getElementById('agSit').textContent = '';
   document.getElementById('agCriar').disabled = false;
-  document.getElementById('agCriar').textContent = 'Criar marcação';
+  agendaDesenharLinhas();
   document.getElementById('agendaModal').classList.add('show');
-  agendaCarregar(lido.cal);
+  agendaCarregarTudo();
 }
 function fecharAgenda() { document.getElementById('agendaModal').classList.remove('show'); agendaMsgId = null; }
-async function agendaCarregar(calPreferido) {
-  const sel = document.getElementById('agCal');
-  const cal = Number(calPreferido || sel.value || 0);
+function agendaAdicionarLinha() {
+  agendaColher();
+  if (agendaLinhas.length >= AG_MAX) return;
+  const usadas = agendaLinhas.map(l => l.cal);
+  // sugestão para a linha nova: cardiologistas, se ainda não está no agendamento
+  const sugestao = usadas.indexOf(AG_AGENDAS.CARDIO) < 0 ? { cal: AG_AGENDAS.CARDIO, titulo: 'ECO + ECG' } : { cal: 0, titulo: '' };
+  const pet = (agendaLinhas[0].desc || '').split(' · ')[0];
+  agendaLinhas.push({ cal: sugestao.cal, hora: '', titulo: sugestao.titulo, desc: [pet, (agendaLinhas[0].titulo || '').split(' + ')[0]].filter(Boolean).join(' · '), dados: null });
+  agendaDesenharLinhas();
+  agendaCarregar(agendaLinhas.length - 1);
+}
+function agendaTirarLinha(i) {
+  agendaColher();
+  if (agendaLinhas.length <= 1) return;
+  agendaLinhas.splice(i, 1);
+  agendaDesenharLinhas();
+  agendaLinhas.forEach((l, k) => agendaSituacao(k));
+}
+function agendaCarregarTudo() { agendaColher(); agendaLinhas.forEach((l, i) => agendaCarregar(i)); }
+async function agendaCarregar(i) {
+  agendaColher();
+  const l = agendaLinhas[i];
+  if (!l) return;
   const data = document.getElementById('agData').value;
-  document.getElementById('agSit').textContent = cal && data ? 'Consultando o CFAZ…' : '';
-  document.getElementById('agSit').className = 'ag-sit';
+  const sit = document.getElementById('agSit' + i);
+  if (sit) { sit.textContent = l.cal && data ? 'Consultando o CFAZ…' : ''; sit.className = 'ag-sit'; }
   try {
-    const r = await api('GET', '/api/cfaz/agenda?cal=' + cal + '&data=' + encodeURIComponent(data));
-    agendaDados = r;
-    sel.innerHTML = '<option value="">Escolha a agenda</option>' + (r.calendarios || []).map(k => '<option value="' + k.id + '"' + (k.id === cal ? ' selected' : '') + '>' + esc(k.nome) + '</option>').join('');
-    const hora = document.getElementById('agHora').value;
-    // Agenda do dia numa grade só: o que já está marcado (em vermelho, com o exame) e os horários livres (clicáveis)
-    const grade = (r.marcados || []).map(x => ({ h: x.hora, ocupado: x })).concat((r.livres || []).map(h => ({ h })));
-    grade.sort((a, b) => a.h.localeCompare(b.h) || (a.ocupado ? -1 : 1));
-    document.getElementById('agLivres').innerHTML = grade.map(g => g.ocupado
-      ? '<button type="button" class="ocupado" title="Já marcado: ' + esc(g.ocupado.titulo) + ' (' + g.ocupado.hora + ' às ' + esc(g.ocupado.fim || '') + ')" onclick="agendaEscolherHora(\'' + g.h + '\')">' + g.h + ' <b>' + esc(g.ocupado.titulo || 'marcado') + '</b></button>'
-      : '<button type="button"' + (g.h === hora ? ' class="sel"' : '') + ' onclick="agendaEscolherHora(\'' + g.h + '\')">' + g.h + '</button>').join('');
-    document.getElementById('agMarcados').innerHTML = !cal || !data ? '' :
-      '<b>Agenda do dia:</b> ' + (r.marcados && r.marcados.length ? r.marcados.length + (r.marcados.length === 1 ? ' marcação' : ' marcações') + ' (em vermelho)' : 'nenhuma marcação ainda') +
-      ' e ' + (r.livres || []).length + ' horários livres. O CFAZ conta 20 minutos por marcação, seja qual for o exame.';
-    if (r.aviso) document.getElementById('agAviso').innerHTML += (document.getElementById('agAviso').innerHTML ? '<br>' : '') + esc(r.aviso);
-    agendaSituacao();
+    const r = await api('GET', '/api/cfaz/agenda?cal=' + (l.cal || 0) + '&data=' + encodeURIComponent(data));
+    if (agendaLinhas[i] !== l) return; // a linha foi tirada enquanto consultava
+    l.dados = r;
+    if (r.calendarios && r.calendarios.length && !agendaCalendarios.length) { agendaCalendarios = r.calendarios; agendaColher(); agendaDesenharLinhas(); return; }
+    agendaDesenharDia(i);
+    if (r.aviso) { const a = document.getElementById('agAviso'); if (a.textContent.indexOf(r.aviso) < 0) a.innerHTML += (a.innerHTML ? '<br>' : '') + esc(r.aviso); }
   } catch (e) {
-    document.getElementById('agSit').textContent = 'Não consegui consultar o CFAZ: ' + e.message;
-    document.getElementById('agSit').className = 'ag-sit ruim';
+    const s = document.getElementById('agSit' + i);
+    if (s) { s.textContent = 'Não consegui consultar o CFAZ: ' + e.message; s.className = 'ag-sit ruim'; }
   }
 }
-// Atalhos da observação (um clique põe ou tira), ex.: "Aguardando exames pré-anestésicos"
-function agendaObs(t) {
-  const el = document.getElementById('agDesc');
+// Agenda do dia da linha i: o que já está marcado (em vermelho, com o exame) e os horários livres (clicáveis)
+function agendaDesenharDia(i) {
+  const l = agendaLinhas[i], r = l && l.dados;
+  const box = document.getElementById('agLivres' + i), rod = document.getElementById('agMarcados' + i);
+  if (!box || !rod) return;
+  const data = document.getElementById('agData').value;
+  if (!r || !l.cal || !data) { box.innerHTML = ''; rod.innerHTML = ''; agendaSituacao(i); return; }
+  const hora = document.getElementById('agHora' + i).value;
+  const grade = (r.marcados || []).map(x => ({ h: x.hora, ocupado: x })).concat((r.livres || []).map(h => ({ h })));
+  grade.sort((a, b) => a.h.localeCompare(b.h) || (a.ocupado ? -1 : 1));
+  box.innerHTML = grade.map(g => g.ocupado
+    ? '<button type="button" class="ocupado" title="Já marcado: ' + esc(g.ocupado.titulo) + ' (' + g.ocupado.hora + ' às ' + esc(g.ocupado.fim || '') + ')" onclick="agendaEscolherHora(' + i + ',\'' + g.h + '\')">' + g.h + ' <b>' + esc(g.ocupado.titulo || 'marcado') + '</b></button>'
+    : '<button type="button"' + (g.h === hora ? ' class="sel"' : '') + ' onclick="agendaEscolherHora(' + i + ',\'' + g.h + '\')">' + g.h + '</button>').join('');
+  rod.innerHTML = '<b>Agenda do dia:</b> ' + (r.marcados && r.marcados.length ? r.marcados.length + (r.marcados.length === 1 ? ' marcação' : ' marcações') + ' (em vermelho)' : 'nenhuma marcação ainda') +
+    ' e ' + (r.livres || []).length + ' horários livres.';
+  agendaSituacao(i);
+}
+// Atalhos da observação (um clique põe ou tira); segmentos: só um vale por vez
+function agendaObs(i, t) {
+  const el = document.getElementById('agDesc' + i);
   let partes = el.value.split(' · ').map(x => x.trim()).filter(Boolean);
-  const i = partes.findIndex(x => x.toLowerCase() === t.toLowerCase());
-  if (i >= 0) partes.splice(i, 1);
+  const k = partes.findIndex(x => x.toLowerCase() === t.toLowerCase());
+  if (k >= 0) partes.splice(k, 1);
   else {
-    // segmentos: só um vale por vez (clicar em "2 segmentos" troca o "1 segmento")
     if (/^\d+ segmentos?$/i.test(t)) partes = partes.filter(x => !/^\d+ segmentos?$/i.test(x));
     partes.push(t);
   }
   el.value = partes.join(' · ');
 }
-function agendaEscolherHora(h) {
-  document.getElementById('agHora').value = h;
-  document.querySelectorAll('#agLivres button').forEach(b => b.classList.toggle('sel', b.textContent === h));
-  agendaSituacao();
+function agendaEscolherHora(i, h) {
+  document.getElementById('agHora' + i).value = h;
+  agendaSituacao(i);
 }
 // Marcação já existente que bate com o horário escolhido (mesma hora ou encostando: cada marcação dura 20 min)
-function agendaConflito(hora) {
-  if (!agendaDados || !hora) return null;
+function agendaConflito(i, hora) {
+  const l = agendaLinhas[i];
+  if (!l || !l.dados || !hora) return null;
   const min = s => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
   const ini = min(hora), fim = ini + 20;
-  return (agendaDados.marcados || []).find(x => { const a = min(x.hora), b = x.fim ? min(x.fim) : a + 20; return a < fim && b > ini; }) || null;
+  return (l.dados.marcados || []).find(x => { const a = min(x.hora), b = x.fim ? min(x.fim) : a + 20; return a < fim && b > ini; }) || null;
 }
-function agendaSituacao() {
-  const el = document.getElementById('agSit');
-  const hora = document.getElementById('agHora').value;
-  const cal = Number(document.getElementById('agCal').value || 0), data = document.getElementById('agData').value;
+function agendaSituacao(i) {
+  const el = document.getElementById('agSit' + i);
+  if (!el) return;
+  const l = agendaLinhas[i];
+  const hora = document.getElementById('agHora' + i).value;
+  const cal = Number(document.getElementById('agCal' + i).value || 0), data = document.getElementById('agData').value;
   el.className = 'ag-sit';
-  if (!agendaDados || !cal || !data || !hora) { el.textContent = ''; return; }
-  const ocupado = agendaConflito(hora);
+  document.querySelectorAll('#agLivres' + i + ' button:not(.ocupado)').forEach(b => b.classList.toggle('sel', b.textContent === hora));
+  if (!l || !l.dados || !cal || !data) { el.textContent = ''; return; }
+  if (!hora) { el.textContent = 'Escolha o horário desta marcação.'; el.className = 'ag-sit ruim'; return; }
+  const ocupado = agendaConflito(i, hora);
   if (ocupado) { el.textContent = 'Atenção: já existe uma marcação das ' + ocupado.hora + ' às ' + ocupado.fim + ' nessa agenda (' + ocupado.titulo + ').'; el.className = 'ag-sit ruim'; }
-  else if ((agendaDados.livres || []).indexOf(hora) >= 0) { el.textContent = hora + ' está livre no CFAZ.'; el.className = 'ag-sit ok'; }
+  else if ((l.dados.livres || []).indexOf(hora) >= 0) { el.textContent = hora + ' está livre no CFAZ.'; el.className = 'ag-sit ok'; }
   else el.textContent = hora + ' não está na lista de horários livres do CFAZ. Confira antes de criar.';
-  document.querySelectorAll('#agLivres button').forEach(b => b.classList.toggle('sel', b.textContent === hora));
 }
 async function agendaCriar() {
   if (!currentChatContato) return;
-  const cal = Number(document.getElementById('agCal').value || 0), data = document.getElementById('agData').value, hora = document.getElementById('agHora').value;
-  const titulo = document.getElementById('agTitulo').value.trim();
-  const sit = document.getElementById('agSit');
-  if (!cal || !data || !hora || !titulo) { sit.textContent = 'Preencha a agenda, o dia, o horário e o título.'; sit.className = 'ag-sit ruim'; return; }
+  agendaColher();
+  const data = document.getElementById('agData').value, tel = document.getElementById('agTel').value.trim();
+  const nomeDe = cal => (agendaCalendarios.find(k => k.id === cal) || {}).nome || 'agenda';
+  // conferência de cada linha
+  let faltando = -1;
+  agendaLinhas.forEach((l, i) => { if (faltando < 0 && (!l.cal || !l.hora || !String(l.titulo || '').trim())) faltando = i; });
+  if (!data || faltando >= 0) {
+    const i = faltando >= 0 ? faltando : 0, s = document.getElementById('agSit' + i);
+    if (s) { s.textContent = !data ? 'Preencha o dia.' : 'Preencha a agenda, o horário e o título desta marcação (ou tire esta marcação).'; s.className = 'ag-sit ruim'; s.scrollIntoView({ block: 'center' }); }
+    return;
+  }
+  const repetida = agendaLinhas.find((l, i) => agendaLinhas.findIndex(x => x.cal === l.cal && x.hora === l.hora) !== i);
+  if (repetida) { toast('Há duas marcações iguais (mesma agenda e mesmo horário). Tire uma delas.', 'err'); return; }
   // O CFAZ aceita duas marcações no mesmo horário; por isso o CRM pergunta antes.
-  let forcar = false;
-  const ocupado = agendaConflito(hora);
-  if (ocupado) {
-    if (!confirm('Já existe uma marcação das ' + ocupado.hora + ' às ' + ocupado.fim + ' nessa agenda (' + ocupado.titulo + ').\n\nCriar outra no mesmo horário?')) return;
-    forcar = true;
-  }
+  const conflitos = agendaLinhas.map((l, i) => ({ l, o: agendaConflito(i, l.hora) })).filter(x => x.o);
+  if (conflitos.length && !confirm(conflitos.map(x => nomeDe(x.l.cal) + ': já existe uma marcação das ' + x.o.hora + ' às ' + x.o.fim + ' (' + x.o.titulo + ').').join('\n') + '\n\nCriar mesmo assim?')) return;
   const btn = document.getElementById('agCriar');
+  btn.disabled = true;
   const destino = currentChatContato.id;
-  const corpo = { cal, data, hora, titulo, descricao: document.getElementById('agDesc').value.trim(), telefone: document.getElementById('agTel').value.trim(), msg_id: agendaMsgId };
-  const tentar = async (f) => {
-    btn.disabled = true; btn.textContent = 'Criando…';
-    const r = await api('POST', '/api/contato/' + destino + '/agenda-cfaz', Object.assign({ forcar: f }, corpo));
-    fecharAgenda();
-    toast('Marcação criada no CFAZ: ' + (r.calendario || '') + ', ' + data.slice(8, 10) + '/' + data.slice(5, 7) + ' às ' + hora);
-    if (currentChatContato && currentChatContato.id === destino) await recarregarChat('auto', true);
-  };
-  try {
-    await tentar(forcar);
-  } catch (e) {
-    // alguém marcou esse horário enquanto o formulário estava aberto
-    if (!forcar && /^Já existe uma marcação/.test(e.message) && confirm(e.message + '\n\nCriar outra no mesmo horário?')) {
-      try { await tentar(true); return; } catch (e2) { e = e2; }
-    }
-    sit.textContent = 'Não foi criada: ' + e.message; sit.className = 'ag-sit ruim';
-    btn.disabled = false; btn.textContent = 'Criar marcação';
+  const feitas = [];
+  let erro = null;
+  // uma por vez; a que der certo sai do formulário, para uma nova tentativa não repetir
+  while (agendaLinhas.length && !erro) {
+    const l = agendaLinhas[0];
+    btn.textContent = 'Criando ' + (feitas.length + 1) + ' de ' + (feitas.length + agendaLinhas.length) + '…';
+    const corpo = { cal: l.cal, data, hora: l.hora, titulo: String(l.titulo).trim(), descricao: String(l.desc || '').trim(), telefone: tel, msg_id: agendaMsgId };
+    try {
+      let r;
+      try { r = await api('POST', '/api/contato/' + destino + '/agenda-cfaz', Object.assign({ forcar: conflitos.some(x => x.l === l) }, corpo)); }
+      catch (e) {
+        // alguém marcou esse horário enquanto o formulário estava aberto
+        if (/^Já existe uma marcação/.test(e.message) && confirm(nomeDe(l.cal) + ': ' + e.message + '\n\nCriar mesmo assim?')) r = await api('POST', '/api/contato/' + destino + '/agenda-cfaz', Object.assign({ forcar: true }, corpo));
+        else throw e;
+      }
+      feitas.push((r.calendario || nomeDe(l.cal)) + ' às ' + l.hora);
+      agendaLinhas.shift();
+    } catch (e) { erro = e; }
   }
+  if (currentChatContato && currentChatContato.id === destino && feitas.length) { try { await recarregarChat('auto', true); } catch (e) {} }
+  if (!erro) {
+    fecharAgenda();
+    toast((feitas.length > 1 ? feitas.length + ' marcações criadas no CFAZ: ' : 'Marcação criada no CFAZ: ') + feitas.join(' e ') + ', ' + data.slice(8, 10) + '/' + data.slice(5, 7));
+    return;
+  }
+  // parou no meio: mostra o que já foi criado e deixa no formulário só o que falta
+  agendaDesenharLinhas();
+  agendaLinhas.forEach((l, i) => agendaSituacao(i));
+  const s = document.getElementById('agSit0');
+  if (s) { s.textContent = 'Não foi criada: ' + erro.message; s.className = 'ag-sit ruim'; }
+  document.getElementById('agAviso').innerHTML = feitas.length ? esc('Já criada no CFAZ: ' + feitas.join(' e ') + '. Ficou faltando o que está abaixo.') : '';
+  btn.disabled = false;
 }
 async function desfazerAgenda(eventoId) {
   if (!confirm('Apagar esta marcação da agenda do CFAZ?')) return;

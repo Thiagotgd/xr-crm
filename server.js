@@ -505,8 +505,10 @@ function anexarAgenda(mensagens) {
   if (!mensagens || !mensagens.length) return;
   const ids = mensagens.map(m => m.id);
   const rows = db.prepare('SELECT * FROM agenda_cfaz WHERE msg_id IN (' + ids.map(() => '?').join(',') + ')').all(...ids);
-  const por = {}; for (const r of rows) por[r.msg_id] = r;
-  for (const m of mensagens) if (por[m.id]) m.cfaz = { evento_id: por[m.id].evento_id, calendario: por[m.id].calendario_nome, inicio: por[m.id].inicio, titulo: por[m.id].titulo };
+  // 12/11/2026: uma mensagem pode ter várias marcações (ex.: ressonância + ecocardiograma) → lista, na ordem do horário
+  const por = {};
+  for (const r of rows) (por[r.msg_id] = por[r.msg_id] || []).push({ evento_id: r.evento_id, calendario_id: r.calendario_id, calendario: r.calendario_nome, inicio: r.inicio, titulo: r.titulo });
+  for (const m of mensagens) if (por[m.id]) m.cfaz = por[m.id].sort((a, b) => String(a.inicio).localeCompare(String(b.inicio)));
 }
 
 // ─── Routes ────────────────────────────────────────────────────────────────────
@@ -1466,7 +1468,8 @@ async function handleRequest(req, res) {
     if (!contato) return sendJSON(res, 404, { error: 'Contato não encontrado' });
     const cal = Number(body.cal || 0), data = String(body.data || ''), hora = String(body.hora || ''), titulo = String(body.titulo || '').trim();
     if (!cal || !/^\d{4}-\d{2}-\d{2}$/.test(data) || !/^\d{2}:\d{2}$/.test(hora) || !titulo) return sendJSON(res, 400, { error: 'Informe agenda, dia, horário e título.' });
-    if (body.msg_id && db.prepare('SELECT 1 FROM agenda_cfaz WHERE msg_id = ?').get(body.msg_id)) return sendJSON(res, 400, { error: 'Esta mensagem já tem uma marcação criada no CFAZ.' });
+    // a mesma mensagem pode gerar marcações em agendas diferentes; só não repete a mesma agenda no mesmo horário
+    if (body.msg_id && db.prepare('SELECT 1 FROM agenda_cfaz WHERE msg_id = ? AND calendario_id = ? AND inicio = ?').get(body.msg_id, cal, data + ' ' + hora)) return sendJSON(res, 400, { error: 'Esta marcação já foi criada a partir desta mensagem.' });
     try {
       const cals = await cfazCalendarios();
       const c = cals.find(x => x.id === cal);
