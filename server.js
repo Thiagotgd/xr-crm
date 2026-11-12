@@ -342,9 +342,11 @@ function evoSendText(phone, text, quoted) {
 }
 
 // Mark messages as read on WhatsApp (sync CRM → WhatsApp)
-function evoMarkAsRead(phone) {
+function evoMarkAsRead(phone, ids) {
   const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
-  const payload = JSON.stringify({ readMessages: [{ remoteJid: jid, fromMe: false, id: 'all' }] });
+  const lista = (ids && ids.length ? ids : ['all']).map(id => ({ remoteJid: jid, fromMe: false, id }));
+  console.log(`[CRM] lido → WhatsApp: ${phone} (${ids && ids.length ? ids.length + ' mensagens' : 'sem identificador'})`);
+  const payload = JSON.stringify({ readMessages: lista });
   const url = new URL(`${EVO_BASE}/chat/markMessageAsRead/${EVO_INSTANCE}`);
   const req = http.request({
     hostname: url.hostname, port: url.port, path: url.pathname,
@@ -655,8 +657,14 @@ async function handleRequest(req, res) {
       // Mark as read + reset manual_unread
       db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(id);
       // Sync: mark as read on real WhatsApp too — só se havia algo por ler (antes ia a cada atualização)
-      const haviaNaoLida = contato.manual_unread || db.prepare("SELECT 1 FROM mensagens WHERE contato_id = ? AND direcao = 'in' AND created_at > COALESCE(NULLIF(?, ''), '1970-01-01') LIMIT 1").get(id, contato.last_read_at || '');
-      if (contato.telefone && haviaNaoLida) evoMarkAsRead(contato.telefone);
+      // 12/11/2026: o aviso precisa dizer QUAIS mensagens foram lidas (o identificador de cada uma). Antes ia
+      // id "all", que o WhatsApp ignora: a conversa aberta no CRM continuava como não lida no WhatsApp da recepção.
+      const naoLidas = db.prepare("SELECT wa_msg_id FROM mensagens WHERE contato_id = ? AND direcao = 'in' AND wa_msg_id != '' AND created_at > COALESCE(NULLIF(?, ''), '1970-01-01') ORDER BY id DESC LIMIT 40").all(id, contato.last_read_at || '').map(r => r.wa_msg_id);
+      if (!naoLidas.length && contato.manual_unread) {
+        const ult = db.prepare("SELECT wa_msg_id FROM mensagens WHERE contato_id = ? AND direcao = 'in' AND wa_msg_id != '' ORDER BY id DESC LIMIT 1").get(id);
+        if (ult) naoLidas.push(ult.wa_msg_id);
+      }
+      if (contato.telefone && naoLidas.length) evoMarkAsRead(contato.telefone, naoLidas);
     }
     return sendJSON(res, 200, contato);
   }
