@@ -377,6 +377,56 @@ function evoPost(caminho, corpo) {
 }
 
 // ─── Prévia de link ─────────────────────────────────────────────────────────────
+// ─── Fotos de perfil guardadas no CRM ───────────────────────────────────────────
+// Uma foto a cada 4 segundos, começando pelos grupos e pelas conversas mais recentes; cada contato é revisto a cada
+// 14 dias (grupo, 7). Abrir uma conversa com foto antiga põe o contato na frente da fila. FOTOS=0 desliga.
+const FOTOS_LIGADAS = process.env.FOTOS !== '0' && EVO_INSTANCE !== 'ensaio';
+try { db.exec("ALTER TABLE contatos ADD COLUMN foto_em TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE grupos ADD COLUMN foto_em TEXT DEFAULT ''"); } catch {}
+const fotoFila = [];
+let fotoOcupada = false;
+let fotosFeitas = 0;
+async function renovarFoto(tabela, id, endereco) {
+  const arq = 'foto_' + (tabela === 'grupos' ? 'g' : 'c') + id + '.jpg';
+  let novo = '';
+  try {
+    const url = await evoFetchProfilePic(endereco);
+    if (url) {
+      const r = await baixarDeFora(url, 3000000, 3);
+      if (/^image\//i.test(r.tipo) && r.corpo.length > 200) {
+        fs.writeFileSync(path.join(MEDIA_DIR, arq), r.corpo);
+        novo = '/media/' + arq + '?v=' + Date.now();
+      }
+    }
+  } catch (e) { /* sem foto, ou não deu agora: tenta de novo no próximo ciclo */ }
+  if (!novo) {
+    // não veio foto: se já havia uma guardada aqui, ela continua; endereço antigo do WhatsApp (vencido) sai
+    const atual = db.prepare(`SELECT foto_url FROM ${tabela} WHERE id = ?`).get(id);
+    novo = atual && String(atual.foto_url || '').startsWith('/media/foto_') ? atual.foto_url : '';
+  }
+  db.prepare(`UPDATE ${tabela} SET foto_url = ?, foto_em = datetime('now','localtime') WHERE id = ?`).run(novo, id);
+  fotosFeitas++;
+  if (fotosFeitas % 100 === 0) console.log('[FOTOS] ' + fotosFeitas + ' fotos conferidas desde que o CRM subiu');
+}
+async function proximaFoto() {
+  if (fotoOcupada) return;
+  fotoOcupada = true;
+  try {
+    let alvo = fotoFila.shift();
+    if (!alvo) {
+      const g = db.prepare("SELECT id, jid FROM grupos WHERE ativo = 1 AND (COALESCE(foto_em,'') = '' OR foto_em < datetime('now','localtime','-7 days')) LIMIT 1").get();
+      if (g) alvo = { tabela: 'grupos', id: g.id, endereco: g.jid };
+    }
+    if (!alvo) {
+      const c = db.prepare("SELECT id, telefone FROM contatos WHERE telefone NOT LIKE '%@%' AND length(telefone) >= 10 AND (COALESCE(foto_em,'') = '' OR foto_em < datetime('now','localtime','-14 days')) AND last_message_at >= datetime('now','localtime','-60 days') ORDER BY last_message_at DESC LIMIT 1").get();
+      if (c) alvo = { tabela: 'contatos', id: c.id, endereco: c.telefone };
+    }
+    if (alvo) await renovarFoto(alvo.tabela, alvo.id, alvo.endereco);
+  } catch (e) { console.error('[FOTOS]', e.message); }
+  fotoOcupada = false;
+}
+if (FOTOS_LIGADAS) { setInterval(proximaFoto, 4000); console.log('[FOTOS] fotos de perfil guardadas no CRM: ligado'); }
+
 const dns = require('dns');
 const PREVIA_LIGADA = process.env.PREVIA !== '0';
 function ipInterno(ip) {
@@ -951,6 +1001,13 @@ async function handleRequest(req, res) {
     contato.mensagens = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? ORDER BY created_at DESC, id DESC LIMIT 51').all(id);
     contato.tem_mais = contato.mensagens.length > 50;
     if (contato.tem_mais) contato.mensagens.pop();
+    // foto de perfil antiga (ou ainda não guardada): este contato vai para a frente da fila das fotos
+    try {
+      if (FOTOS_LIGADAS && !String(contato.telefone || '').includes('@') && !fotoFila.some(f => f.tabela === 'contatos' && f.id === contato.id) &&
+          db.prepare("SELECT (COALESCE(foto_em,'') = '' OR foto_em < datetime('now','localtime','-3 days')) AS velha FROM contatos WHERE id = ?").get(contato.id).velha) {
+        fotoFila.unshift({ tabela: 'contatos', id: contato.id, endereco: contato.telefone });
+      }
+    } catch (e) {}
     // links ainda sem prévia (mensagens de antes de 12/11/2026): busca em segundo plano; aparece na atualização seguinte
     try {
       let n = 0;
