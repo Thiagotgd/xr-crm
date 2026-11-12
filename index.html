@@ -4375,7 +4375,8 @@ document.addEventListener('mouseover', function (e) {
 // Abre a prévia de envio já com o arquivo e a legenda; a pessoa só confere e aperta Enter. Para acrescentar
 // outro arquivo pronto: pôr o arquivo na pasta "arquivos" do CRM e acrescentar uma linha nesta lista.
 const ARQUIVOS_PRONTOS = [
-  { atalho: 'foto', nome: 'Recomendações de tomografia e ressonância', url: '/arquivos/recomendacoes-tc-rm.jpg', arquivo: 'Recomendacoes-TC-RM.jpg', tipo: 'image/jpeg',
+  // "?v=" muda a cada troca da imagem, para o navegador não mandar a antiga que ficou guardada (12/11/2026: flyer "Preparo para o exame")
+  { atalho: 'foto', nome: 'Preparo para o exame (tomografia e ressonância)', url: '/arquivos/recomendacoes-tc-rm.jpg?v=2', arquivo: 'Preparo-para-o-exame-TC-RM.jpg', tipo: 'image/jpeg',
     legenda: 'Recomendações e Exames necessários', busca: 'foto recomendacoes recomendações exames necessarios necessários preparo imagem' },
 ];
 function arquivosProntosNoMenu() {
