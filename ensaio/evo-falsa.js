@@ -25,6 +25,11 @@ http.createServer((req, res) => {
         return { exists: existe, jid: certo + '@s.whatsapp.net', number: num };
       })));
     }
+    // baixar o arquivo de uma mensagem recebida: devolve sempre uma fotinho de ensaio
+    if (/\/chat\/getBase64FromMediaMessage\//.test(req.url)) {
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ mimetype: 'image/jpeg', base64: '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/9oACAEBAAA/APn+v//Z' }));
+    }
     // contatos que o "WhatsApp" conhece
     if (/\/chat\/findContacts\//.test(req.url)) {
       res.writeHead(200, { 'Content-Type': 'application/json' });

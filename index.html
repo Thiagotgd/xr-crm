@@ -788,6 +788,13 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
 .msg-responder:hover { background: rgba(134,150,160,.42); }
 .messages-area.selecionando .msg-responder { display: none; }
 @media (max-width: 768px) { .msg-responder { display: none; } }
+
+/* ── 12/11/2026: grupos do WhatsApp na lista de conversas e no painel da conversa ── */
+.msg .mg-nome { font-size: 12.5px; font-weight: 600; margin-bottom: 2px; }
+.conversa-row.grupo .conversa-avatar-fb { font-size: 20px; }
+/* no grupo não há orçamento nem cartão de contato */
+#chatActivePanel.modo-grupo .compose-bar [onclick="abrirOrcamentoChat()"],
+#chatActivePanel.modo-grupo .compose-bar [onclick="abrirEnviarContato()"] { display: none; }
 </style>
 </head>
 <body>
@@ -3343,6 +3350,171 @@ function avisarNovas(data) {
   } catch (e) {}
 }
 
+// ─── Grupos do WhatsApp dentro da lista de conversas ───────────────────────────────────────────────────
+// O grupo aparece na lista como uma conversa e abre no mesmo painel. Tem texto, foto, áudio e arquivo, e dá para
+// escrever e anexar. Reagir, responder citando, editar e encaminhar ficam só nas conversas com contato.
+let gruposLista = [];
+let gruposAssinatura = '';
+let chatGrupo = null;        // { id, nome, foto_url, mensagens } do grupo aberto
+let grupoAssinatura = '';
+async function atualizarGrupos() {
+  try {
+    const g = await api('GET', '/api/grupos');
+    const ass = JSON.stringify((g || []).map(x => [x.id, x.nome, x.ultima_msg_at, x.nao_lidas]));
+    gruposLista = Array.isArray(g) ? g : [];
+    if (ass !== gruposAssinatura) { gruposAssinatura = ass; if (currentTab === 'conversas') renderConversasList(); }
+  } catch (e) {}
+}
+function linhaGrupo(c) {
+  const unread = c.nao_lidas || 0;
+  const hora = c.ultima_msg_at ? formatTimeWa(new Date(c.ultima_msg_at)) : '';
+  const ativo = chatGrupo && chatGrupo.id === c.gid;
+  let previa = '';
+  if (c.ultima_msg) {
+    const txt = String(c.ultima_msg);
+    previa = (c.ultimo_remetente ? esc(String(c.ultimo_remetente).split(' ')[0]) + ': ' : '') +
+      (c.ultima_msg_tipo === 'image' ? '&#x1F4F7; ' : c.ultima_msg_tipo === 'audio' ? '&#x1F3A4; ' : c.ultima_msg_tipo === 'document' ? '&#x1F4CE; ' : '') +
+      esc(txt === '[image]' ? 'Foto' : txt === '[audio]' ? 'Áudio' : txt === '[document]' ? 'Documento' : txt === '[video]' ? 'Vídeo' : txt.split('\n')[0]).substring(0, 60);
+  }
+  const avatar = (c.foto_url && !fotosRuins.has(c.foto_url))
+    ? '<img class="conversa-avatar" loading="lazy" src="' + esc(c.foto_url) + '" onerror="fotoRuim(this)"><div class="conversa-avatar-fb" style="display:none">&#x1F465;</div>'
+    : '<div class="conversa-avatar-fb">&#x1F465;</div>';
+  return '<div class="conversa-row grupo' + (ativo ? ' active' : '') + (unread ? ' has-unread' : '') + '" data-id="' + c.id + '" onclick="abrirGrupoConversa(' + c.gid + ')">' +
+    avatar +
+    '<div class="conversa-info">' +
+      '<div class="conversa-top-row">' +
+        '<div class="conversa-name"><span class="conversa-nome-txt">' + esc(c.nome) + '</span><span class="conversa-tel">grupo</span></div>' +
+        '<span class="conversa-time' + (unread ? ' unread' : '') + '">' + hora + '</span>' +
+      '</div>' +
+      '<div class="conversa-bottom-row"><div class="conversa-preview">' + previa + '</div>' +
+        '<div class="conversa-badges">' + (unread ? '<span class="conversa-unread-badge">' + (unread > 99 ? '99+' : unread) + '</span>' : '') + '</div></div>' +
+    '</div>' +
+  '</div>';
+}
+function sairDoGrupo() {
+  if (!chatGrupo) return;
+  chatGrupo = null;
+  grupoAssinatura = '';
+  const p = document.getElementById('chatActivePanel');
+  if (p) p.classList.remove('modo-grupo');
+}
+async function abrirGrupoConversa(gid) {
+  const g = gruposLista.find(x => x.id === gid);
+  if (!g) return;
+  guardarRascunho();
+  sairDaSelecao();
+  cancelarResposta();
+  if (chatEdit) cancelarEdicao();
+  hideChatSlashPopup();
+  fecharReacoes();
+  currentChatContato = null;
+  chatAntigas = [];
+  chatGrupo = { id: g.id, nome: g.nome, foto_url: g.foto_url, mensagens: [] };
+  grupoAssinatura = '';
+  document.getElementById('chatEmptyState').style.display = 'none';
+  const painel = document.getElementById('chatActivePanel');
+  painel.style.display = 'flex';
+  painel.classList.add('modo-grupo');
+  document.getElementById('conversasChat').classList.add('mobile-open');
+  mostrarAvisoNova(false);
+  document.getElementById('chatHeader').innerHTML =
+    '<button class="dt-back ch-back" onclick="closeConversaChat()" style="font-size:18px;background:none;border:none;color:var(--text);cursor:pointer;padding:4px">&#x2190;</button>' +
+    (g.foto_url ? '<img class="ch-avatar" src="' + esc(g.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"><div class="ch-avatar-fb" style="display:none">&#x1F465;</div>'
+      : '<div class="ch-avatar-fb">&#x1F465;</div>') +
+    '<div class="ch-info"><div class="ch-name">' + esc(g.nome) + '</div><div class="ch-status">Grupo do WhatsApp</div></div>';
+  document.getElementById('chatMessagesArea').innerHTML = '<div class="empty" style="padding:40px 0">Carregando…</div>';
+  const input = document.getElementById('chatComposeInput');
+  input.value = '';
+  ajustarAltura(input);
+  sugDispensada = '';
+  mostrarSugestoes();
+  if (window.innerWidth > 768) input.focus();
+  try { await recarregarGrupo('fim'); } catch (e) { toast('Erro: ' + e.message, 'err'); }
+  g.nao_lidas = 0;
+  renderConversasList();
+}
+async function recarregarGrupo(rolar) {
+  if (!chatGrupo) return;
+  const id = chatGrupo.id;
+  const msgs = await api('GET', '/api/grupo/' + id + '/mensagens' + (telaNaFrente() ? '' : '?visto=0'));
+  if (!chatGrupo || chatGrupo.id !== id) return; // trocou de conversa enquanto buscava
+  const ass = (msgs || []).map(m => m.id + (m.media_path ? 'M' : '')).join(',');
+  if (ass === grupoAssinatura && rolar !== 'fim') return;
+  grupoAssinatura = ass;
+  chatGrupo.mensagens = msgs || [];
+  desenharGrupo(rolar || 'auto');
+}
+// Cor do nome de cada participante (sempre a mesma para a mesma pessoa)
+function corDoParticipante(quem) {
+  const cores = ['#53bdeb', '#f0a04b', '#7fd18c', '#e88bc4', '#b99cf0', '#f07f7f', '#5fd3c4', '#d9c355'];
+  let h = 0;
+  const t = String(quem || '');
+  for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0;
+  return cores[h % cores.length];
+}
+function desenharGrupo(rolar) {
+  const area = document.getElementById('chatMessagesArea');
+  const msgs = (chatGrupo && chatGrupo.mensagens) || [];
+  const estavaNoFim = area.scrollHeight - area.scrollTop - area.clientHeight < 140;
+  const antesTopo = area.scrollTop;
+  if (!msgs.length) { area.innerHTML = '<div class="empty"><div class="emoji">&#x1F4AC;</div>Nenhuma mensagem guardada deste grupo ainda</div>'; return; }
+  let diaAtual = '';
+  area.innerHTML = msgs.slice().reverse().map(m => {
+    const eu = m.remetente === 'me';
+    let content = eu ? '' : '<div class="mg-nome" style="color:' + corDoParticipante(m.remetente || m.remetente_nome) + '">' + esc(m.remetente_nome || 'Participante') + '</div>';
+    if (m.media_path && m.tipo === 'image') {
+      content += '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="abrirVisor(\'/media/' + esc(m.media_path) + '\',\'image\')" alt="imagem" title="Clique para ver maior (Esc fecha)">';
+      if (m.texto && m.texto !== '[image]') content += '<div>' + fmtWa(m.texto) + '</div>';
+    } else if (m.media_path && m.tipo === 'audio') {
+      content += '<audio controls src="/media/' + esc(m.media_path) + '" style="max-width:250px"></audio>';
+    } else if (m.media_path && (m.tipo === 'document' || m.tipo === 'video')) {
+      const arq = rotuloArquivo(m);
+      if (/\.pdf$/i.test(m.media_path)) content += '<div class="msg-pdf-box" data-pdf="/media/' + esc(m.media_path) + '" data-nome="' + esc(arq.rotulo) + '" onclick="abrirVisor(this.dataset.pdf, \'pdf\', this.dataset.nome)" title="Abrir o PDF (Esc fecha)"><span>PDF</span></div>';
+      content += '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link" title="Abrir o arquivo" data-nome="' + esc(arq.rotulo) + '" onclick="return abrirArquivo(event, this)">&#x1F4CE; <span>' + esc(arq.rotulo) + '</span></a>';
+      if (arq.legenda) content += '<div>' + fmtWa(arq.legenda) + '</div>';
+    } else {
+      content += fmtWa(m.texto === '[image]' ? '📷 Foto' : m.texto === '[audio]' ? '🎤 Áudio' : m.texto === '[document]' ? '📎 Documento' : m.texto === '[video]' ? '🎥 Vídeo' : m.texto);
+    }
+    const dia = String(m.created_at || '').slice(0, 10);
+    let faixa = '';
+    if (dia && dia !== diaAtual) { diaAtual = dia; faixa = '<div class="msg-dia">' + rotuloDia(dia) + '</div>'; }
+    return faixa + '<div class="msg ' + (eu ? 'out' : 'in') + ' de-grupo">' + content + '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + horaMsg(m.created_at) + '</div></div>';
+  }).join('');
+  ligarPdfPrevias(area);
+  const irAoFim = () => { area.scrollTop = area.scrollHeight; };
+  if (rolar === 'fim' || estavaNoFim) {
+    irAoFim();
+    area.querySelectorAll('img, audio').forEach(el => { el.addEventListener('load', irAoFim); el.addEventListener('loadeddata', irAoFim); });
+    setTimeout(irAoFim, 200);
+  } else {
+    area.scrollTop = antesTopo;
+  }
+}
+let enviandoGrupo = false;
+async function enviarParaGrupo() {
+  if (!chatGrupo || enviandoGrupo) return;
+  const input = document.getElementById('chatComposeInput');
+  const texto = input.value.replace(/\s+$/, '').replace(/^\n+/, '');
+  if (!texto.trim()) return;
+  const id = chatGrupo.id;
+  enviandoGrupo = true;
+  input.value = '';
+  ajustarAltura(input);
+  hideChatSlashPopup();
+  sugDispensada = null;
+  mostrarSugestoes();
+  try {
+    await api('POST', '/api/grupo/' + id + '/mensagem', { texto: texto });
+    if (chatGrupo && chatGrupo.id === id) await recarregarGrupo('fim');
+    atualizarGrupos();
+  } catch (e) {
+    toast('NÃO foi enviada: ' + e.message, 'err');
+    if (chatGrupo && chatGrupo.id === id && !input.value) { input.value = texto; ajustarAltura(input); }
+  }
+  enviandoGrupo = false;
+  input.focus();
+}
+
 // ─── Lista de conversas ─────────────────────────────────────────────────────────────────────────
 // Telefone sem o código do país, para caber ao lado do nome: "(31) 99999-9999"
 function telefoneCurto(p) {
@@ -3419,7 +3591,7 @@ function renderConversasList() {
   // quantas conversas estão não lidas, no botão "Não lidas" (pedido da recepção em 12/11/2026)
   const chipNum = document.getElementById('chipNaoLidas');
   if (chipNum) {
-    const nNao = conversasList.filter(c => (c.nao_lidas > 0 || c.manual_unread)).length;
+    const nNao = conversasList.filter(c => (c.nao_lidas > 0 || c.manual_unread)).length + gruposLista.filter(g => g.nao_lidas > 0).length;
     chipNum.textContent = nNao > 99 ? '99+' : String(nNao);
     chipNum.style.display = nNao ? '' : 'none';
   }
@@ -3466,6 +3638,17 @@ function renderConversasList() {
     buscarAntigos(q);
   } else if (buscaExtra.length) { buscaExtra = []; buscaTexto = ''; }
 
+  // Grupos do WhatsApp entram junto com as conversas (em "Tudo" e "Não lidas"), na posição da última mensagem
+  if (conversasFilter === 'tudo' || conversasFilter === 'nao-lidas') {
+    for (const g of gruposLista) {
+      if (conversasFilter === 'nao-lidas' && !(g.nao_lidas > 0)) continue;
+      if (q && !String(g.nome || '').toLowerCase().includes(q)) continue;
+      const quando = g.ultima_msg_at || ''; // grupo ainda sem mensagem guardada fica no fim da lista
+      filtered.push({ grupo: 1, id: 'g' + g.id, gid: g.id, nome: g.nome, foto_url: g.foto_url, ultima_msg_at: quando, last_message_at: quando, created_at: quando,
+        nao_lidas: g.nao_lidas, ultima_msg: g.ultima_msg, ultimo_remetente: g.ultimo_remetente, ultima_msg_tipo: g.ultima_msg_tipo });
+    }
+  }
+
   // Sort: pinned first, then by last_message_at
   filtered.sort((a, b) => {
     if (a.pinado && !b.pinado) return -1;
@@ -3485,6 +3668,7 @@ function renderConversasList() {
   const visiveis = filtered.slice(0, listaLimite);
 
   list.innerHTML = visiveis.map(c => {
+    if (c.grupo) return linhaGrupo(c);
     const unread = Math.max(c.nao_lidas || 0, c.manual_unread || 0);
     const lastTime = c.ultima_msg_at || c.last_message_at;
     const timeStr = lastTime ? formatTimeWa(new Date(lastTime)) : '';
@@ -3601,6 +3785,7 @@ function guardarRascunho() {
 async function openConversaChat(id) {
   try {
     guardarRascunho();
+    sairDoGrupo();
     if (!currentChatContato || currentChatContato.id !== id) sairDaSelecao(); // seleção para encaminhar é de uma conversa só
     const c = await api('GET', '/api/contato/' + id);
     currentChatContato = c;
@@ -3633,6 +3818,7 @@ async function openConversaChat(id) {
 
 function closeConversaChat() {
   guardarRascunho();
+  sairDoGrupo();
   document.getElementById('conversasChat').classList.remove('mobile-open');
   document.getElementById('chatActivePanel').style.display = 'none';
   document.getElementById('chatEmptyState').style.display = 'flex';
@@ -4274,6 +4460,7 @@ async function processarFila() {
 }
 
 function sendChatMessage() {
+  if (chatGrupo) { enviarParaGrupo(); return; }
   if (!currentChatContato) return;
   if (chatEdit) { salvarEdicao(); return; }
   const input = document.getElementById('chatComposeInput');
@@ -4382,7 +4569,7 @@ function handleChatComposeKey(e) {
 // Mensagem rápida: entra no campo para a pessoa conferir e ajustar antes de enviar (como no WhatsApp Business).
 function sendChatQuickMsg(id) {
   const msg = msgsRapidas.find(m => m.id === id);
-  if (!msg || !currentChatContato) return;
+  if (!msg || !(currentChatContato || chatGrupo)) return;
   hideChatSlashPopup();
   const input = document.getElementById('chatComposeInput');
   input.value = msg.texto;
@@ -4399,17 +4586,18 @@ let anexoEnviando = false;
 function tamanhoLegivel(n) { return n >= 1048576 ? (n / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
 
 function abrirAnexos(files) {
-  if (!currentChatContato || anexoEnviando) return;
+  if (!(currentChatContato || chatGrupo) || anexoEnviando) return;
+  const destinoAgora = chatGrupo ? 'g' + chatGrupo.id : currentChatContato.id;
   const lista = Array.from(files || []).filter(f => f && f.size > 0);
   if (!lista.length) return;
   const grandes = lista.filter(f => f.size > ANEXO_MAX);
   if (grandes.length) toast('Arquivo acima de 15 MB não é enviado: ' + grandes[0].name, 'err');
   const novos = lista.filter(f => f.size <= ANEXO_MAX);
   if (!novos.length) return;
-  if (anexoDestino !== currentChatContato.id) { anexosFila = []; document.getElementById('anexoLegenda').value = ''; }
-  anexoDestino = currentChatContato.id;
+  if (anexoDestino !== destinoAgora) { anexosFila = []; document.getElementById('anexoLegenda').value = ''; }
+  anexoDestino = destinoAgora;
   anexosFila = anexosFila.concat(novos).slice(0, 10);
-  document.getElementById('anexoTitulo').textContent = 'Enviar para ' + (currentChatContato.nome || formatPhone(currentChatContato.telefone));
+  document.getElementById('anexoTitulo').textContent = 'Enviar para ' + (chatGrupo ? 'o grupo ' + chatGrupo.nome : (currentChatContato.nome || formatPhone(currentChatContato.telefone)));
   desenharAnexos();
   document.getElementById('anexoModal').classList.add('show');
   setTimeout(() => document.getElementById('anexoLegenda').focus(), 50);
@@ -4462,7 +4650,8 @@ async function enviarAnexos() {
       const ehFoto = f.type.startsWith('image/');
       const nome = f.name && f.name !== 'image.png' ? f.name : (ehFoto ? 'imagem.' + ((f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')) : 'arquivo');
       const base64 = await lerBase64(f);
-      await api('POST', '/api/contato/' + destino + '/media', { base64, mediatype: ehFoto ? 'image' : 'document', mimetype: f.type, fileName: nome, caption: i === 0 ? legenda : '' });
+      const paraOnde = String(destino).charAt(0) === 'g' ? '/api/grupo/' + String(destino).slice(1) + '/media' : '/api/contato/' + destino + '/media';
+      await api('POST', paraOnde, { base64, mediatype: ehFoto ? 'image' : 'document', mimetype: f.type, fileName: nome, caption: i === 0 ? legenda : '' });
       enviados++;
     }
     toast(enviados > 1 ? enviados + ' arquivos enviados' : 'Arquivo enviado');
@@ -4473,6 +4662,7 @@ async function enviarAnexos() {
   if (enviados === arquivos.length) fecharAnexo();
   else { anexosFila = arquivos.slice(enviados); desenharAnexos(); }
   if (currentChatContato && currentChatContato.id === destino) { try { await recarregarChat('fim', true); } catch (e) {} }
+  if (chatGrupo && 'g' + chatGrupo.id === destino) { try { await recarregarGrupo('fim'); } catch (e) {} }
   loadConversas();
 }
 function escolherArquivosChat(input) {
@@ -4485,7 +4675,7 @@ function sendFileChat(input) { escolherArquivosChat(input); }
 
 // Colar: imagem ou arquivo copiado vira anexo com prévia; texto continua colando normalmente no campo.
 document.addEventListener('paste', function (e) {
-  if (currentTab !== 'conversas' || !currentChatContato) return;
+  if (currentTab !== 'conversas' || !(currentChatContato || chatGrupo)) return;
   const aberto = document.querySelector('.modal-overlay.show');
   if (aberto && aberto.id !== 'anexoModal') return;
   const cd = e.clipboardData;
@@ -4504,7 +4694,7 @@ document.addEventListener('paste', function (e) {
   const temArquivo = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf('Files') >= 0;
   const painel = () => document.getElementById('conversasChat');
   document.addEventListener('dragover', function (e) {
-    if (!temArquivo(e) || !currentChatContato || !e.target.closest || !e.target.closest('#conversasChat')) return;
+    if (!temArquivo(e) || !(currentChatContato || chatGrupo) || !e.target.closest || !e.target.closest('#conversasChat')) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     painel().classList.add('arrastando');
@@ -4518,7 +4708,7 @@ document.addEventListener('paste', function (e) {
     p.classList.remove('arrastando');
     if (!temArquivo(e)) return;
     e.preventDefault(); // nunca deixa o navegador abrir o arquivo no lugar do CRM
-    if (dentro && currentChatContato) abrirAnexos(e.dataTransfer.files);
+    if (dentro && (currentChatContato || chatGrupo)) abrirAnexos(e.dataTransfer.files);
   });
   // fora da conversa, soltar um arquivo não faz nada (em vez de o navegador sair da página)
   window.addEventListener('dragover', function (e) { if (temArquivo(e)) e.preventDefault(); });
@@ -4643,7 +4833,7 @@ function arquivosProntosNoMenu() {
 }
 async function enviarArquivoPronto(i) {
   const a = ARQUIVOS_PRONTOS[i];
-  if (!a || !currentChatContato) return;
+  if (!a || !(currentChatContato || chatGrupo)) return;
   hideChatSlashPopup();
   const input = document.getElementById('chatComposeInput');
   if (input.value.startsWith('/')) { input.value = ''; ajustarAltura(input); }
@@ -5083,7 +5273,9 @@ async function abrirDoWhatsApp(el) {
 function aCadaCincoSegundos() {
   loadConversas(); // sempre, mesmo com uma conversa aberta e em qualquer aba (para o aviso e o contador)
   if (currentTab === 'kanban' && !currentContato) loadBoard();
-  if (currentChatContato) recarregarChat('auto').catch(() => {});
+  atualizarGrupos();
+  if (chatGrupo) recarregarGrupo('auto').catch(() => {});
+  else if (currentChatContato) recarregarChat('auto').catch(() => {});
   else if (currentContato) atualizarDetalhe();
 }
 async function atualizarDetalhe() {
@@ -5122,6 +5314,7 @@ document.addEventListener('scroll', function (e) {
 aplicarTema();
 aplicarSom();
 loadConversas();
+atualizarGrupos();
 loadBoard();
 loadCustomTabs().then(() => refreshTabBadges());
 loadMsgsRapidas();

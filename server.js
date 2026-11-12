@@ -158,6 +158,9 @@ try { db.exec("ALTER TABLE mensagens ADD COLUMN reacoes TEXT DEFAULT ''"); } cat
 try { db.exec("ALTER TABLE mensagens ADD COLUMN cartao TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN previa TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN citacao_wa_id TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE grupo_mensagens ADD COLUMN wa_msg_id TEXT DEFAULT ''"); } catch {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_grupo_msgs_wa ON grupo_mensagens(wa_msg_id)"); } catch {}
+try { db.exec("CREATE INDEX IF NOT EXISTS idx_grupo_msgs_data ON grupo_mensagens(grupo_id, created_at)"); } catch {}
 db.exec("CREATE TABLE IF NOT EXISTS agenda (telefone TEXT PRIMARY KEY, nome TEXT NOT NULL, importado_em TEXT DEFAULT (datetime('now','localtime')))");
 try { db.exec("ALTER TABLE contatos ADD COLUMN nome_antes_agenda TEXT DEFAULT ''"); } catch {}
 function nomeDaAgenda(telefone) {
@@ -1326,7 +1329,8 @@ async function handleRequest(req, res) {
     if (ehSendMessage) {
       const sm = (body.data || body).message || {};
       const smTexto = sm.conversation || (sm.extendedTextMessage && sm.extendedTextMessage.text) || '';
-      if (!smTexto.includes(followup.ATHENA_MARCA)) {
+      const smJid = String((((body.data || body).key) || {}).remoteJid || '');
+      if (!smTexto.includes(followup.ATHENA_MARCA) && !smJid.includes('@g.us')) {
         return sendJSON(res, 200, { ok: true, ignored: true, motivo: 'send.message sem marca da Athena' });
       }
     } else if (event !== 'messages.upsert' && event !== 'MESSAGES_UPSERT') {
@@ -1360,15 +1364,39 @@ async function handleRequest(req, res) {
       if (!grupo) return sendJSON(res, 200, { ok: true, ignored: true });
 
       const msg = data.message || {};
-      const texto = msg.conversation || (msg.extendedTextMessage && msg.extendedTextMessage.text) || '';
-      const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : msg.documentMessage ? 'document' : 'text';
-      const remetente = key.participant || data.pushName || '';
-      const remetenteNome = data.pushName || '';
+      const waId = String(key.id || '');
+      // a mesma mensagem de grupo chega mais de uma vez: só a primeira é gravada
+      if (waId && db.prepare('SELECT 1 FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(waId)) {
+        return sendJSON(res, 200, { ok: true, ignored: true, motivo: 'mensagem de grupo repetida' });
+      }
+      const doc = msg.documentMessage || (msg.documentWithCaptionMessage && msg.documentWithCaptionMessage.message && msg.documentWithCaptionMessage.message.documentMessage) || null;
+      const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : doc ? 'document' : msg.videoMessage ? 'video' : 'text';
+      let texto = msg.conversation || (msg.extendedTextMessage && msg.extendedTextMessage.text) ||
+        (msg.imageMessage && msg.imageMessage.caption) || (msg.videoMessage && msg.videoMessage.caption) || '';
+      if (doc) texto = [doc.fileName, doc.caption].filter(Boolean).join('\n');
+      // o que a recepção manda pelo celular entra como "Eu", igual ao que sai pelo CRM
+      const remetente = key.fromMe ? 'me' : (key.participant || data.pushName || '');
+      const remetenteNome = key.fromMe ? 'Eu' : (data.pushName || '');
 
       if (texto || tipo !== 'text') {
-        db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo) VALUES (?, ?, ?, ?, ?)").run(
-          grupo.id, remetente, remetenteNome, texto || `[${tipo}]`, tipo
+        // grava primeiro (a repetição que chega em seguida já é reconhecida) e baixa o arquivo depois
+        const nova = db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo, wa_msg_id) VALUES (?, ?, ?, ?, ?, ?)").run(
+          grupo.id, remetente, remetenteNome, texto || `[${tipo}]`, tipo, waId
         );
+        if (tipo !== 'text') {
+          try {
+            const mediaData = await evoDownloadMedia(key);
+            if (mediaData && mediaData.base64) {
+              const mime = mediaData.mimetype || '';
+              const ext = mime.includes('jpeg') || mime.includes('jpg') ? '.jpg' : mime.includes('png') ? '.png' : mime.includes('webp') ? '.webp'
+                : mime.includes('mp4') ? '.mp4' : mime.includes('ogg') || mime.includes('opus') ? '.ogg' : mime.includes('pdf') ? '.pdf' : mime.includes('mp3') ? '.mp3'
+                : (doc && /\.[a-z0-9]{2,5}$/i.test(String(doc.fileName || '')) ? String(doc.fileName).slice(String(doc.fileName).lastIndexOf('.')).toLowerCase() : '');
+              const filename = `${Date.now()}_g${grupo.id}${ext}`;
+              fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(mediaData.base64, 'base64'));
+              db.prepare('UPDATE grupo_mensagens SET media_path = ? WHERE id = ?').run(filename, nova.lastInsertRowid);
+            }
+          } catch (e) { console.error('[CRM] Erro baixando arquivo de grupo:', e.message); }
+        }
       }
       return sendJSON(res, 200, { ok: true });
     }
@@ -1585,6 +1613,7 @@ async function handleRequest(req, res) {
         (SELECT texto FROM grupo_mensagens WHERE grupo_id = g.id ORDER BY created_at DESC LIMIT 1) as ultima_msg,
         (SELECT remetente_nome FROM grupo_mensagens WHERE grupo_id = g.id ORDER BY created_at DESC LIMIT 1) as ultimo_remetente,
         (SELECT created_at FROM grupo_mensagens WHERE grupo_id = g.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_at,
+        (SELECT tipo FROM grupo_mensagens WHERE grupo_id = g.id ORDER BY created_at DESC LIMIT 1) as ultima_msg_tipo,
         (SELECT COUNT(*) FROM grupo_mensagens WHERE grupo_id = g.id AND remetente != 'me' AND created_at > COALESCE(NULLIF(g.last_read_at,''), '1970-01-01')) as nao_lidas
       FROM grupos g WHERE g.ativo = 1 ORDER BY g.nome
     `).all();
@@ -1593,8 +1622,9 @@ async function handleRequest(req, res) {
 
   if (method === 'GET' && pathname.match(/^\/api\/grupo\/\d+\/mensagens$/)) {
     const id = pathname.split('/')[3];
-    const msgs = db.prepare('SELECT * FROM grupo_mensagens WHERE grupo_id = ? ORDER BY created_at DESC LIMIT 100').all(id);
-    db.prepare("UPDATE grupos SET last_read_at = datetime('now','localtime') WHERE id = ?").run(id);
+    const msgs = db.prepare('SELECT * FROM grupo_mensagens WHERE grupo_id = ? ORDER BY created_at DESC, id DESC LIMIT 200').all(id);
+    // ?visto=0 (aba do CRM em segundo plano): não marca como lido
+    if (urlObj.searchParams.get('visto') !== '0') db.prepare("UPDATE grupos SET last_read_at = datetime('now','localtime') WHERE id = ?").run(id);
     return sendJSON(res, 200, msgs);
   }
 
@@ -1640,14 +1670,47 @@ async function handleRequest(req, res) {
     const grupo = db.prepare('SELECT * FROM grupos WHERE id = ?').get(id);
     if (!grupo) return sendJSON(res, 404, { error: 'Grupo not found' });
 
+    let chaveG = {};
     try {
-      await evoSendText(grupo.jid, body.texto);
+      const r = await evoSendText(grupo.jid, body.texto);
+      chaveG = (r && r.key) || {};
     } catch (e) {
       console.error('[CRM] Erro enviando msg grupo:', e.message);
       return sendJSON(res, 500, { error: 'Falha ao enviar: ' + e.message });
     }
+    // se o WhatsApp já devolveu esta mesma mensagem pelo webhook, não grava de novo
+    if (!chaveG.id || !db.prepare('SELECT 1 FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(String(chaveG.id))) {
+      db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo, wa_msg_id) VALUES (?, 'me', 'Eu', ?, 'text', ?)").run(id, body.texto, String(chaveG.id || ''));
+    }
+    return sendJSON(res, 200, { ok: true });
+  }
 
-    db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo) VALUES (?, 'me', 'Eu', ?, 'text')").run(id, body.texto);
+  // ─── Enviar arquivo (foto, PDF…) para um grupo ──────────────────────────────
+  if (method === 'POST' && pathname.match(/^\/api\/grupo\/\d+\/media$/)) {
+    const id = pathname.split('/')[3];
+    const body = await parseBody(req, 50e6);
+    if (!body.base64 || !body.mediatype) return sendJSON(res, 400, { error: 'base64 and mediatype required' });
+    const grupo = db.prepare('SELECT * FROM grupos WHERE id = ?').get(id);
+    if (!grupo) return sendJSON(res, 404, { error: 'Grupo not found' });
+    const soBase64 = body.base64.includes(',') ? body.base64.split(',').pop() : body.base64;
+    let chaveG = {};
+    try {
+      const r = await evoSendMedia(grupo.jid, body.mediatype, soBase64, body.caption || '', body.fileName || '', body.mimetype || '');
+      chaveG = (r && r.key) || {};
+    } catch (e) {
+      console.error('[CRM] Erro enviando arquivo para grupo:', e.message);
+      return sendJSON(res, 500, { error: 'Falha ao enviar: ' + e.message });
+    }
+    const extNome = /\.[a-z0-9]{2,5}$/i.test(String(body.fileName || '')) ? String(body.fileName).slice(String(body.fileName).lastIndexOf('.')).toLowerCase() : '';
+    const mimeG = String(body.mimetype || '');
+    const ext = extNome || (mimeG.includes('jpeg') ? '.jpg' : mimeG.includes('png') ? '.png' : mimeG.includes('pdf') ? '.pdf' : '');
+    const filename = `${Date.now()}_g${id}_out${ext}`;
+    fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(soBase64, 'base64'));
+    const tipoG = body.mediatype === 'image' ? 'image' : body.mediatype === 'audio' ? 'audio' : body.mediatype === 'video' ? 'video' : 'document';
+    const textoG = tipoG === 'document' ? [body.fileName, body.caption].filter(Boolean).join('\n') : (body.caption || `[${tipoG}]`);
+    const ja = chaveG.id ? db.prepare('SELECT id FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(String(chaveG.id)) : null;
+    if (ja) db.prepare('UPDATE grupo_mensagens SET media_path = ? WHERE id = ? AND COALESCE(media_path, \'\') = \'\'').run(filename, ja.id);
+    else db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo, media_path, wa_msg_id) VALUES (?, 'me', 'Eu', ?, ?, ?, ?)").run(id, textoG, tipoG, filename, String(chaveG.id || ''));
     return sendJSON(res, 200, { ok: true });
   }
 
