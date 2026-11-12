@@ -15,6 +15,26 @@ http.createServer((req, res) => {
     const resumo = JSON.parse(JSON.stringify(j));
     if (resumo.media) resumo.media = '<' + String(resumo.media).length + ' caracteres, começa com "' + String(resumo.media).slice(0, 12) + '">';
     fs.appendFileSync(registro, new Date().toISOString() + ' ' + req.method + ' ' + req.url + ' ' + JSON.stringify(resumo).slice(0, 900) + '\n');
+    // "este número tem WhatsApp?": no ensaio, existe quem começa com 55 e não termina em 0000; celular com 13
+    // dígitos volta sem o nono dígito, como o WhatsApp faz em muitos DDDs
+    if (/\/chat\/whatsappNumbers\//.test(req.url)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify((j.numbers || []).map(num => {
+        const existe = /^55\d{10,11}$/.test(num) && !/0000$/.test(num);
+        const certo = existe && num.length === 13 ? num.slice(0, 4) + num.slice(5) : num;
+        return { exists: existe, jid: certo + '@s.whatsapp.net', number: num };
+      })));
+    }
+    // contatos que o "WhatsApp" conhece
+    if (/\/chat\/findContacts\//.test(req.url)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify([
+        { remoteJid: '5500000000777@s.whatsapp.net', pushName: 'Zelda Ensaio Limpeza', type: 'contact', isSaved: true, profilePicUrl: null },
+        { remoteJid: '5500000000001@s.whatsapp.net', pushName: 'Apelido Zeta Do Perfil', type: 'contact', isSaved: true, profilePicUrl: null },
+        { remoteJid: '5500000000888@s.whatsapp.net', pushName: '5500000000888', type: 'contact', isSaved: true, profilePicUrl: null },
+        { remoteJid: '123456@lid', pushName: 'Zelda Do Grupo', type: 'group_member', isSaved: false, profilePicUrl: null },
+      ]));
+    }
     // texto com a palavra FALHAR simula a Evolution recusando o envio
     if (/FALHAR/.test(String(j.text || j.caption || ''))) {
       res.writeHead(400, { 'Content-Type': 'application/json' });

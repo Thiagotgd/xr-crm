@@ -686,6 +686,32 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 .visor-corpo img.grande { max-width: none; max-height: none; cursor: zoom-out; align-self: flex-start; margin: 0 auto; }
 .visor-corpo iframe { width: min(1100px, 100%); height: 100%; border: none; border-radius: 4px; background: #fff; }
 .msg-img { cursor: zoom-in; }
+
+/* ── 12/11/2026: reações nas mensagens, emojis no campo, número no "Não lidas", contato só do WhatsApp na busca ── */
+.msg.tem-reac { margin-bottom: 16px; }
+.msg-reac { position: absolute; bottom: -15px; left: 8px; z-index: 1; padding: 1px 7px; border-radius: 12px; font-size: 13.5px; line-height: 19px; white-space: nowrap; cursor: pointer; background: var(--wa-dropdown); border: 1px solid rgba(134,150,160,.28); box-shadow: 0 1px 2px rgba(11,20,26,.18); }
+.msg.out .msg-reac { left: auto; right: 8px; }
+.msg-reagir { position: absolute; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; padding: 0; border: none; border-radius: 50%; font-size: 14px; line-height: 26px; text-align: center; cursor: pointer; background: rgba(134,150,160,.22); opacity: 0; transition: opacity .12s; }
+.msg.in .msg-reagir { right: -34px; }
+.msg.out .msg-reagir { left: -34px; }
+.msg:hover .msg-reagir, .msg-reagir:focus-visible { opacity: 1; }
+.msg-reagir:hover { background: rgba(134,150,160,.42); }
+.reac-bar { position: fixed; z-index: 320; display: none; align-items: center; gap: 2px; padding: 5px 8px; border-radius: 24px; background: var(--wa-dropdown); box-shadow: 0 4px 16px rgba(11,20,26,.3); }
+.reac-bar.show { display: flex; }
+.reac-bar button { border: none; background: none; font-size: 22px; line-height: 1; padding: 5px 6px; border-radius: 50%; cursor: pointer; transition: transform .1s; }
+.reac-bar button:hover { transform: scale(1.22); background: rgba(134,150,160,.2); }
+.reac-bar button.atual { background: rgba(0,168,132,.26); }
+.reac-bar button.reac-tirar { font-size: 12.5px; color: var(--text-muted); padding: 6px 10px; border-radius: 14px; }
+.reac-bar button.reac-tirar:hover { transform: none; }
+.emoji-painel { position: absolute; bottom: 100%; left: 8px; z-index: 40; width: 348px; max-width: calc(100vw - 24px); max-height: 250px; overflow-y: auto; display: none; grid-template-columns: repeat(9, 1fr); gap: 2px; padding: 8px; margin-bottom: 6px; border-radius: 12px; background: var(--wa-dropdown); box-shadow: 0 4px 18px rgba(11,20,26,.3); }
+.emoji-painel.show { display: grid; }
+.emoji-painel { scrollbar-width: thin; scrollbar-color: rgba(134,150,160,.5) transparent; }
+.emoji-painel button { border: none; background: none; font-size: 21px; line-height: 1; padding: 6px 0; border-radius: 6px; cursor: pointer; }
+.emoji-painel button:hover { background: rgba(134,150,160,.22); }
+.chip-num { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px; font-size: 11.5px; font-weight: 600; line-height: 18px; text-align: center; background: var(--wa-badge-bg); color: var(--wa-badge-text); }
+.filter-chip.active .chip-num { background: var(--wa-badge-text); color: var(--wa-badge-bg); }
+.conversa-row.so-whats .conversa-preview { font-style: italic; }
+@media (max-width: 768px) { .msg-reagir { display: none; } }
 </style>
 </head>
 <body>
@@ -719,7 +745,7 @@ button.msg-agenda:hover { filter: brightness(1.1); }
     </div>
     <div class="conversas-filters">
       <button class="filter-chip active" data-filter="tudo" onclick="setConversasFilter('tudo')">Tudo</button>
-      <button class="filter-chip" data-filter="nao-lidas" onclick="setConversasFilter('nao-lidas')">Não lidas</button>
+      <button class="filter-chip" data-filter="nao-lidas" onclick="setConversasFilter('nao-lidas')">Não lidas<span class="chip-num" id="chipNaoLidas" style="display:none"></span></button>
       <button class="filter-chip" data-filter="favoritas" onclick="setConversasFilter('favoritas')">Favoritas</button>
       <button class="filter-chip" data-filter="pendentes" onclick="setConversasFilter('pendentes')">Pendentes</button>
       <div class="etiquetas-dropdown">
@@ -747,6 +773,8 @@ button.msg-agenda:hover { filter: brightness(1.1); }
       <div class="compose-bar" style="position:relative">
         <div class="slash-popup" id="chatSlashPopup"></div>
         <div class="sug-bar" id="chatSugestoes"></div>
+        <div class="emoji-painel" id="emojiPainel"></div>
+        <button class="attach-btn" id="btnEmoji" onclick="alternarEmojis()" title="Emojis" style="font-size:18px;padding:2px 4px">&#x1F642;</button>
         <button class="attach-btn" onclick="document.getElementById('chatFileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
         <button class="attach-btn" onclick="abrirOrcamentoChat()" title="Criar orçamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
         <button class="attach-btn" onclick="enviarArquivoPronto(0)" title="Enviar a imagem das recomendações de tomografia e ressonância (atalho: /foto)" style="font-size:16px;padding:2px 4px">&#x1F4CB;</button>
@@ -1026,6 +1054,7 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 
 <!-- Message Context Menu -->
 <div class="msg-context-menu" id="msgContextMenu" style="display:none">
+  <div class="msg-context-item" id="ctxReagir" onclick="contextReagir()">&#x1F642; Reagir</div>
   <div class="msg-context-item" id="ctxResponder" onclick="contextResponder()">&#x21A9;&#xFE0F; Responder</div>
   <div class="msg-context-item" id="ctxEditar" onclick="contextEditar()">&#x270F;&#xFE0F; Editar</div>
   <div class="msg-context-item" onclick="contextForward()">&#x21AA;&#xFE0F; Encaminhar</div>
@@ -1770,8 +1799,10 @@ async function saveContato() {
       toast('Atualizado!');
       if (currentContato) await openDetail(id);
     } else {
-      await api('POST', '/api/contato', payload);
-      toast('Contato criado!');
+      const novo = await api('POST', '/api/contato', payload);
+      toast(novo && novo.existente ? 'Esse número já estava no CRM. Abri a conversa.' : 'Contato criado!');
+      // na aba Conversas, já abre a conversa do contato para escrever a primeira mensagem
+      if (novo && novo.id && currentTab === 'conversas') setTimeout(function () { openConversaChat(novo.id); }, 500);
     }
     closeModal();
     loadBoard();
@@ -2477,12 +2508,14 @@ function showMsgContextMenu(msgEl, x, y) {
   // "Responder" só existe na conversa da aba Conversas
   const ctxR = document.getElementById('ctxResponder');
   if (ctxR) ctxR.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato) ? '' : 'none';
+  const ctxG = document.getElementById('ctxReagir');
+  if (ctxG) ctxG.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato) ? '' : 'none';
   menu.style.display = 'block';
   // Position menu
   // "Editar" só aparece em mensagem de texto nossa, enviada há menos de 15 minutos
   const ctxE = document.getElementById('ctxEditar');
   if (ctxE) ctxE.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato && podeEditar(mensagensDoChat().find(x => String(x.id) === String(msgEl.dataset.msgId)))) ? '' : 'none';
-  const menuW = 200, menuH = 240;
+  const menuW = 200, menuH = 290;
   let left = x, top = y;
   if (left + menuW > window.innerWidth) left = window.innerWidth - menuW - 10;
   if (top + menuH > window.innerHeight) top = y - menuH;
@@ -3281,6 +3314,14 @@ function renderConversasList() {
   const q = (document.getElementById('conversasSearch').value || '').trim().toLowerCase();
   const now = new Date();
 
+  // quantas conversas estão não lidas, no botão "Não lidas" (pedido da recepção em 12/11/2026)
+  const chipNum = document.getElementById('chipNaoLidas');
+  if (chipNum) {
+    const nNao = conversasList.filter(c => (c.nao_lidas > 0 || c.manual_unread)).length;
+    chipNum.textContent = nNao > 99 ? '99+' : String(nNao);
+    chipNum.style.display = nNao ? '' : 'none';
+  }
+
   let filtered = conversasList.slice();
 
   // Apply filter
@@ -3360,6 +3401,17 @@ function renderConversasList() {
         '<div class="conversa-avatar-fb" style="display:none">' + inicial(c.nome) + '</div>'
       : '<div class="conversa-avatar-fb">' + inicial(c.nome) + '</div>';
 
+    // Pessoa que o WhatsApp da recepção conhece mas ainda não tem conversa no CRM: clicar cria o contato e abre
+    if (c.so_whatsapp) {
+      return '<div class="conversa-row so-whats" data-tel="' + esc(c.telefone) + '" data-nome="' + esc(c.nome) + '" onclick="abrirDoWhatsApp(this)" title="Abrir conversa com este contato do WhatsApp">' +
+        avatar +
+        '<div class="conversa-info">' +
+          '<div class="conversa-top-row"><div class="conversa-name"><span class="conversa-nome-txt">' + esc(c.nome) + '</span><span class="conversa-tel">' + telefoneCurto(c.telefone) + '</span></div></div>' +
+          '<div class="conversa-bottom-row"><div class="conversa-preview">Contato do WhatsApp, ainda sem conversa aqui. Clique para abrir.</div></div>' +
+        '</div>' +
+      '</div>';
+    }
+
     const tags = (c.etiquetas && c.etiquetas.length)
       ? '<div class="conversa-tags">' + c.etiquetas.map(t => '<span class="tag" style="background:' + t.cor + '">' + esc(t.nome) + '</span>').join('') + '</div>'
       : '';
@@ -3383,8 +3435,9 @@ function renderConversasList() {
       '<div class="conversa-info">' +
         '<div class="conversa-top-row">' +
           // nome e, ao lado, o telefone em letra pequena (pedido da recepção em 12/11/2026)
-          '<div class="conversa-name"><span class="conversa-nome-txt">' + esc(c.nome || formatPhone(c.telefone)) + '</span>' +
-            (c.nome ? '<span class="conversa-tel">' + telefoneCurto(c.telefone) + '</span>' : '') +
+          // (nome_whatsapp = nome do perfil da pessoa no WhatsApp, quando a busca achou por ele e o CRM está sem nome)
+          '<div class="conversa-name"><span class="conversa-nome-txt">' + esc(c.nome || c.nome_whatsapp || formatPhone(c.telefone)) + '</span>' +
+            ((c.nome || c.nome_whatsapp) ? '<span class="conversa-tel">' + telefoneCurto(c.telefone) + '</span>' : '') +
             (c.pinado ? '<span class="pin-icon">&#x1F4CC;</span>' : '') + '</div>' +
           '<span class="conversa-time' + (unread ? ' unread' : '') + '">' + timeStr + '</span>' +
         '</div>' +
@@ -3412,7 +3465,7 @@ let chatReply = null;      // mensagem que está sendo respondida (citação)
 const rascunhos = {};      // texto digitado e não enviado, por conversa
 
 function assinaturaMsgs(msgs) {
-  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' + (Array.isArray(m.cfaz) ? m.cfaz.length : 1) : '') + (m.editada ? 'E' + String(m.texto || '').length : '')).join(',');
+  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' + (Array.isArray(m.cfaz) ? m.cfaz.length : 1) : '') + (m.editada ? 'E' + String(m.texto || '').length : '') + (m.reacoes ? 'R' + m.reacoes : '')).join(',');
 }
 // Todas as mensagens na tela, da mais nova para a mais antiga.
 function mensagensDoChat() {
@@ -3601,8 +3654,24 @@ function renderMessagesInto(area, mensagens, opts) {
         extra += '<button class="msg-agenda" onclick="abrirAgendaCfaz(' + m.id + ')">&#x1F4C5; ' + (feitas.length ? 'Marcar em outra agenda' : 'Criar na agenda do CFAZ') + '</button>';
       }
     }
-    return faixa + '<div class="msg ' + m.direcao + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
-      '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + (m.editada ? 'Editada · ' : '') + horaMsg(m.created_at) + '</div></div>' + extra;
+    // Reações: as que a mensagem já tem (cliente e recepção) e, na conversa aberta, o botão de reagir ao passar o mouse
+    let reac = '', temReac = false;
+    if (m.reacoes) {
+      try {
+        const r = JSON.parse(m.reacoes) || {};
+        const quem = [r.in ? 'Cliente: ' + r.in : '', r.out ? 'XR: ' + r.out : ''].filter(Boolean).join('  ·  ');
+        if (quem) {
+          temReac = true;
+          reac = '<div class="msg-reac" title="' + esc(quem) + '"' + (area.id === 'chatMessagesArea' ? ' onclick="event.stopPropagation();abrirReacoes(' + m.id + ', this)"' : '') + '>' +
+            esc([r.in, r.out].filter(Boolean).join(' ')) + '</div>';
+        }
+      } catch (e) {}
+    }
+    if (area.id === 'chatMessagesArea' && m.wa_msg_id) {
+      reac += '<button class="msg-reagir" onclick="event.stopPropagation();abrirReacoes(' + m.id + ', this)" title="Reagir">&#x1F642;</button>';
+    }
+    return faixa + '<div class="msg ' + m.direcao + (temReac ? ' tem-reac' : '') + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
+      '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + (m.editada ? 'Editada · ' : '') + horaMsg(m.created_at) + '</div>' + reac + '</div>' + extra;
   }).join('');
   area.innerHTML = (opts.temMais ? '<button class="msg-mais" onclick="carregarAnteriores(this)">Carregar mensagens anteriores</button>' : '') + html;
 
@@ -4400,6 +4469,102 @@ async function enviarArquivoPronto(i) {
     abrirAnexos([new File([blob], a.arquivo, { type: a.tipo })]);
     document.getElementById('anexoLegenda').value = a.legenda;
   } catch (e) { toast('Não consegui carregar o arquivo: ' + e.message, 'err'); }
+}
+
+// ─── Reagir a uma mensagem (👍 ❤️ …), como no WhatsApp ─────────────────────────────────────────────
+// Passar o mouse na mensagem mostra a carinha; clicar abre a fileira de emojis. Clicar de novo no mesmo emoji tira.
+const REACOES_RAPIDAS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '✅', '👀'];
+let reacMsgId = null;
+function minhaReacao(id) {
+  const m = mensagensDoChat().find(x => String(x.id) === String(id));
+  try { return (m && m.reacoes && JSON.parse(m.reacoes).out) || ''; } catch (e) { return ''; }
+}
+function abrirReacoes(id, perto) {
+  let bar = document.getElementById('reacBar');
+  if (!bar) { bar = document.createElement('div'); bar.id = 'reacBar'; bar.className = 'reac-bar'; document.body.appendChild(bar); }
+  reacMsgId = id;
+  const atual = minhaReacao(id);
+  bar.innerHTML = REACOES_RAPIDAS.map((e, i) => '<button' + (e === atual ? ' class="atual"' : '') + ' onclick="event.stopPropagation();reagir(' + i + ')">' + e + '</button>').join('') +
+    (atual ? '<button class="reac-tirar" onclick="event.stopPropagation();reagir(-1)" title="Tirar a minha reação">tirar</button>' : '');
+  bar.classList.add('show');
+  const r = perto.getBoundingClientRect();
+  const larg = bar.offsetWidth || 330, alt = bar.offsetHeight || 44;
+  let left = r.left + r.width / 2 - larg / 2, top = r.top - alt - 8;
+  if (left + larg > window.innerWidth - 8) left = window.innerWidth - larg - 8;
+  if (left < 8) left = 8;
+  if (top < 8) top = r.bottom + 8;
+  bar.style.left = left + 'px';
+  bar.style.top = top + 'px';
+}
+function fecharReacoes() {
+  const bar = document.getElementById('reacBar');
+  if (bar) bar.classList.remove('show');
+  reacMsgId = null;
+}
+async function reagir(i) {
+  const id = reacMsgId;
+  if (!id) return;
+  let emoji = i < 0 ? '' : REACOES_RAPIDAS[i];
+  if (emoji && emoji === minhaReacao(id)) emoji = ''; // mesmo emoji de novo = tirar
+  fecharReacoes();
+  try {
+    await api('POST', '/api/mensagem/' + id + '/reacao', { emoji: emoji });
+    await recarregarChat('auto', true);
+  } catch (e) { toast('Não consegui reagir: ' + e.message, 'err'); }
+}
+function contextReagir() {
+  const id = contextMsgId;
+  hideMsgContextMenu();
+  const el = id ? document.querySelector('#chatMessagesArea .msg[data-msg-id="' + id + '"]') : null;
+  if (!el) return;
+  const m = mensagensDoChat().find(x => String(x.id) === String(id));
+  if (!m || !m.wa_msg_id) { toast('Não dá para reagir a esta mensagem (é antiga).', 'err'); return; }
+  setTimeout(function () { abrirReacoes(id, el); }, 0); // depois do clique do menu, senão o próprio clique fecha a fileira
+}
+document.addEventListener('click', function (e) {
+  if (reacMsgId && !(e.target.closest && e.target.closest('#reacBar'))) fecharReacoes();
+  const p = document.getElementById('emojiPainel');
+  if (p && p.classList.contains('show') && !(e.target.closest && (e.target.closest('#emojiPainel') || e.target.closest('#btnEmoji')))) p.classList.remove('show');
+});
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  if (reacMsgId) fecharReacoes();
+  const p = document.getElementById('emojiPainel');
+  if (p) p.classList.remove('show');
+});
+
+// ─── Emojis no campo de mensagem ────────────────────────────────────────────────────────────────
+const EMOJIS_CAMPO = ('😀 😃 😄 😁 😅 😂 🙂 😉 😊 😍 🥰 😘 😎 🤗 🤔 😬 😴 😢 😭 😡 😱 🥺 🙏 👍 👎 👏 🙌 🤝 💪 👋 ✌️ 🤞 👌 👀 ' +
+  '❤️ 💙 💚 💛 🧡 💜 🖤 🤍 💔 ✨ ⭐ 🔥 🎉 ✅ ❌ ⚠️ ❗ ❓ ⏰ 📅 📍 📞 📎 📄 💰 💳 🧾 🏥 💉 💊 🩺 🧪 🩻 ' +
+  '🐶 🐕 🐩 🐱 🐈 🐾 🐰 🐹 🐦 🦜 🐢 🐴 🐎 🐄 🐷 🐍 🦎 🐠').split(' ');
+function alternarEmojis() {
+  const p = document.getElementById('emojiPainel');
+  if (!p) return;
+  if (!p.innerHTML) p.innerHTML = EMOJIS_CAMPO.map((e, i) => '<button type="button" onclick="porEmoji(' + i + ')">' + e + '</button>').join('');
+  p.classList.toggle('show');
+}
+function porEmoji(i) {
+  const input = document.getElementById('chatComposeInput');
+  const e = EMOJIS_CAMPO[i];
+  if (!input || !e) return;
+  const a = input.selectionStart == null ? input.value.length : input.selectionStart;
+  const b = input.selectionEnd == null ? input.value.length : input.selectionEnd;
+  input.value = input.value.slice(0, a) + e + input.value.slice(b);
+  input.focus();
+  input.selectionStart = input.selectionEnd = a + e.length;
+  ajustarAltura(input);
+}
+
+// ─── Contato do WhatsApp que ainda não tem conversa no CRM (aparece na busca) ────────────────────────
+async function abrirDoWhatsApp(el) {
+  if (el.dataset.abrindo) return;
+  el.dataset.abrindo = '1';
+  try {
+    const r = await api('POST', '/api/contato', { nome: el.dataset.nome || '', telefone: el.dataset.tel || '' });
+    buscaTexto = ''; buscaExtra = [];
+    await loadConversas(true);
+    if (r && r.id) openConversaChat(r.id);
+  } catch (e) { toast('Não consegui abrir: ' + e.message, 'err'); delete el.dataset.abrindo; }
 }
 
 // ─── Atualização automática ─────────────────────────────────────────────────────────────────────

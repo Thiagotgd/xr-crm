@@ -154,6 +154,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS agenda_cfaz (
   evento_id INTEGER PRIMARY KEY, contato_id INTEGER NOT NULL, msg_id INTEGER,
   calendario_id INTEGER, calendario_nome TEXT, inicio TEXT, titulo TEXT,
   created_at TEXT DEFAULT (datetime('now','localtime')))`);
+try { db.exec("ALTER TABLE mensagens ADD COLUMN reacoes TEXT DEFAULT ''"); } catch {}
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_mensagens_contato_data ON mensagens(contato_id, created_at)"); } catch (e) { console.error('[CRM] índice de mensagens:', e.message); }
 try { db.exec("ALTER TABLE contatos ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN favorito INTEGER DEFAULT 0"); } catch {}
@@ -317,6 +318,7 @@ function erroDaEvolution(res, corpo) {
   if (res.statusCode < 400) return null;
   let motivo = '';
   try { const j = JSON.parse(corpo); motivo = j && j.response && j.response.message ? JSON.stringify(j.response.message) : (j.error || j.message || ''); } catch {}
+  if (/"exists":false/.test(String(motivo))) return new Error('este número não tem WhatsApp. Confira o DDD e o número no cadastro do contato.');
   return new Error('WhatsApp recusou o envio (código ' + res.statusCode + ')' + (motivo ? ': ' + String(motivo).slice(0, 160) : ''));
 }
 
@@ -359,6 +361,69 @@ function evoPost(caminho, corpo) {
     req.write(payload);
     req.end();
   });
+}
+
+// ─── Reações (👍 ❤️ …) ─────────────────────────────────────────────────────────
+// Ficam na própria mensagem reagida, em JSON: {"in":"👍","out":"❤️"} (in = cliente, out = recepção). Emoji vazio tira.
+function gravarReacao(waMsgId, quem, emoji) {
+  const m = db.prepare('SELECT id, reacoes FROM mensagens WHERE wa_msg_id = ? LIMIT 1').get(String(waMsgId || ''));
+  if (!m) return false;
+  let r = {};
+  try { r = JSON.parse(m.reacoes || '{}') || {}; } catch {}
+  if (emoji) r[quem] = String(emoji).slice(0, 16); else delete r[quem];
+  db.prepare('UPDATE mensagens SET reacoes = ? WHERE id = ?').run(Object.keys(r).length ? JSON.stringify(r) : '', m.id);
+  return true;
+}
+
+// Endereço da conversa como a Evolution guardou (pode ser o endereço novo do WhatsApp, em LID)
+async function jidDaMensagem(msg) {
+  let jid = msg.wa_remote_jid || '';
+  try {
+    const achada = await evoPost('/chat/findMessages/' + EVO_INSTANCE, { where: { key: { id: msg.wa_msg_id } } });
+    const rec = achada.json && achada.json.messages && achada.json.messages.records && achada.json.messages.records[0];
+    if (rec && rec.key && rec.key.remoteJid) jid = rec.key.remoteJid;
+  } catch {}
+  if (!jid) { const c = db.prepare('SELECT telefone FROM contatos WHERE id = ?').get(msg.contato_id); jid = jidFromPhone(c ? c.telefone : ''); }
+  return jid;
+}
+
+// ─── Número digitado → número como o WhatsApp conhece ───────────────────────────
+// A recepção digita "(37) 99820-5137"; o WhatsApp só acha com o 55 na frente e, em muitos DDDs, sem o nono dígito.
+// Pergunta à Evolution e devolve o número certo. Número de fora do Brasil (já com o código do país) também passa.
+async function numeroNoWhatsApp(digitado) {
+  const d = String(digitado || '').replace(/\D/g, '').replace(/^0+/, '');
+  const tentativas = (d.length === 10 || d.length === 11) ? ['55' + d, d] : [d];
+  try {
+    const r = await evoPost('/chat/whatsappNumbers/' + EVO_INSTANCE, { numbers: tentativas });
+    if (r.status < 400 && Array.isArray(r.json)) {
+      for (const t of tentativas) {
+        const x = r.json.find(y => y && y.exists && String(y.number) === t);
+        if (x) return { telefone: /@s\.whatsapp\.net$/.test(String(x.jid || '')) ? String(x.jid).split('@')[0] : t, existe: true, conferido: true };
+      }
+      return { telefone: tentativas[0], existe: false, conferido: true };
+    }
+  } catch (e) { console.error('[CRM] não consegui conferir o número no WhatsApp:', e.message); }
+  return { telefone: tentativas[0], existe: true, conferido: false };
+}
+
+// ─── Quem o WhatsApp da recepção conhece ───────────────────────────────────
+// A Evolution guarda os contatos do aparelho com o nome que a PESSOA pôs no perfil dela (o apelido salvo na agenda
+// do celular não chega aqui). Serve para a busca achar gente que ainda não tem conversa no CRM. Relido a cada 10 min.
+function semAcento(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); }
+let contatosWhats = { em: 0, lista: [] };
+async function carregarContatosWhats() {
+  if (Date.now() - contatosWhats.em < 10 * 60000) return contatosWhats.lista;
+  try {
+    const r = await evoPost('/chat/findContacts/' + EVO_INSTANCE, { where: {} });
+    if (r.status < 400 && Array.isArray(r.json)) {
+      contatosWhats = { em: Date.now(), lista: r.json
+        .filter(c => c && c.type === 'contact' && /@s\.whatsapp\.net$/.test(String(c.remoteJid || '')) && c.pushName && !/^[+\d\s.()-]*$/.test(String(c.pushName)))
+        .map(c => ({ telefone: String(c.remoteJid).split('@')[0], nome: String(c.pushName).trim(), chave: semAcento(c.pushName), foto: c.profilePicUrl || '' })) };
+      return contatosWhats.lista;
+    }
+  } catch (e) { console.error('[CRM] contatos do WhatsApp:', e.message); }
+  contatosWhats.em = Date.now() - 9 * 60000; // falhou: usa o que tinha e tenta de novo em 1 minuto
+  return contatosWhats.lista;
 }
 
 // Mark messages as read on WhatsApp (sync CRM → WhatsApp)
@@ -714,7 +779,17 @@ async function handleRequest(req, res) {
     const body = await parseBody(req);
     const { nome, telefone, pet_nome, pet_especie, veterinario, etapa, notas } = body;
     if (!telefone) return sendJSON(res, 400, { error: 'telefone required' });
-    const phone = telefone.replace(/\D/g, '');
+    // confere o número no WhatsApp: põe o 55, acerta o nono dígito e avisa se o número não tem WhatsApp
+    const num = await numeroNoWhatsApp(telefone);
+    if (num.telefone.length < 8) return sendJSON(res, 400, { error: 'Telefone incompleto. Digite com o DDD.' });
+    if (num.conferido && !num.existe) return sendJSON(res, 400, { error: 'Este número não tem WhatsApp. Confira o DDD e o número (não precisa digitar o 55).' });
+    const phone = num.telefone;
+    const jaTem = db.prepare('SELECT id, nome FROM contatos WHERE telefone = ?').get(phone);
+    if (jaTem) {
+      // já existe (ex.: a pessoa já tinha escrito e o contato estava sem nome): completa o nome e devolve o mesmo contato
+      if (nome && !jaTem.nome) db.prepare('UPDATE contatos SET nome = ? WHERE id = ?').run(nome, jaTem.id);
+      return sendJSON(res, 200, { ok: true, id: jaTem.id, existente: true });
+    }
     try {
       const finalEtapa = etapa || 'novo';
       const result = db.prepare(`
@@ -844,12 +919,29 @@ async function handleRequest(req, res) {
       const recentes = tudo ? '' : ` AND (c.last_message_at >= datetime('now','localtime','-45 days') OR c.pinado = 1 OR c.favorito = 1 OR c.manual_unread = 1 OR EXISTS (SELECT 1 FROM contato_etiquetas ce WHERE ce.contato_id = c.id))`;
       rows = db.prepare(campos + ` WHERE NOT (c.etapa = 'finalizado' AND c.updated_at < datetime('now','localtime','-2 days'))` + recentes + ` ORDER BY c.pinado DESC, c.last_message_at DESC`).all();
     }
+    // Busca: junta quem o WhatsApp da recepção conhece pelo nome do perfil — gente que ainda não tem conversa no
+    // CRM (vem marcada so_whatsapp, a tela cria o contato ao clicar) e contatos do CRM gravados com outro nome.
+    const doWhats = [];
+    if (q.length >= 3) {
+      const alvo = semAcento(q);
+      const dig = q.replace(/[^0-9]/g, '');
+      const jaVeio = new Set(rows.map(r => r.telefone));
+      for (const w of await carregarContatosWhats()) {
+        if (doWhats.length >= 12) break;
+        if (jaVeio.has(w.telefone)) continue;
+        if (!(w.chave.includes(alvo) || (dig.length >= 5 && w.telefone.includes(dig)))) continue;
+        jaVeio.add(w.telefone);
+        const noCrm = db.prepare(campos + ' WHERE c.telefone = ?').get(w.telefone);
+        if (noCrm) { noCrm.nome_whatsapp = w.nome; rows.push(noCrm); }
+        else doWhats.push({ id: -Number(w.telefone.slice(-9)), so_whatsapp: 1, nome: w.nome, telefone: w.telefone, foto_url: w.foto, etapa: '', nao_lidas: 0, etiquetas: [] });
+      }
+    }
     const porContato = {};
     for (const e of db.prepare('SELECT ce.contato_id, e.* FROM etiquetas e JOIN contato_etiquetas ce ON ce.etiqueta_id = e.id').all()) {
       (porContato[e.contato_id] = porContato[e.contato_id] || []).push({ id: e.id, nome: e.nome, cor: e.cor });
     }
     for (const row of rows) { row.etiquetas = porContato[row.id] || []; }
-    return sendJSON(res, 200, rows);
+    return sendJSON(res, 200, rows.concat(doWhats));
   }
 
   // ─── API: Delete contato ──────────────────────────────────────────────────
@@ -1020,6 +1112,17 @@ async function handleRequest(req, res) {
     // Mesma mensagem chegando duas vezes (ex.: send.message + upsert) não grava de novo
     if (key.id && db.prepare('SELECT 1 FROM mensagens WHERE wa_msg_id = ? LIMIT 1').get(key.id)) {
       return sendJSON(res, 200, { ok: true, ignored: true, motivo: 'wa_msg_id repetido' });
+    }
+
+    // Reação (👍, ❤️…) a uma mensagem: não é mensagem nova. Fica guardada na mensagem reagida, sem mexer na
+    // ordem da lista nem no "não lida". key.fromMe diz quem reagiu; reactionMessage.key aponta a mensagem.
+    const reacao = data.message && data.message.reactionMessage;
+    if (reacao) {
+      if (!jid.includes('@g.us') && reacao.key && reacao.key.id) {
+        const achou = gravarReacao(reacao.key.id, key.fromMe ? 'out' : 'in', String(reacao.text || ''));
+        console.log(`[CRM] reação ${key.fromMe ? 'da recepção' : 'do cliente'}: ${reacao.text || '(tirou)'}${achou ? '' : ' (mensagem não encontrada)'}`);
+      }
+      return sendJSON(res, 200, { ok: true, reacao: true });
     }
 
     // Handle group messages
@@ -1511,6 +1614,28 @@ async function handleRequest(req, res) {
       console.log('[CRM] mensagem ' + msgId + ' editada');
       return sendJSON(res, 200, { ok: true });
     } catch (e) { console.error('[CRM] erro editando:', e.message); return sendJSON(res, 502, { error: e.message }); }
+  }
+
+  // Reagir a uma mensagem (ou tirar a reação, com emoji vazio), como no WhatsApp
+  if (method === 'POST' && pathname.match(/^\/api\/mensagem\/\d+\/reacao$/)) {
+    const msgId = pathname.split('/')[3];
+    const body = await parseBody(req);
+    const emoji = String(body.emoji || '').trim().slice(0, 16);
+    const msg = db.prepare('SELECT * FROM mensagens WHERE id = ?').get(msgId);
+    if (!msg) return sendJSON(res, 404, { error: 'Mensagem não encontrada' });
+    if (!msg.wa_msg_id) return sendJSON(res, 400, { error: 'Não dá para reagir a esta mensagem (ela é antiga, de antes de o CRM guardar o identificador do WhatsApp).' });
+    try {
+      const jid = await jidDaMensagem(msg);
+      const r = await evoPost('/message/sendReaction/' + EVO_INSTANCE, { key: { remoteJid: jid, fromMe: msg.direcao === 'out', id: msg.wa_msg_id }, reaction: emoji });
+      if (r.status >= 400) {
+        const m = r.json && r.json.response && r.json.response.message ? JSON.stringify(r.json.response.message) : (r.json && (r.json.error || r.json.message)) || ('código ' + r.status);
+        console.error('[CRM] reação recusada:', String(m).slice(0, 200));
+        return sendJSON(res, 400, { error: 'O WhatsApp não aceitou a reação: ' + String(m).slice(0, 160) });
+      }
+      gravarReacao(msg.wa_msg_id, 'out', emoji);
+      console.log('[CRM] reação ' + (emoji || '(tirada)') + ' na mensagem ' + msgId);
+      return sendJSON(res, 200, { ok: true });
+    } catch (e) { console.error('[CRM] erro reagindo:', e.message); return sendJSON(res, 502, { error: e.message }); }
   }
 
   if (method === 'DELETE' && pathname.match(/^\/api\/mensagem\/\d+$/)) {
