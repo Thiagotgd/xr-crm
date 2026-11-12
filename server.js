@@ -148,6 +148,7 @@ try { db.exec("ALTER TABLE contatos ADD COLUMN manual_unread INTEGER DEFAULT 0")
 // 11/11/2026: resposta citando uma mensagem. O trecho citado fica guardado junto da mensagem (de = 'in' cliente, 'out' recepção).
 try { db.exec("ALTER TABLE mensagens ADD COLUMN citacao_texto TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN citacao_de TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE mensagens ADD COLUMN editada INTEGER DEFAULT 0"); } catch {}
 // 11/11/2026: marcações criadas no CFAZ a partir da conversa (para mostrar "já está na agenda" e permitir desfazer)
 db.exec(`CREATE TABLE IF NOT EXISTS agenda_cfaz (
   evento_id INTEGER PRIMARY KEY, contato_id INTEGER NOT NULL, msg_id INTEGER,
@@ -336,6 +337,25 @@ function evoSendText(phone, text, quoted) {
     });
     req.on('error', reject);
     req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
+    req.write(payload);
+    req.end();
+  });
+}
+
+// Chamada genérica à Evolution que devolve o código e o corpo (para rotas que precisam olhar a resposta)
+function evoPost(caminho, corpo) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(EVO_BASE + caminho);
+    const payload = JSON.stringify(corpo || {});
+    const req = http.request({
+      hostname: url.hostname, port: url.port, path: url.pathname, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': EVO_KEY, 'Content-Length': Buffer.byteLength(payload) }
+    }, res => {
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => { let j = null; try { j = JSON.parse(d); } catch {} resolve({ status: res.statusCode, json: j, texto: d }); });
+    });
+    req.on('error', reject);
+    req.setTimeout(20000, () => { req.destroy(); reject(new Error('o WhatsApp demorou a responder')); });
     req.write(payload);
     req.end();
   });
@@ -1435,6 +1455,37 @@ async function handleRequest(req, res) {
   }
 
   // ─── API: Delete message (CRM + WhatsApp) ─────────────────────────────────
+  // Editar uma mensagem de texto que a XR enviou (o WhatsApp só permite até 15 minutos depois do envio)
+  if (method === 'PUT' && pathname.match(/^\/api\/mensagem\/\d+$/)) {
+    const msgId = pathname.split('/').pop();
+    const body = await parseBody(req);
+    const texto = String(body.texto || '').trim();
+    if (!texto) return sendJSON(res, 400, { error: 'A mensagem não pode ficar vazia.' });
+    if (/\[(dia e hora|responder aqui[^\]]*)\]/i.test(texto)) return sendJSON(res, 400, { error: 'A mensagem ainda tem um trecho entre [colchetes] para preencher.' });
+    const msg = db.prepare('SELECT * FROM mensagens WHERE id = ?').get(msgId);
+    if (!msg) return sendJSON(res, 404, { error: 'Mensagem não encontrada' });
+    if (msg.direcao !== 'out' || msg.tipo !== 'text' || !msg.wa_msg_id) return sendJSON(res, 400, { error: 'Só dá para editar mensagem de texto enviada pela XR.' });
+    const idade = Date.now() - new Date(String(msg.created_at).replace(' ', 'T') + '-03:00').getTime();
+    if (!(idade < 15 * 60000)) return sendJSON(res, 400, { error: 'O WhatsApp só deixa editar até 15 minutos depois do envio.' });
+    try {
+      // endereço da conversa como a Evolution guardou (pode ser o endereço novo do WhatsApp, em LID)
+      let jid = msg.wa_remote_jid || '';
+      const achada = await evoPost('/chat/findMessages/' + EVO_INSTANCE, { where: { key: { id: msg.wa_msg_id } } });
+      const rec = achada.json && achada.json.messages && achada.json.messages.records && achada.json.messages.records[0];
+      if (rec && rec.key && rec.key.remoteJid) jid = rec.key.remoteJid;
+      if (!jid) { const c = db.prepare('SELECT telefone FROM contatos WHERE id = ?').get(msg.contato_id); jid = jidFromPhone(c ? c.telefone : ''); }
+      const r = await evoPost('/chat/updateMessage/' + EVO_INSTANCE, { number: jid, text: texto, key: { remoteJid: jid, fromMe: true, id: msg.wa_msg_id } });
+      if (r.status >= 400) {
+        const m = r.json && r.json.response && r.json.response.message ? JSON.stringify(r.json.response.message) : (r.json && (r.json.error || r.json.message)) || ('código ' + r.status);
+        console.error('[CRM] edição recusada:', String(m).slice(0, 200));
+        return sendJSON(res, 400, { error: 'O WhatsApp não aceitou a edição: ' + String(m).slice(0, 160) });
+      }
+      db.prepare('UPDATE mensagens SET texto = ?, editada = 1 WHERE id = ?').run(texto, msgId);
+      console.log('[CRM] mensagem ' + msgId + ' editada');
+      return sendJSON(res, 200, { ok: true });
+    } catch (e) { console.error('[CRM] erro editando:', e.message); return sendJSON(res, 502, { error: e.message }); }
+  }
+
   if (method === 'DELETE' && pathname.match(/^\/api\/mensagem\/\d+$/)) {
     const msgId = pathname.split('/').pop();
     const msg = db.prepare('SELECT * FROM mensagens WHERE id = ?').get(msgId);

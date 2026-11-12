@@ -672,6 +672,20 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 .fu-ret.enviado { border-style: solid; border-color: #25d366; color: var(--text-secondary); font-size: 12px; }
 :root[data-theme="light"] .fu-conv-m.in { background: #f0f2f5; }
 :root[data-theme="light"] .fu-ret-txt { background: #ffffff; color: #111b21; }
+
+/* Visualizador de foto e PDF dentro do CRM (Esc fecha) */
+.visor { position: fixed; inset: 0; z-index: 500; background: rgba(11,20,26,.94); display: none; flex-direction: column; }
+.visor.show { display: flex; }
+.visor-topo { display: flex; align-items: center; gap: 14px; padding: 10px 16px; color: #e9edef; font-size: 14px; flex-shrink: 0; }
+.visor-topo span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.visor-topo a { color: #53bdeb; font-size: 13px; text-decoration: none; white-space: nowrap; }
+.visor-topo button { background: #2a3942; color: #e9edef; border: none; border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.visor-topo button:hover { background: #3b4a54; }
+.visor-corpo { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto; padding: 0 16px 16px; }
+.visor-corpo img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; cursor: zoom-in; background: #fff; }
+.visor-corpo img.grande { max-width: none; max-height: none; cursor: zoom-out; align-self: flex-start; margin: 0 auto; }
+.visor-corpo iframe { width: min(1100px, 100%); height: 100%; border: none; border-radius: 4px; background: #fff; }
+.msg-img { cursor: zoom-in; }
 </style>
 </head>
 <body>
@@ -956,6 +970,16 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 </div>
 
 
+<!-- Visualizador de foto e PDF (Esc fecha) -->
+<div class="visor" id="visor" onclick="if(event.target===this)fecharVisor()">
+  <div class="visor-topo">
+    <span id="visorNome"></span>
+    <a id="visorAbrir" href="#" target="_blank" rel="noopener">Abrir em outra aba</a>
+    <button type="button" onclick="fecharVisor()">&#x2715; Fechar (Esc)</button>
+  </div>
+  <div class="visor-corpo" id="visorCorpo" onclick="if(event.target===this)fecharVisor()"></div>
+</div>
+
 <!-- Criar marcação na agenda do CFAZ a partir da conversa -->
 <div class="modal-overlay" id="agendaModal" onclick="if(event.target===this)fecharAgenda()">
   <div class="modal">
@@ -1002,6 +1026,7 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 <!-- Message Context Menu -->
 <div class="msg-context-menu" id="msgContextMenu" style="display:none">
   <div class="msg-context-item" id="ctxResponder" onclick="contextResponder()">&#x21A9;&#xFE0F; Responder</div>
+  <div class="msg-context-item" id="ctxEditar" onclick="contextEditar()">&#x270F;&#xFE0F; Editar</div>
   <div class="msg-context-item" onclick="contextForward()">&#x21AA;&#xFE0F; Encaminhar</div>
   <div class="msg-context-item" onclick="contextCopy()">&#x1F4CB; Copiar texto</div>
   <div class="msg-context-item danger" onclick="contextDelete()">&#x1F5D1;&#xFE0F; Apagar</div>
@@ -2453,7 +2478,10 @@ function showMsgContextMenu(msgEl, x, y) {
   if (ctxR) ctxR.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato) ? '' : 'none';
   menu.style.display = 'block';
   // Position menu
-  const menuW = 200, menuH = 190;
+  // "Editar" só aparece em mensagem de texto nossa, enviada há menos de 15 minutos
+  const ctxE = document.getElementById('ctxEditar');
+  if (ctxE) ctxE.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato && podeEditar(mensagensDoChat().find(x => String(x.id) === String(msgEl.dataset.msgId)))) ? '' : 'none';
+  const menuW = 200, menuH = 240;
   let left = x, top = y;
   if (left + menuW > window.innerWidth) left = window.innerWidth - menuW - 10;
   if (top + menuH > window.innerHeight) top = y - menuH;
@@ -3383,7 +3411,7 @@ let chatReply = null;      // mensagem que está sendo respondida (citação)
 const rascunhos = {};      // texto digitado e não enviado, por conversa
 
 function assinaturaMsgs(msgs) {
-  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' + (Array.isArray(m.cfaz) ? m.cfaz.length : 1) : '')).join(',');
+  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' + (Array.isArray(m.cfaz) ? m.cfaz.length : 1) : '') + (m.editada ? 'E' + String(m.texto || '').length : '')).join(',');
 }
 // Todas as mensagens na tela, da mais nova para a mais antiga.
 function mensagensDoChat() {
@@ -3417,6 +3445,7 @@ async function openConversaChat(id) {
     chatAntigas = [];
     chatTemMais = !!c.tem_mais;
     chatAssinatura = assinaturaMsgs(c.mensagens);
+    chatEdit = null;
     cancelarResposta();
     hideChatSlashPopup();
     renderConversaChat('fim');
@@ -3542,13 +3571,13 @@ function renderMessagesInto(area, mensagens, opts) {
       content += '<div class="msg-cita"><b>' + (m.citacao_de === 'out' ? 'XR Diagnóstico' : m.citacao_de === 'in' ? esc(nomeDoCliente()) : 'Mensagem citada') + '</b>' + esc(String(m.citacao_texto).slice(0, 220)) + '</div>';
     }
     if (m.media_path && (m.tipo === 'image')) {
-      content += '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="window.open(\'/media/' + esc(m.media_path) + '\')" alt="imagem">';
+      content += '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="abrirVisor(\'/media/' + esc(m.media_path) + '\',\'image\')" alt="imagem" title="Clique para ver maior (Esc fecha)">';
       if (m.texto && m.texto !== '[image]') content += '<div>' + fmtWa(m.texto) + '</div>';
     } else if (m.media_path && m.tipo === 'audio') {
       content += '<audio controls src="/media/' + esc(m.media_path) + '" style="max-width:250px"></audio>';
     } else if (m.media_path && (m.tipo === 'document' || m.tipo === 'video')) {
       const arq = rotuloArquivo(m);
-      content += '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link" title="Abrir o arquivo">&#x1F4CE; <span>' + esc(arq.rotulo) + '</span></a>';
+      content += '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link" title="Abrir o arquivo" data-nome="' + esc(arq.rotulo) + '" onclick="return abrirArquivo(event, this)">&#x1F4CE; <span>' + esc(arq.rotulo) + '</span></a>';
       if (arq.legenda) content += '<div>' + fmtWa(arq.legenda) + '</div>';
     } else {
       content += fmtWa(m.texto === '[image]' ? '📷 Foto' : m.texto === '[audio]' ? '🎤 Áudio' : m.texto === '[document]' ? '📎 Documento' : m.texto);
@@ -3572,7 +3601,7 @@ function renderMessagesInto(area, mensagens, opts) {
       }
     }
     return faixa + '<div class="msg ' + m.direcao + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
-      '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + horaMsg(m.created_at) + '</div></div>' + extra;
+      '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + (m.editada ? 'Editada · ' : '') + horaMsg(m.created_at) + '</div></div>' + extra;
   }).join('');
   area.innerHTML = (opts.temMais ? '<button class="msg-mais" onclick="carregarAnteriores(this)">Carregar mensagens anteriores</button>' : '') + html;
 
@@ -3919,6 +3948,7 @@ async function desfazerAgenda(eventoId) {
 // ─── Responder citando ──────────────────────────────────────────────────────────────────────────
 function responderMsg(id) {
   if (!currentChatContato) return;
+  if (chatEdit) cancelarEdicao();
   const m = mensagensDoChat().find(x => String(x.id) === String(id));
   if (!m) return;
   chatReply = { id: m.id, de: m.direcao, texto: resumoCitar(m) };
@@ -3989,6 +4019,7 @@ async function processarFila() {
 
 function sendChatMessage() {
   if (!currentChatContato) return;
+  if (chatEdit) { salvarEdicao(); return; }
   const input = document.getElementById('chatComposeInput');
   const texto = input.value.replace(/\s+$/, '').replace(/^\n+/, '');
   if (!texto.trim()) return;
@@ -4087,6 +4118,7 @@ function handleChatComposeKey(e) {
   } else if (e.key === 'Escape') {
     const input = document.getElementById('chatComposeInput');
     if (chatSlashOpen) { hideChatSlashPopup(); if (input.value.startsWith('/')) { input.value = ''; ajustarAltura(input); } }
+    else if (chatEdit) cancelarEdicao();
     else if (chatReply) cancelarResposta();
   }
 }
@@ -4235,6 +4267,108 @@ document.addEventListener('paste', function (e) {
   // fora da conversa, soltar um arquivo não faz nada (em vez de o navegador sair da página)
   window.addEventListener('dragover', function (e) { if (temArquivo(e)) e.preventDefault(); });
 })();
+
+// ─── Editar mensagem enviada (como no WhatsApp: só texto, até 15 minutos depois do envio) ──────────────────
+let chatEdit = null;   // { id, original } enquanto uma mensagem está sendo editada
+const EDITAR_MINUTOS = 15;
+function podeEditar(m) {
+  if (!m || m.direcao !== 'out' || m.tipo !== 'text' || !m.wa_msg_id) return false;
+  const t = new Date(String(m.created_at || '').replace(' ', 'T')).getTime();
+  return !isNaN(t) && Date.now() - t < EDITAR_MINUTOS * 60000;
+}
+function editarMsg(id) {
+  if (!currentChatContato) return;
+  const m = mensagensDoChat().find(x => String(x.id) === String(id));
+  if (!m) return;
+  if (!podeEditar(m)) { toast('O WhatsApp só deixa editar mensagem de texto enviada há menos de ' + EDITAR_MINUTOS + ' minutos', 'err'); return; }
+  cancelarResposta();
+  chatEdit = { id: m.id, original: m.texto };
+  const bar = document.getElementById('chatReplyBar');
+  bar.innerHTML = '<div class="rb-box"><b>&#x270F;&#xFE0F; Editando mensagem</b><span>' + esc(String(m.texto).replace(/\s+/g, ' ').slice(0, 160)) + '</span></div>' +
+    '<button class="rb-x" onclick="cancelarEdicao()" title="Cancelar a edição (Esc)">&#x2715;</button>';
+  bar.classList.add('show');
+  const input = document.getElementById('chatComposeInput');
+  input.value = m.texto;
+  ajustarAltura(input);
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  sugDispensada = input.value;
+  mostrarSugestoes();
+}
+function cancelarEdicao() {
+  if (!chatEdit) return;
+  chatEdit = null;
+  const bar = document.getElementById('chatReplyBar');
+  if (bar) { bar.classList.remove('show'); bar.innerHTML = ''; }
+  const input = document.getElementById('chatComposeInput');
+  if (input) { input.value = ''; ajustarAltura(input); }
+}
+function contextEditar() {
+  const id = contextMsgId;
+  hideMsgContextMenu();
+  if (id) editarMsg(id);
+}
+async function salvarEdicao() {
+  if (!chatEdit || !currentChatContato) return;
+  const input = document.getElementById('chatComposeInput');
+  const texto = input.value.replace(/\s+$/, '').replace(/^\n+/, '');
+  if (!texto.trim()) { toast('A mensagem não pode ficar vazia. Para apagar, use o botão direito e "Apagar".', 'err'); return; }
+  if (texto === chatEdit.original) { cancelarEdicao(); return; }
+  const id = chatEdit.id, destino = currentChatContato.id;
+  input.disabled = true;
+  try {
+    await api('PUT', '/api/mensagem/' + id, { texto });
+    chatEdit = null;
+    const bar = document.getElementById('chatReplyBar');
+    bar.classList.remove('show'); bar.innerHTML = '';
+    input.value = ''; ajustarAltura(input);
+    toast('Mensagem editada');
+    if (currentChatContato && currentChatContato.id === destino) await recarregarChat('auto', true);
+  } catch (e) { toast('Não foi editada: ' + e.message, 'err'); }
+  input.disabled = false;
+  input.focus();
+}
+
+// ─── Visualizador de foto e PDF dentro do CRM (Esc fecha) ───────────────────────────────────────────────
+function abrirVisor(url, tipo, nome) {
+  const v = document.getElementById('visor'), corpo = document.getElementById('visorCorpo');
+  document.getElementById('visorNome').textContent = nome || (tipo === 'pdf' ? 'Documento' : 'Foto');
+  document.getElementById('visorAbrir').href = url;
+  corpo.innerHTML = tipo === 'pdf'
+    ? '<iframe src="' + esc(url) + '#view=FitH" title="Documento"></iframe>'
+    : '<img src="' + esc(url) + '" alt="imagem" onclick="this.classList.toggle(\'grande\');event.stopPropagation()" title="Clique para ampliar ou reduzir">';
+  v.classList.add('show');
+  // o foco fica na página do CRM, para o Esc funcionar mesmo com um PDF aberto
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  window.focus();
+}
+function fecharVisor() {
+  const v = document.getElementById('visor');
+  if (!v || !v.classList.contains('show')) return false;
+  v.classList.remove('show');
+  document.getElementById('visorCorpo').innerHTML = '';
+  return true;
+}
+// link de documento: PDF abre no visualizador; outros tipos seguem abrindo em nova aba
+function abrirArquivo(e, a) {
+  const url = a.getAttribute('href') || '';
+  if (!/\.pdf(\?|#|$)/i.test(url)) return true;
+  e.preventDefault();
+  abrirVisor(url, 'pdf', a.dataset.nome || 'Documento');
+  return false;
+}
+// Esc fecha o visualizador antes de qualquer outra coisa
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && fecharVisor()) { e.preventDefault(); e.stopPropagation(); }
+}, true);
+// Depois de clicar dentro de um PDF, o teclado passa a ser dele. Ao levar o mouse para a barra de cima ou para a
+// margem escura, o foco volta para o CRM e o Esc volta a fechar.
+document.addEventListener('mouseover', function (e) {
+  const v = document.getElementById('visor');
+  if (v && v.classList.contains('show') && e.target && e.target.closest && e.target.closest('#visor') && e.target.tagName !== 'IFRAME') {
+    if (document.activeElement && document.activeElement.tagName === 'IFRAME') { document.activeElement.blur(); window.focus(); }
+  }
+});
 
 // ─── Atualização automática ─────────────────────────────────────────────────────────────────────
 // Um "relógio" em segundo plano avisa a cada 5 s. Diferente do setInterval, ele não é freado pelo
