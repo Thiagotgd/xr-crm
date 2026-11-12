@@ -772,6 +772,22 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
 
 /* texto de exemplo do campo de mensagem sempre em uma linha só */
 #chatComposeInput::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ── 12/11/2026: citação clicável (vai até a mensagem original), miniatura da foto citada e botão de responder ── */
+.msg-cita.clicavel { cursor: pointer; }
+.msg-cita.clicavel:hover { filter: brightness(1.15); }
+.msg-cita.com-mini { display: flex; align-items: center; gap: 8px; padding-right: 5px; }
+.msg-cita.com-mini .mc-cita-txt { flex: 1; min-width: 0; }
+.msg-cita .mc-mini { width: 46px; height: 46px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
+@keyframes msgDestaque { 0%, 55% { box-shadow: 0 0 0 3px #00a884, 0 0 22px rgba(0,168,132,.6); } 100% { box-shadow: 0 0 0 0 rgba(0,168,132,0); } }
+.msg.msg-destaque { animation: msgDestaque 2.4s ease-out; }
+.msg-responder { position: absolute; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; padding: 0; border: none; border-radius: 50%; font-size: 13px; line-height: 26px; text-align: center; cursor: pointer; background: rgba(134,150,160,.22); opacity: 0; transition: opacity .12s; }
+.msg.in .msg-responder { right: -66px; }
+.msg.out .msg-responder { left: -66px; }
+.msg:hover .msg-responder, .msg-responder:focus-visible { opacity: 1; }
+.msg-responder:hover { background: rgba(134,150,160,.42); }
+.messages-area.selecionando .msg-responder { display: none; }
+@media (max-width: 768px) { .msg-responder { display: none; } }
 </style>
 </head>
 <body>
@@ -3714,7 +3730,13 @@ function renderMessagesInto(area, mensagens, opts) {
   const html = mensagens.slice().reverse().map(m => {
     let content = '';
     if (m.citacao_texto) {
-      content += '<div class="msg-cita"><b>' + (m.citacao_de === 'out' ? 'XR Diagnóstico' : m.citacao_de === 'in' ? esc(nomeDoCliente()) : 'Mensagem citada') + '</b>' + esc(String(m.citacao_texto).slice(0, 220)) + '</div>';
+      // Na conversa aberta a citação é clicável (leva até a mensagem original) e mostra a miniatura quando a citada é foto
+      const naConversa = area.id === 'chatMessagesArea';
+      const orig = naConversa ? acharCitada(m, mensagens) : null;
+      const mini = orig && orig.tipo === 'image' && orig.media_path ? '<img class="mc-mini" src="/media/' + esc(orig.media_path) + '" alt="">' : '';
+      content += '<div class="msg-cita' + (naConversa ? ' clicavel' : '') + (mini ? ' com-mini' : '') + '"' +
+        (naConversa ? ' onclick="event.stopPropagation();irParaCitada(' + m.id + ')" title="Ir para a mensagem citada"' : '') + '>' +
+        '<div class="mc-cita-txt"><b>' + (m.citacao_de === 'out' ? 'XR Diagnóstico' : m.citacao_de === 'in' ? esc(nomeDoCliente()) : 'Mensagem citada') + '</b>' + esc(String(m.citacao_texto).slice(0, 220)) + '</div>' + mini + '</div>';
     }
     if (m.media_path && (m.tipo === 'image')) {
       content += '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="abrirVisor(\'/media/' + esc(m.media_path) + '\',\'image\')" alt="imagem" title="Clique para ver maior (Esc fecha)">';
@@ -3765,7 +3787,8 @@ function renderMessagesInto(area, mensagens, opts) {
       } catch (e) {}
     }
     if (area.id === 'chatMessagesArea' && m.wa_msg_id) {
-      reac += '<button class="msg-reagir" onclick="event.stopPropagation();abrirReacoes(' + m.id + ', this)" title="Reagir">&#x1F642;</button>';
+      reac += '<button class="msg-reagir" onclick="event.stopPropagation();abrirReacoes(' + m.id + ', this)" title="Reagir">&#x1F642;</button>' +
+        '<button class="msg-responder" onclick="event.stopPropagation();responderMsg(' + m.id + ')" title="Responder citando esta mensagem">&#x21A9;&#xFE0F;</button>';
     }
     const marcada = area.id === 'chatMessagesArea' && selMsgs.has(String(m.id)); // seleção para encaminhar sobrevive ao redesenho
     return faixa + '<div class="msg ' + m.direcao + (temReac ? ' tem-reac' : '') + (marcada ? ' marcada' : '') + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
@@ -4112,6 +4135,68 @@ async function desfazerAgenda(eventoId) {
     toast('Marcação apagada do CFAZ');
     await recarregarChat('auto', true);
   } catch (e) { toast('Não foi apagada: ' + e.message, 'err'); }
+}
+
+// ─── Ir até a mensagem citada (clicar na citação sobe a conversa e destaca a mensagem ou foto original) ──────
+// Acha a mensagem original de uma citação: pelo identificador do WhatsApp; nas antigas (sem identificador),
+// pela última mensagem anterior com o mesmo começo de texto e do mesmo lado da conversa.
+function acharCitada(m, lista) {
+  if (m.citacao_wa_id) {
+    const porId = lista.find(x => x.wa_msg_id && x.wa_msg_id === m.citacao_wa_id);
+    if (porId) return porId;
+    return null;
+  }
+  const limpo = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 70);
+  const alvo = limpo(m.citacao_texto);
+  if (alvo.length < 3) return null;
+  let melhor = null;
+  for (const x of lista) {
+    if (x.id === m.id || (x.created_at || '') > (m.created_at || '') || ((x.created_at || '') === (m.created_at || '') && x.id > m.id)) continue;
+    if (m.citacao_de && x.direcao !== m.citacao_de) continue;
+    const t = limpo(resumoCitar(x));
+    if (!(t === alvo || t.startsWith(alvo) || alvo.startsWith(t)) || t.length < 3) continue;
+    if (!melhor || (x.created_at || '') > (melhor.created_at || '') || ((x.created_at || '') === (melhor.created_at || '') && x.id > melhor.id)) melhor = x;
+  }
+  return melhor;
+}
+function destacarMsg(id) {
+  const el = document.querySelector('#chatMessagesArea .msg[data-msg-id="' + id + '"]');
+  if (!el) return false;
+  // vai direto (sem animação de rolagem, que uma atualização da conversa no meio do caminho interromperia)
+  const area = document.getElementById('chatMessagesArea');
+  const ra = area.getBoundingClientRect(), re = el.getBoundingClientRect();
+  area.scrollTop += (re.top - ra.top) - Math.max(0, (ra.height - re.height) / 2);
+  el.classList.remove('msg-destaque');
+  void el.offsetWidth; // recomeça a animação se já estava destacada
+  el.classList.add('msg-destaque');
+  setTimeout(function () { el.classList.remove('msg-destaque'); }, 2400);
+  return true;
+}
+let indoParaCitada = false;
+async function irParaCitada(msgId) {
+  if (!currentChatContato || indoParaCitada) return;
+  const id = currentChatContato.id;
+  let todas = mensagensDoChat();
+  const m = todas.find(x => String(x.id) === String(msgId));
+  if (!m) return;
+  let alvo = acharCitada(m, todas);
+  if (!alvo && m.citacao_wa_id && chatTemMais && todas.length) {
+    // a mensagem citada é mais antiga do que o que está carregado: busca de uma vez tudo até ela
+    indoParaCitada = true;
+    try {
+      toast('Buscando a mensagem citada…');
+      const r = await api('GET', '/api/contato/' + id + '/mensagens?antes=' + todas[todas.length - 1].id + '&ate_wa=' + encodeURIComponent(m.citacao_wa_id));
+      if (!currentChatContato || currentChatContato.id !== id) { indoParaCitada = false; return; }
+      const tem = new Set(todas.map(x => x.id));
+      for (const x of (r.mensagens || [])) if (!tem.has(x.id)) chatAntigas.push(x);
+      chatTemMais = !!r.tem_mais;
+      renderConversaChat('manter');
+      todas = mensagensDoChat();
+      alvo = acharCitada(m, todas);
+    } catch (e) { indoParaCitada = false; toast(e.message, 'err'); return; }
+    indoParaCitada = false;
+  }
+  if (!alvo || !destacarMsg(alvo.id)) toast('Não achei a mensagem citada nesta conversa (pode ser muito antiga ou ter sido apagada).', 'err');
 }
 
 // ─── Responder citando ──────────────────────────────────────────────────────────────────────────

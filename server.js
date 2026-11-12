@@ -157,6 +157,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS agenda_cfaz (
 try { db.exec("ALTER TABLE mensagens ADD COLUMN reacoes TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN cartao TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN previa TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE mensagens ADD COLUMN citacao_wa_id TEXT DEFAULT ''"); } catch {}
 db.exec("CREATE TABLE IF NOT EXISTS agenda (telefone TEXT PRIMARY KEY, nome TEXT NOT NULL, importado_em TEXT DEFAULT (datetime('now','localtime')))");
 try { db.exec("ALTER TABLE contatos ADD COLUMN nome_antes_agenda TEXT DEFAULT ''"); } catch {}
 function nomeDaAgenda(telefone) {
@@ -295,7 +296,7 @@ function citacaoDoContexto(msg, data, jid) {
       const soNum = v => phoneFromJid(String(v || '')).replace(/\D/g, '');
       de = soNum(ctx.participant) && soNum(ctx.participant) === soNum(jid) ? 'in' : 'out';
     }
-    return { texto: String(texto).slice(0, 300), de };
+    return { texto: String(texto).slice(0, 300), de, id: ctx.stanzaId ? String(ctx.stanzaId) : '' };
   } catch (e) { return vazio; }
 }
 
@@ -902,9 +903,20 @@ async function handleRequest(req, res) {
     const antes = Number(urlObj.searchParams.get('antes') || 0);
     const ref = antes ? db.prepare('SELECT id, created_at FROM mensagens WHERE id = ? AND contato_id = ?').get(antes, id) : null;
     if (!ref) return sendJSON(res, 400, { error: 'informe a mensagem de referência (antes)' });
-    const msgs = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? AND (created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT 51').all(id, ref.created_at, ref.created_at, ref.id);
-    const temMais = msgs.length > 50;
-    if (temMais) msgs.pop();
+    // ?ate_wa=<identificador>: traz de uma vez tudo o que há entre a mensagem de referência e a mensagem citada
+    const ateWa = urlObj.searchParams.get('ate_wa') || '';
+    let msgs, temMais;
+    if (ateWa) {
+      const alvo = db.prepare('SELECT id, created_at FROM mensagens WHERE wa_msg_id = ? AND contato_id = ?').get(ateWa, id);
+      if (!alvo) return sendJSON(res, 404, { error: 'A mensagem citada não está guardada no CRM.' });
+      msgs = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? AND (created_at < ? OR (created_at = ? AND id < ?)) AND (created_at > ? OR (created_at = ? AND id >= ?)) ORDER BY created_at DESC, id DESC LIMIT 1500')
+        .all(id, ref.created_at, ref.created_at, ref.id, alvo.created_at, alvo.created_at, alvo.id);
+      temMais = !!db.prepare('SELECT 1 FROM mensagens WHERE contato_id = ? AND (created_at < ? OR (created_at = ? AND id < ?)) LIMIT 1').get(id, alvo.created_at, alvo.created_at, alvo.id);
+    } else {
+      msgs = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? AND (created_at < ? OR (created_at = ? AND id < ?)) ORDER BY created_at DESC, id DESC LIMIT 51').all(id, ref.created_at, ref.created_at, ref.id);
+      temMais = msgs.length > 50;
+      if (temMais) msgs.pop();
+    }
     try { leitor.anexarLeituras(db, msgs); } catch (e) { console.error('[LEITOR] anexar:', e.message); }
     try { anexarAgenda(msgs); } catch (e) { console.error('[CFAZ] anexar:', e.message); }
     return sendJSON(res, 200, { mensagens: msgs, tem_mais: temMais });
@@ -1174,6 +1186,9 @@ async function handleRequest(req, res) {
     const waJid = (waKey && waKey.remoteJid) || jidFromPhone(contato.telefone);
     db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, wa_msg_id, wa_remote_jid, citacao_texto, citacao_de) VALUES (?, 'out', ?, 'text', ?, ?, ?, ?)").run(
       id, body.texto, waMsgId, waJid, citada ? resumoParaCitar(citada).slice(0, 300) : '', citada ? citada.direcao : '');
+    if (citada && citada.wa_msg_id) {
+      db.prepare("UPDATE mensagens SET citacao_wa_id = ? WHERE id = (SELECT MAX(id) FROM mensagens WHERE contato_id = ? AND direcao = 'out')").run(citada.wa_msg_id, id);
+    }
     db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(id);
     // Mensagem enviada pela tela do CRM a um orçamento parado também conta como retomada.
     try { retomada.registrarSeRetomada(db, Number(id), body.texto, 'text'); } catch (e) { console.error('[RETOMADA]', e.message); }
@@ -1481,6 +1496,7 @@ async function handleRequest(req, res) {
         contato.id, direcao, texto || caption || [docName, docCaption].filter(Boolean).join('\n') || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid, cita.texto, cita.de
       );
       if (cartoes.length && waMsgId) db.prepare('UPDATE mensagens SET cartao = ? WHERE wa_msg_id = ?').run(JSON.stringify(cartoes), waMsgId);
+      if (cita.id && waMsgId) db.prepare('UPDATE mensagens SET citacao_wa_id = ? WHERE wa_msg_id = ?').run(cita.id, waMsgId);
       // mensagem com link (pedido no Adobe, LoopVet…): busca a prévia em segundo plano
       if (tipo === 'text' && waMsgId && /https?:\/\//.test(texto)) {
         try { const nv = db.prepare('SELECT id FROM mensagens WHERE wa_msg_id = ?').get(waMsgId); if (nv) agendarPrevia(nv.id, texto); } catch (e) {}
