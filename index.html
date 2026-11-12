@@ -712,6 +712,9 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 .filter-chip.active .chip-num { background: var(--wa-badge-text); color: var(--wa-badge-bg); }
 .conversa-row.so-whats .conversa-preview { font-style: italic; }
 @media (max-width: 768px) { .msg-reagir { display: none; } }
+
+/* 12/11/2026: botão de fixar no cabeçalho da conversa */
+.ch-fixar.ativo { background: rgba(0,168,132,.18); color: #00a884; border-color: rgba(0,168,132,.55); }
 </style>
 </head>
 <body>
@@ -2918,6 +2921,7 @@ function renderConversaChat(rolar, chegouDoCliente) {
     '<div class="ch-actions">' +
       '<a href="https://wa.me/' + c.telefone + '" target="_blank" class="wa-link" style="font-size:14px">WhatsApp</a>' +
       '<button class="btn btn-ghost btn-sm" onclick="abrirAgendaCfaz(null)" title="Criar uma marcação na agenda do CFAZ" style="font-size:12px;padding:4px 8px">&#x1F4C5; Agenda</button>' +
+      '<button class="btn btn-ghost btn-sm ch-fixar' + (c.pinado ? ' ativo' : '') + '" id="btnFixar" onclick="fixarConversaAberta()" title="' + (c.pinado ? 'Conversa fixada no topo da lista. Clique para desafixar.' : 'Fixar esta conversa no topo da lista') + '" style="font-size:12px;padding:4px 8px">&#x1F4CC; ' + (c.pinado ? 'Fixada' : 'Fixar') + '</button>' +
       '<button class="btn btn-ghost btn-sm" onclick="openEditModalChat()" style="font-size:12px;padding:4px 8px">Editar</button>' +
       '<button class="btn btn-ghost btn-sm" onclick="openTagModalChat()" style="font-size:12px;padding:4px 8px">&#x1F3F7;&#xFE0F;</button>' +
     '</div>';
@@ -4469,6 +4473,29 @@ async function enviarArquivoPronto(i) {
     abrirAnexos([new File([blob], a.arquivo, { type: a.tipo })]);
     document.getElementById('anexoLegenda').value = a.legenda;
   } catch (e) { toast('Não consegui carregar o arquivo: ' + e.message, 'err'); }
+}
+
+// ─── Fixar a conversa aberta no topo da lista (botão no cabeçalho da conversa) ─────────────────────────
+async function fixarConversaAberta() {
+  const c = currentChatContato;
+  if (!c) return;
+  const btn = document.getElementById('btnFixar');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('POST', '/api/contato/' + c.id + '/pin');
+    if (currentChatContato && currentChatContato.id === c.id) currentChatContato.pinado = r.pinado;
+    const idx = conversasList.findIndex(x => x.id === c.id);
+    if (idx >= 0) conversasList[idx].pinado = r.pinado;
+    if (btn) {
+      btn.classList.toggle('ativo', !!r.pinado);
+      btn.innerHTML = '&#x1F4CC; ' + (r.pinado ? 'Fixada' : 'Fixar');
+      btn.title = r.pinado ? 'Conversa fixada no topo da lista. Clique para desafixar.' : 'Fixar esta conversa no topo da lista';
+    }
+    renderConversasList();
+    toast(r.pinado ? 'Conversa fixada no topo da lista' : 'Conversa desafixada');
+    loadConversas(true);
+  } catch (e) { toast('Não consegui fixar: ' + e.message, 'err'); }
+  if (btn) btn.disabled = false;
 }
 
 // ─── Reagir a uma mensagem (👍 ❤️ …), como no WhatsApp ─────────────────────────────────────────────
