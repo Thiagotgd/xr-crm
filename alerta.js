@@ -21,6 +21,11 @@ const DESTINO = '553182043117'; // WhatsApp da recepção XR
 const ORIGEM  = process.env.ALERTA_ORIGEM || '553183746380'; // número XR Staff — de onde o alerta sai (e onde a recepção responde os comandos)
 const CRM_URL = 'https://crm.xrdiagnostico.tech';
 
+// 12/11/2026: DESLIGADO por padrão, a pedido do Thiago. A recepção passou a responder pelo CRM, onde a aba
+// Follow-up mostra os mesmos casos (cliente esperando, orçamento sem retorno); o aviso no WhatsApp virou repetição.
+// Para religar: variável ALERTA_RECEPCAO=1 no ambiente do xr-crm (pm2 restart xr-crm --update-env).
+const LIGADO = process.env.ALERTA_RECEPCAO === '1';
+
 const HORA_DIGEST_MANHA = 8;    // 08:05 — sempre envia, mesmo vazio (é o heartbeat)
 const HORA_DIGEST_TARDE = 13;   // 13:05 — só se tiver pendência
 
@@ -53,6 +58,7 @@ function enviar(numero, texto) {
 }
 
 async function enviarRecepcao(texto) {
+  if (!LIGADO) return false; // avisos desligados: nada sai
   try {
     await enviar(DESTINO, texto);
     console.log(`[ALERTA] enviado (${texto.split('\n')[0].slice(0, 50)})`);
@@ -77,6 +83,7 @@ const ICONE = { 1: '🔴', 2: '🟡', 3: '⚪' };
 // ─── Alerta imediato: só 🔴 (cliente esperando resposta) ───────────────────────
 // 🟡 e ⚪ não interrompem ninguém — vão no digest.
 function notificarNovos(db, subiram, emHorarioUtil) {
+  if (!LIGADO) return; // avisos desligados: nem marca como avisado
   const agora = new Date();
   if (!emHorarioUtil(agora)) return; // fora do expediente, fica pro digest das 8h
 
@@ -169,6 +176,7 @@ function iniciarDigest(db, emHorarioUtil) {
   let ultimoEnvio = ''; // 'YYYY-MM-DD-H' para não repetir no mesmo slot
 
   const tick = () => {
+    if (!LIGADO) return; // avisos desligados
     const agora = new Date();
     const h = agora.getHours(), m = agora.getMinutes();
     const dia = agora.getDay();
@@ -190,4 +198,4 @@ function iniciarDigest(db, emHorarioUtil) {
   return setInterval(tick, 60 * 1000);
 }
 
-module.exports = { DESTINO, ORIGEM, INSTANCIA: ALERTA_INSTANCE, enviarRecepcao, enviarSequencia, notificarNovos, montarDigest, iniciarDigest };
+module.exports = { LIGADO, DESTINO, ORIGEM, INSTANCIA: ALERTA_INSTANCE, enviarRecepcao, enviarSequencia, notificarNovos, montarDigest, iniciarDigest };

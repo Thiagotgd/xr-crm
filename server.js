@@ -155,6 +155,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS agenda_cfaz (
   calendario_id INTEGER, calendario_nome TEXT, inicio TEXT, titulo TEXT,
   created_at TEXT DEFAULT (datetime('now','localtime')))`);
 try { db.exec("ALTER TABLE mensagens ADD COLUMN reacoes TEXT DEFAULT ''"); } catch {}
+try { db.exec("ALTER TABLE mensagens ADD COLUMN cartao TEXT DEFAULT ''"); } catch {}
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_mensagens_contato_data ON mensagens(contato_id, created_at)"); } catch (e) { console.error('[CRM] índice de mensagens:', e.message); }
 try { db.exec("ALTER TABLE contatos ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN favorito INTEGER DEFAULT 0"); } catch {}
@@ -361,6 +362,40 @@ function evoPost(caminho, corpo) {
     req.write(payload);
     req.end();
   });
+}
+
+// ─── Cartão de contato ─────────────────────────────────────────────────────────
+function telefoneBonito(t) {
+  const d = String(t || '').replace(/\D/g, '');
+  if (d.startsWith('55') && d.length === 13) return '+55 ' + d.slice(2, 4) + ' ' + d.slice(4, 9) + '-' + d.slice(9);
+  if (d.startsWith('55') && d.length === 12) return '+55 ' + d.slice(2, 4) + ' ' + d.slice(4, 8) + '-' + d.slice(8);
+  return '+' + d;
+}
+// Cartões que vieram numa mensagem do WhatsApp (um contato ou vários) → [{nome, telefone}]
+function cartoesDaMensagem(msg) {
+  const brutos = msg.contactMessage ? [msg.contactMessage]
+    : (msg.contactsArrayMessage && Array.isArray(msg.contactsArrayMessage.contacts)) ? msg.contactsArrayMessage.contacts : [];
+  return brutos.map(c => {
+    const v = String((c && c.vcard) || '');
+    const waid = (v.match(/waid=(\d+)/) || [])[1];
+    const tel = waid || String((v.match(/TEL[^:\n]*:([^\n]+)/) || [])[1] || '').replace(/\D/g, '');
+    const nome = String((c && c.displayName) || (v.match(/FN:([^\n]+)/) || [])[1] || '').trim().slice(0, 80);
+    return { nome, telefone: tel };
+  }).filter(c => c.nome || c.telefone).slice(0, 20);
+}
+// Envia cartões para um telefone ou grupo. Devolve a resposta da Evolution (com a chave da mensagem).
+async function enviarCartao(alvo, lista) {
+  const numero = String(alvo).includes('@g.us') ? String(alvo) : String(alvo).replace(/\D/g, '');
+  const r = await evoPost('/message/sendContact/' + EVO_INSTANCE, {
+    number: numero,
+    contact: lista.map(c => ({ fullName: c.nome || telefoneBonito(c.telefone), wuid: String(c.telefone), phoneNumber: telefoneBonito(c.telefone) }))
+  });
+  if (r.status >= 400) {
+    const m = r.json && r.json.response && r.json.response.message ? JSON.stringify(r.json.response.message) : (r.json && (r.json.error || r.json.message)) || ('código ' + r.status);
+    if (/"exists":false/.test(String(m))) throw new Error('este número não tem WhatsApp. Confira o DDD e o número no cadastro do contato.');
+    throw new Error('o WhatsApp não aceitou o contato: ' + String(m).slice(0, 160));
+  }
+  return r.json || {};
 }
 
 // ─── Reações (👍 ❤️ …) ─────────────────────────────────────────────────────────
@@ -991,6 +1026,31 @@ async function handleRequest(req, res) {
     return sendJSON(res, 200, { ok: true, sem_citacao: !!body.citar && !citada });
   }
 
+  // ─── Enviar cartão de contato (um ou vários) para a conversa ────────────────────
+  if (method === 'POST' && pathname.match(/^\/api\/contato\/\d+\/cartao$/)) {
+    const id = pathname.split('/')[3];
+    const body = await parseBody(req);
+    const contato = db.prepare('SELECT * FROM contatos WHERE id = ?').get(id);
+    if (!contato) return sendJSON(res, 404, { error: 'Contato not found' });
+    const lista = (Array.isArray(body.contatos) ? body.contatos : [])
+      .map(c => ({ nome: String((c && c.nome) || '').trim().slice(0, 80), telefone: String((c && c.telefone) || '').replace(/\D/g, '') }))
+      .filter(c => c.telefone.length >= 8).slice(0, 10);
+    if (!lista.length) return sendJSON(res, 400, { error: 'Escolha pelo menos um contato com telefone.' });
+    let chave = {};
+    try {
+      const r = await enviarCartao(contato.telefone, lista);
+      chave = (r && r.key) || {};
+    } catch (e) {
+      console.error('[CRM] Erro enviando cartão de contato:', e.message);
+      return sendJSON(res, 500, { error: 'Falha ao enviar: ' + e.message });
+    }
+    db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, wa_msg_id, wa_remote_jid, cartao) VALUES (?, 'out', ?, 'contact', ?, ?, ?)").run(
+      id, 'Contato: ' + lista.map(c => c.nome || telefoneBonito(c.telefone)).join(', '), chave.id || '', chave.remoteJid || jidFromPhone(contato.telefone), JSON.stringify(lista));
+    db.prepare("UPDATE contatos SET updated_at = datetime('now','localtime'), last_message_at = datetime('now','localtime') WHERE id = ?").run(id);
+    console.log('[CRM] cartão de contato enviado (' + lista.length + ') para o contato ' + id);
+    return sendJSON(res, 200, { ok: true, enviados: lista.length });
+  }
+
   // ─── API: Send media via Evolution ─────────────────────────────────────────
   if (method === 'POST' && pathname.match(/^\/api\/contato\/\d+\/media$/)) {
     const id = pathname.split('/')[3];
@@ -1180,9 +1240,12 @@ async function handleRequest(req, res) {
 
     // Extract message text
     const msg = data.message || {};
-    const texto = msg.conversation || (msg.extendedTextMessage && msg.extendedTextMessage.text) || '';
+    // cartão de contato (um ou vários) vira mensagem do tipo 'contact', com os contatos guardados em "cartao"
+    const cartoes = cartoesDaMensagem(msg);
+    const texto = msg.conversation || (msg.extendedTextMessage && msg.extendedTextMessage.text) ||
+      (cartoes.length ? 'Contato: ' + cartoes.map(c => c.nome || telefoneBonito(c.telefone)).join(', ') : '');
     console.log(`[CRM] Msg ${isFromMe ? 'OUT' : 'IN'} ${phone}: texto="${texto.substring(0,50)}" tipo=${Object.keys(msg).join(',')}`);
-    const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : msg.documentMessage ? 'document' : 'text';
+    const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : msg.documentMessage ? 'document' : cartoes.length ? 'contact' : 'text';
 
     // Extract push name (contact name from WhatsApp)
     const pushName = data.pushName || '';
@@ -1232,7 +1295,7 @@ async function handleRequest(req, res) {
     // Save incoming message + download media
     if (texto || tipo !== 'text') {
       let mediaPath = '';
-      if (tipo !== 'text') {
+      if (tipo !== 'text' && tipo !== 'contact') {
         try {
           const mediaData = await evoDownloadMedia(key);
           if (mediaData && mediaData.base64) {
@@ -1263,6 +1326,7 @@ async function handleRequest(req, res) {
       db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid, citacao_texto, citacao_de) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
         contato.id, direcao, texto || caption || [docName, docCaption].filter(Boolean).join('\n') || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid, cita.texto, cita.de
       );
+      if (cartoes.length && waMsgId) db.prepare('UPDATE mensagens SET cartao = ? WHERE wa_msg_id = ?').run(JSON.stringify(cartoes), waMsgId);
       // De onde o cliente veio (anúncio Meta, Google, direto) — só leitura das primeiras mensagens dele.
       if (!isFromMe) { try { origem.classificar(db, contato.id, texto || caption); } catch (e) { console.error('[ORIGEM]', e.message); } }
       // A recepção escreveu para um orçamento parado (🟡/⚪)? Conta como retomada (1ª, 2ª ou última).
@@ -1823,14 +1887,19 @@ async function handleRequest(req, res) {
               if (linhas[0] && /\.[a-z0-9]{2,5}$/i.test(linhas[0].trim())) { nome = linhas[0].trim(); legenda = linhas.slice(1).join('\n'); }
             }
             r = await evoSendMedia(alvo, mediatype, fs.readFileSync(arq).toString('base64'), mediatype === 'audio' ? '' : legenda, nome);
+          } else if (msg.tipo === 'contact' && msg.cartao) {
+            let cs = [];
+            try { cs = JSON.parse(msg.cartao) || []; } catch {}
+            if (!cs.length) { puladas++; continue; }
+            r = await enviarCartao(alvo, cs);
           } else {
             if (!texto || msg.tipo !== 'text') { puladas++; continue; }
             r = await evoSendText(alvo, texto);
           }
           const chave = (r && r.key) || {};
           if (paraContato) {
-            db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid) VALUES (?, 'out', ?, ?, ?, ?, ?)").run(
-              paraContato.id, texto, msg.tipo, msg.media_path || '', chave.id || '', chave.remoteJid || jidFromPhone(paraContato.telefone));
+            db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid, cartao) VALUES (?, 'out', ?, ?, ?, ?, ?, ?)").run(
+              paraContato.id, texto, msg.tipo, msg.media_path || '', chave.id || '', chave.remoteJid || jidFromPhone(paraContato.telefone), msg.cartao || '');
           } else {
             db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo) VALUES (?, 'me', 'Eu', ?, ?)").run(paraGrupo.id, texto || '[mídia encaminhada]', msg.tipo);
           }
@@ -2102,7 +2171,8 @@ server.listen(PORT, () => {
   });
   // Digest 08:05 (sempre — é o heartbeat) e 13:05 (só se tiver pendência).
   alerta.iniciarDigest(db, followup.emHorarioUtil);
-  console.log(`[ALERTA] canal ativo → recepção ${alerta.DESTINO} via ${alerta.INSTANCIA} (${alerta.ORIGEM})`);
+  console.log(alerta.LIGADO ? `[ALERTA] canal ativo → recepção ${alerta.DESTINO} via ${alerta.INSTANCIA} (${alerta.ORIGEM})`
+    : '[ALERTA] avisos no WhatsApp da recepção DESLIGADOS (ALERTA_RECEPCAO=1 religa). A aba Follow-up do CRM continua igual.');
 
   // ─── Auto-finalize: contacts in "agendado" for 10+ days (once per hour) ────
   setInterval(() => {

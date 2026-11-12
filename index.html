@@ -738,6 +738,21 @@ button.msg-agenda:hover { filter: brightness(1.1); }
    "Etiquetas" abre inteiro. Antes a fileira rolava de lado e cortava o menu. ── */
 .conversas-filters { flex-wrap: wrap; row-gap: 6px; overflow: visible; }
 .etiquetas-dropdown-menu { z-index: 200; }
+
+/* ── 12/11/2026: cartão de contato na conversa e janela "Enviar contato" ── */
+.msg-cartao { display: flex; align-items: center; gap: 10px; min-width: 230px; padding: 4px 2px 6px; }
+.msg-cartao + .msg-cartao { border-top: 1px solid rgba(134,150,160,.25); padding-top: 8px; }
+.msg-cartao .mc-av { width: 38px; height: 38px; border-radius: 50%; background: #5b6b76; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; flex-shrink: 0; }
+.msg-cartao .mc-info { flex: 1; min-width: 0; }
+.msg-cartao .mc-nome { font-weight: 600; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.msg-cartao .mc-tel { font-size: 12.5px; opacity: .75; }
+.msg-cartao .mc-abrir { border: 1px solid rgba(0,168,132,.6); background: none; color: #00a884; border-radius: 14px; padding: 5px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.msg-cartao .mc-abrir:hover { background: rgba(0,168,132,.14); }
+.msg.out .msg-cartao .mc-abrir { color: inherit; border-color: currentColor; opacity: .9; }
+.cartao-check { width: 20px; height: 20px; border-radius: 5px; border: 2px solid rgba(134,150,160,.7); box-sizing: border-box; flex-shrink: 0; margin-right: 4px; }
+.fwd-item.cartao-on .cartao-check { border-color: #00a884; background: #00a884 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.4l2.9 2.9 6.1-6.3' fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/13px no-repeat; }
+.cartao-escolhidos { font-size: 12.5px; color: var(--text-muted); padding: 10px 0 2px; min-height: 18px; }
+#cartaoModal .btn-primary:disabled { opacity: .45; cursor: default; }
 </style>
 </head>
 <body>
@@ -804,6 +819,7 @@ button.msg-agenda:hover { filter: brightness(1.1); }
         <button class="attach-btn" onclick="document.getElementById('chatFileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
         <button class="attach-btn" onclick="abrirOrcamentoChat()" title="Criar orçamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
         <button class="attach-btn" onclick="enviarArquivoPronto(0)" title="Enviar a imagem das recomendações de tomografia e ressonância (atalho: /foto)" style="font-size:16px;padding:2px 4px">&#x1F4CB;</button>
+        <button class="attach-btn" onclick="abrirEnviarContato()" title="Enviar contato (cartão com nome e telefone)" style="font-size:16px;padding:2px 4px">&#x1F464;</button>
         <input type="file" id="chatFileInput" multiple style="display:none" onchange="escolherArquivosChat(this)">
         <textarea id="chatComposeInput" rows="1" placeholder="Digite uma mensagem ( / abre as mensagens rápidas )" onkeydown="handleChatComposeKey(event)" oninput="checkChatSlashTrigger(this);ajustarAltura(this);sugDispensada=null;mostrarSugestoes()" onclick="mostrarSugestoes()" onkeyup="if(event.key.indexOf('Arrow')===0||event.key==='Home'||event.key==='End')mostrarSugestoes()"></textarea>
         <div class="envio-estado" id="chatEnvioEstado"></div>
@@ -3659,6 +3675,8 @@ function renderMessagesInto(area, mensagens, opts) {
       const arq = rotuloArquivo(m);
       content += '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link" title="Abrir o arquivo" data-nome="' + esc(arq.rotulo) + '" onclick="return abrirArquivo(event, this)">&#x1F4CE; <span>' + esc(arq.rotulo) + '</span></a>';
       if (arq.legenda) content += '<div>' + fmtWa(arq.legenda) + '</div>';
+    } else if (m.tipo === 'contact' && m.cartao) {
+      content += cartaoHtml(m.cartao, area.id === 'chatMessagesArea');
     } else {
       content += fmtWa(m.texto === '[image]' ? '📷 Foto' : m.texto === '[audio]' ? '🎤 Áudio' : m.texto === '[document]' ? '📎 Documento' : m.texto);
     }
@@ -4497,6 +4515,118 @@ async function enviarArquivoPronto(i) {
     document.getElementById('anexoLegenda').value = a.legenda;
   } catch (e) { toast('Não consegui carregar o arquivo: ' + e.message, 'err'); }
 }
+
+// ─── Cartão de contato: mostrar na conversa e enviar (botão 👤 ao lado do clipe) ───────────────────────
+function cartaoHtml(json, naConversa) {
+  let cs = [];
+  try { cs = JSON.parse(json) || []; } catch (e) {}
+  return cs.map(c =>
+    '<div class="msg-cartao">' +
+      '<div class="mc-av">' + inicial(c.nome) + '</div>' +
+      '<div class="mc-info"><div class="mc-nome">' + esc(c.nome || formatPhone(c.telefone)) + '</div><div class="mc-tel">' + esc(c.telefone ? telefoneCurto(c.telefone) : 'sem telefone') + '</div></div>' +
+      (naConversa && c.telefone ? '<button class="mc-abrir" data-tel="' + esc(c.telefone) + '" data-nome="' + esc(c.nome || '') + '" onclick="event.stopPropagation();abrirDoWhatsApp(this)" title="Abrir a conversa com este contato no CRM">Conversar</button>' : '') +
+    '</div>').join('');
+}
+const CARTAO_MAX = 10;
+const cartaoSel = new Map();   // telefone → { nome, telefone }
+let cartaoAchados = [];        // resultado da busca no servidor (contatos antigos e do WhatsApp)
+let cartaoBuscado = '';
+let cartaoTimer = null;
+let cartaoEnviando = false;
+function abrirEnviarContato() {
+  if (!currentChatContato) return;
+  let m = document.getElementById('cartaoModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'cartaoModal';
+    m.className = 'modal-overlay';
+    m.onclick = function (e) { if (e.target === m) fecharEnviarContato(); };
+    m.innerHTML = '<div class="modal">' +
+      '<h2>Enviar contato</h2>' +
+      '<input type="text" id="cartaoQ" placeholder="Buscar por nome ou telefone..." oninput="cartaoDesenhar()" style="width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:14px;outline:none;margin-bottom:8px">' +
+      '<div class="fwd-list" id="cartaoLista"></div>' +
+      '<div class="cartao-escolhidos" id="cartaoEscolhidos"></div>' +
+      '<div class="modal-actions"><button class="btn btn-ghost" onclick="fecharEnviarContato()">Cancelar</button>' +
+      '<button class="btn btn-primary" id="cartaoEnviar" onclick="enviarCartoes()">Enviar</button></div>' +
+    '</div>';
+    document.body.appendChild(m);
+  }
+  cartaoSel.clear();
+  cartaoAchados = []; cartaoBuscado = '';
+  document.getElementById('cartaoQ').value = '';
+  m.classList.add('show');
+  cartaoDesenhar();
+  setTimeout(function () { document.getElementById('cartaoQ').focus(); }, 60);
+}
+function fecharEnviarContato() {
+  const m = document.getElementById('cartaoModal');
+  if (m) m.classList.remove('show');
+}
+function cartaoDesenhar() {
+  const q = (document.getElementById('cartaoQ').value || '').trim().toLowerCase();
+  const qNum = q.replace(/\D/g, '');
+  let lista = conversasList.filter(c => c.telefone && !String(c.telefone).includes('@'));
+  if (q) {
+    lista = lista.filter(c => (c.nome || '').toLowerCase().includes(q) || (c.pet_nome || '').toLowerCase().includes(q) || (qNum.length >= 3 && String(c.telefone).includes(qNum)));
+    if (cartaoBuscado === q) {
+      const tem = new Set(lista.map(c => c.telefone));
+      for (const c of cartaoAchados) if (c.telefone && !tem.has(c.telefone)) { tem.add(c.telefone); lista.push(c); }
+    }
+    // com 3 letras ou mais, procura também nos contatos antigos e em quem o WhatsApp conhece
+    clearTimeout(cartaoTimer);
+    if (q.length >= 3 && cartaoBuscado !== q) {
+      cartaoTimer = setTimeout(async function () {
+        try {
+          const r = await api('GET', '/api/contatos/conversas?q=' + encodeURIComponent(q));
+          if ((document.getElementById('cartaoQ').value || '').trim().toLowerCase() !== q) return;
+          cartaoBuscado = q; cartaoAchados = Array.isArray(r) ? r : [];
+          cartaoDesenhar();
+        } catch (e) {}
+      }, 350);
+    }
+  }
+  const el = document.getElementById('cartaoLista');
+  el.innerHTML = lista.slice(0, 60).map(c => {
+    const nome = c.nome || c.nome_whatsapp || '';
+    const on = cartaoSel.has(c.telefone);
+    return '<div class="fwd-item' + (on ? ' cartao-on' : '') + '" data-tel="' + esc(c.telefone) + '" data-nome="' + esc(nome) + '" onclick="cartaoAlternar(this)">' +
+      ((c.foto_url && !fotosRuins.has(c.foto_url)) ? '<img class="fwd-avatar" loading="lazy" src="' + esc(c.foto_url) + '" onerror="fotoRuim(this)"><div class="fwd-avatar-fb" style="display:none">' + inicial(nome) + '</div>' : '<div class="fwd-avatar-fb">' + inicial(nome) + '</div>') +
+      '<div class="fwd-info"><div class="fwd-name">' + esc(nome || formatPhone(c.telefone)) + '</div><div class="fwd-sub">' + telefoneCurto(c.telefone) + (c.pet_nome ? ' · ' + esc(c.pet_nome) : '') + '</div></div>' +
+      '<span class="cartao-check"></span>' +
+    '</div>';
+  }).join('') || '<div class="empty" style="padding:24px 0">' + (q ? 'Nenhum contato para "' + esc(q) + '"' : 'Nenhum contato') + '</div>';
+  const n = cartaoSel.size;
+  document.getElementById('cartaoEscolhidos').textContent = n ? 'Vai enviar: ' + Array.from(cartaoSel.values()).map(c => c.nome || formatPhone(c.telefone)).join(', ') : 'Marque um ou mais contatos.';
+  const b = document.getElementById('cartaoEnviar');
+  b.disabled = !n || cartaoEnviando;
+  b.textContent = n > 1 ? 'Enviar ' + n + ' contatos' : 'Enviar';
+}
+function cartaoAlternar(el) {
+  const tel = el.dataset.tel;
+  if (cartaoSel.has(tel)) cartaoSel.delete(tel);
+  else if (cartaoSel.size >= CARTAO_MAX) { toast('Até ' + CARTAO_MAX + ' contatos de cada vez.', 'err'); return; }
+  else cartaoSel.set(tel, { nome: el.dataset.nome || '', telefone: tel });
+  cartaoDesenhar();
+}
+async function enviarCartoes() {
+  if (cartaoEnviando || !cartaoSel.size || !currentChatContato) return;
+  const id = currentChatContato.id;
+  cartaoEnviando = true;
+  cartaoDesenhar();
+  try {
+    await api('POST', '/api/contato/' + id + '/cartao', { contatos: Array.from(cartaoSel.values()) });
+    toast(cartaoSel.size > 1 ? 'Contatos enviados' : 'Contato enviado');
+    fecharEnviarContato();
+    if (currentChatContato && currentChatContato.id === id) recarregarChat('fim', true);
+    loadConversas(true);
+  } catch (e) { toast('Erro: ' + e.message, 'err'); }
+  cartaoEnviando = false;
+  if (document.getElementById('cartaoModal').classList.contains('show')) cartaoDesenhar();
+}
+document.addEventListener('keydown', function (e) {
+  const m = document.getElementById('cartaoModal');
+  if (e.key === 'Escape' && m && m.classList.contains('show')) fecharEnviarContato();
+});
 
 // ─── Selecionar várias mensagens/arquivos para encaminhar de uma vez ───────────────────────────────────
 // Botão direito na mensagem → "Selecionar". Daí em diante, clicar nas mensagens marca e desmarca; a barra acima
