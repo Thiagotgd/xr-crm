@@ -157,6 +157,11 @@ db.exec(`CREATE TABLE IF NOT EXISTS agenda_cfaz (
 try { db.exec("ALTER TABLE mensagens ADD COLUMN reacoes TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN cartao TEXT DEFAULT ''"); } catch {}
 try { db.exec("ALTER TABLE mensagens ADD COLUMN previa TEXT DEFAULT ''"); } catch {}
+db.exec("CREATE TABLE IF NOT EXISTS agenda (telefone TEXT PRIMARY KEY, nome TEXT NOT NULL, importado_em TEXT DEFAULT (datetime('now','localtime')))");
+try { db.exec("ALTER TABLE contatos ADD COLUMN nome_antes_agenda TEXT DEFAULT ''"); } catch {}
+function nomeDaAgenda(telefone) {
+  try { const a = db.prepare('SELECT nome FROM agenda WHERE telefone = ?').get(String(telefone || '')); return a ? a.nome : ''; } catch (e) { return ''; }
+}
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_mensagens_contato_data ON mensagens(contato_id, created_at)"); } catch (e) { console.error('[CRM] índice de mensagens:', e.message); }
 try { db.exec("ALTER TABLE contatos ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
 try { db.exec("ALTER TABLE contatos ADD COLUMN favorito INTEGER DEFAULT 0"); } catch {}
@@ -1084,7 +1089,8 @@ async function handleRequest(req, res) {
       const like = '%' + q + '%';
       const digitos = q.replace(/[^0-9]/g, '');
       const likeTel = digitos.length >= 3 ? '%' + digitos + '%' : like;
-      rows = db.prepare(campos + ` WHERE c.nome LIKE ? OR c.telefone LIKE ? OR c.pet_nome LIKE ? ORDER BY c.last_message_at DESC LIMIT 80`).all(like, likeTel, like);
+      // (nome_antes_agenda = nome que o contato tinha antes de receber o apelido da agenda: continua achando por ele)
+      rows = db.prepare(campos + ` WHERE c.nome LIKE ? OR c.telefone LIKE ? OR c.pet_nome LIKE ? OR c.nome_antes_agenda LIKE ? ORDER BY c.last_message_at DESC LIMIT 80`).all(like, likeTel, like, like);
     } else {
       const recentes = tudo ? '' : ` AND (c.last_message_at >= datetime('now','localtime','-45 days') OR c.pinado = 1 OR c.favorito = 1 OR c.manual_unread = 1 OR EXISTS (SELECT 1 FROM contato_etiquetas ce WHERE ce.contato_id = c.id))`;
       rows = db.prepare(campos + ` WHERE NOT (c.etapa = 'finalizado' AND c.updated_at < datetime('now','localtime','-2 days'))` + recentes + ` ORDER BY c.pinado DESC, c.last_message_at DESC`).all();
@@ -1096,8 +1102,18 @@ async function handleRequest(req, res) {
       const alvo = semAcento(q);
       const dig = q.replace(/[^0-9]/g, '');
       const jaVeio = new Set(rows.map(r => r.telefone));
+      // 1º a agenda importada do celular da recepção (o nome que a recepção deu ao contato)
+      for (const a of db.prepare('SELECT telefone, nome FROM agenda').all()) {
+        if (doWhats.length >= 15) break;
+        if (jaVeio.has(a.telefone)) continue;
+        if (!(semAcento(a.nome).includes(alvo) || (dig.length >= 5 && a.telefone.includes(dig)))) continue;
+        jaVeio.add(a.telefone);
+        const noCrm = db.prepare(campos + ' WHERE c.telefone = ?').get(a.telefone);
+        if (noCrm) rows.push(noCrm);
+        else doWhats.push({ id: -Number(a.telefone.slice(-9)), so_whatsapp: 1, da_agenda: 1, nome: a.nome, telefone: a.telefone, foto_url: '', etapa: '', nao_lidas: 0, etiquetas: [] });
+      }
       for (const w of await carregarContatosWhats()) {
-        if (doWhats.length >= 12) break;
+        if (doWhats.length >= 24) break;
         if (jaVeio.has(w.telefone)) continue;
         if (!(w.chave.includes(alvo) || (dig.length >= 5 && w.telefone.includes(dig)))) continue;
         jaVeio.add(w.telefone);
@@ -1393,7 +1409,7 @@ async function handleRequest(req, res) {
         const result = db.prepare(`
           INSERT INTO contatos (nome, telefone, etapa, last_message_at, updated_at)
           VALUES (?, ?, 'novo', datetime('now','localtime'), datetime('now','localtime'))
-        `).run('', phone);
+        `).run(nomeDaAgenda(phone), phone);
         contato = { id: result.lastInsertRowid, etapa: 'novo' };
         db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, '', 'novo')").run(contato.id);
         console.log(`[CRM] Novo contato (fromMe): ${phone}`);
@@ -1402,7 +1418,7 @@ async function handleRequest(req, res) {
         const result = db.prepare(`
           INSERT INTO contatos (nome, telefone, etapa, foto_url, last_message_at, updated_at)
           VALUES (?, ?, 'novo', ?, datetime('now','localtime'), datetime('now','localtime'))
-        `).run(pushName, phone, fotoUrl);
+        `).run(nomeDaAgenda(phone) || pushName, phone, fotoUrl);
         contato = { id: result.lastInsertRowid, etapa: 'novo' };
         db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, '', 'novo')").run(contato.id);
         console.log(`[CRM] Novo contato: ${pushName} (${phone}) foto: ${fotoUrl ? 'sim' : 'nao'}`);

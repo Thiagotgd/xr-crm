@@ -3479,7 +3479,7 @@ function renderConversasList() {
         avatar +
         '<div class="conversa-info">' +
           '<div class="conversa-top-row"><div class="conversa-name"><span class="conversa-nome-txt">' + esc(c.nome) + '</span><span class="conversa-tel">' + telefoneCurto(c.telefone) + '</span></div></div>' +
-          '<div class="conversa-bottom-row"><div class="conversa-preview">Contato do WhatsApp, ainda sem conversa aqui. Clique para abrir.</div></div>' +
+          '<div class="conversa-bottom-row"><div class="conversa-preview">' + (c.da_agenda ? 'Contato da agenda' : 'Contato do WhatsApp') + ', ainda sem conversa aqui. Clique para abrir.</div></div>' +
         '</div>' +
       '</div>';
     }
