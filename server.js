@@ -448,6 +448,19 @@ function evoDeleteMessage(remoteJid, msgId, fromMe) {
 
 let frasesCache = {}; // frases frequentes da recepção (refeito a cada 15 min)
 
+// Texto curto de uma mensagem para o card do Follow-up (áudio vira a transcrição; foto e PDF viram o que o leitor identificou).
+function textoParaCard(m) {
+  const l = m.leitura;
+  if (l && l.tipo === 'audio') return '🎤 ' + String(l.texto || '').slice(0, 500);
+  if (l && l.tipo === 'pedido_exame') return '📄 Pedido de exame' + (l.exames && l.exames.length ? ': ' + l.exames.join('; ') : '');
+  if (l) return (l.icone || '📎') + ' ' + (l.rotulo || 'Anexo');
+  const t = String(m.texto || '');
+  if (m.tipo === 'audio') return '🎤 Áudio';
+  if (m.tipo === 'image') return '📷 Foto' + (t && t !== '[image]' ? ' · ' + t.slice(0, 300) : '');
+  if (m.tipo === 'document') return '📎 ' + (t && !t.startsWith('[') ? t.split('\n')[0].slice(0, 120) : 'Documento');
+  return t.slice(0, 500);
+}
+
 // ─── CFAZ: agenda ───────────────────────────────────────────────────────────────────────────────
 // Mesma credencial que a fila usa; fica em secrets/cfaz.key (fora do git) ou na variável CFAZ_API_TOKEN.
 const CFAZ_BASE = process.env.CFAZ_BASE || 'https://max.cfaz.net';
@@ -826,6 +839,8 @@ async function handleRequest(req, res) {
     const id = pathname.split('/')[3];
     const body = await parseBody(req);
     if (!body.texto) return sendJSON(res, 400, { error: 'texto required' });
+    // Sugestão de retomada com lacuna ("[dia e hora]", "[responder aqui ...]") não pode sair para o cliente.
+    if (/\[(dia e hora|responder aqui[^\]]*)\]/i.test(body.texto)) return sendJSON(res, 400, { error: 'A mensagem ainda tem um trecho entre [colchetes] para preencher.' });
     const contato = db.prepare('SELECT * FROM contatos WHERE id = ?').get(id);
     if (!contato) return sendJSON(res, 404, { error: 'Contato not found' });
 
@@ -1767,6 +1782,17 @@ async function handleRequest(req, res) {
         const s = f.followup_nivel < 2 ? retomada.sugerirVermelho(db, f, agoraFu) : retomada.sugerir(db, f, agoraFu);
         if (s) f.retomada = { etapa: s.etapa, feitas: s.feitas, rotulo: s.rotulo, motivo: s.motivo, texto: s.texto, preencher: s.preencher };
       } catch (e) { console.error('[RETOMADA] sugerir:', e.message); }
+    }
+    // Últimas mensagens de cada conversa, para a recepção conferir se a sugestão combina com o que o tutor escreveu.
+    const qUlt = db.prepare("SELECT id, direcao, texto, tipo, media_path, created_at FROM mensagens WHERE contato_id = ? ORDER BY id DESC LIMIT 5");
+    const qUltIn = db.prepare("SELECT id, direcao, texto, tipo, media_path, created_at FROM mensagens WHERE contato_id = ? AND direcao = 'in' ORDER BY id DESC LIMIT 1");
+    for (const f of fila) {
+      try {
+        const ult = qUlt.all(f.id);
+        if (!ult.some(m => m.direcao === 'in')) { const ui = qUltIn.get(f.id); if (ui) ult.push(ui); }  // sempre aparece a última fala do tutor
+        leitor.anexarLeituras(db, ult);
+        f.conversa = ult.reverse().map(m => ({ de: m.direcao, quando: m.created_at, tipo: m.tipo, texto: textoParaCard(m) }));
+      } catch (e) { console.error('[FOLLOWUP] conversa:', e.message); }
     }
     return sendJSON(res, 200, { resumo, regras: followup.REGRAS, fila });
   }

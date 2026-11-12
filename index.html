@@ -652,6 +652,26 @@ button.msg-agenda:hover { filter: brightness(1.1); }
 .ag-atalhos { margin-top: 6px; }
 .ag-mais { display: block; width: 100%; margin-top: 12px; padding: 9px; border: 1px dashed var(--primary); border-radius: 8px; background: none; color: var(--text); font-size: 13.5px; cursor: pointer; }
 .ag-mais:hover { background: var(--card-hover); }
+
+/* Lista de conversas: telefone pequeno ao lado do nome */
+.conversa-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.conversa-nome-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.conversa-tel { flex-shrink: 0; font-size: 11.5px; color: var(--text-muted); font-weight: 400; white-space: nowrap; }
+.conversa-name .pin-icon { flex-shrink: 0; margin-left: 0; }
+
+/* Follow-up: últimas mensagens da conversa no card, envio pelo CRM */
+.fu-conv { margin: 8px 0 0 42px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 12px; line-height: 1.35; max-height: 190px; overflow-y: auto; }
+.fu-conv-h { font-size: 10.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .3px; margin-bottom: 4px; }
+.fu-conv-m { padding: 4px 7px; border-radius: 6px; margin-top: 4px; word-break: break-word; }
+.fu-conv-m.in { background: var(--wa-incoming); border-left: 3px solid var(--wa-blue-tick); }
+.fu-conv-m.out { background: var(--wa-outgoing); margin-left: 18px; }
+.fu-conv-m b { font-size: 11px; }
+.fu-conv-m span { font-size: 10.5px; color: var(--text-muted); }
+.fu-conv-m div { white-space: pre-wrap; }
+.fu-btn.wa.travado { opacity: .45; }
+.fu-ret.enviado { border-style: solid; border-color: #25d366; color: var(--text-secondary); font-size: 12px; }
+:root[data-theme="light"] .fu-conv-m.in { background: #f0f2f5; }
+:root[data-theme="light"] .fu-ret-txt { background: #ffffff; color: #111b21; }
 </style>
 </head>
 <body>
@@ -1342,45 +1362,103 @@ function inicial(nome) { const s = Array.from(String(nome || '?').trim()); retur
 // copia e envia pelo WhatsApp dela. O CRM NÃO envia nada: só registra a retomada
 // quando a mensagem aparece na conversa.
 const fuRetEditado = {};   // id do contato → texto que a pessoa editou (sobrevive ao redesenho da lista)
+// 12/11/2026: a recepção passou a usar o CRM direto. A sugestão é ENVIADA pelo próprio CRM (antes abria o WhatsApp),
+// só sai depois que os trechos entre [colchetes] forem preenchidos, e o card mostra as últimas mensagens da conversa
+// para conferir se a sugestão combina com o que o tutor escreveu.
+const fuEnviados = {};   // id do contato → hora em que a sugestão foi enviada (o card fica marcado até sair da fila)
+function fuTemLacuna(t) { return /\[[^\]]*\]/.test(String(t || '')); }
 function fuRetBloco(c) {
   const r = c.retomada;
   if (!r || !r.texto) return '';
+  if (fuEnviados[c.id]) {
+    return '<div class="fu-ret enviado" onclick="event.stopPropagation()">&#x2713; Mensagem enviada às ' + fuEnviados[c.id] + '. O card sai da fila na próxima atualização.</div>';
+  }
   const chave = c.id + ':' + r.etapa;
   const texto = fuRetEditado[chave] != null ? fuRetEditado[chave] : r.texto;
-  const falta = texto.indexOf('[') >= 0;
+  const falta = fuTemLacuna(texto);
   return '<div class="fu-ret" onclick="event.stopPropagation()">' +
     '<div class="fu-ret-h"><b>💬 ' + esc(r.rotulo) + '</b><span title="' + esc(r.motivo) + '">' + esc(r.motivo) + (r.feitas ? ' · ' + r.feitas + ' já enviada' + (r.feitas > 1 ? 's' : '') : '') + '</span></div>' +
     '<textarea class="fu-ret-txt' + (falta ? ' falta' : '') + '" id="fuRet' + c.id + '" data-chave="' + chave + '" oninput="fuRetInput(this)">' + esc(texto) + '</textarea>' +
-    '<div class="fu-ret-aviso" id="fuRetAv' + c.id + '"' + (falta ? '' : ' style="display:none"') + '>Troque o que está entre [colchetes] pelo dia e horário de verdade.</div>' +
+    '<div class="fu-ret-aviso" id="fuRetAv' + c.id + '"' + (falta ? '' : ' style="display:none"') + '>Troque o que está entre [colchetes] pela informação de verdade. Enquanto houver colchetes, a mensagem não é enviada.</div>' +
     '<div class="fu-ret-btns">' +
-      '<button class="fu-btn wa" onclick="fuRetEnviar(' + c.id + ',\'' + esc(String(c.telefone).replace(/\D/g, '')) + '\',true)" title="Copia a mensagem e abre a conversa no WhatsApp com o texto já colado">Copiar e abrir WhatsApp</button>' +
-      '<button class="fu-btn" onclick="fuRetEnviar(' + c.id + ',\'\',false)" title="Só copia a mensagem">Só copiar</button>' +
+      '<button class="fu-btn wa' + (falta ? ' travado' : '') + '" id="fuRetBt' + c.id + '" onclick="fuRetEnviar(' + c.id + ',true)" title="Envia esta mensagem ao cliente pelo WhatsApp da XR, direto do CRM">Enviar pelo CRM</button>' +
+      '<button class="fu-btn" onclick="fuRetEnviar(' + c.id + ',false)" title="Só copia a mensagem">Só copiar</button>' +
     '</div>' +
   '</div>';
 }
 function fuRetInput(el) {
   fuRetEditado[el.dataset.chave] = el.value;
-  const falta = el.value.indexOf('[') >= 0;
+  const falta = fuTemLacuna(el.value);
+  const id = el.id.replace('fuRet', '');
   el.classList.toggle('falta', falta);
-  const av = document.getElementById('fuRetAv' + el.id.replace('fuRet', ''));
+  const av = document.getElementById('fuRetAv' + id);
   if (av) av.style.display = falta ? '' : 'none';
+  const bt = document.getElementById('fuRetBt' + id);
+  if (bt) bt.classList.toggle('travado', falta);
 }
-async function fuRetEnviar(id, tel, abrir) {
+async function fuRetEnviar(id, enviar) {
   const el = document.getElementById('fuRet' + id);
   if (!el) return;
   const texto = el.value.trim();
   if (!texto) { toast('Mensagem vazia', 'err'); return; }
-  if (texto.indexOf('[') >= 0 && !confirm('A mensagem ainda tem trecho entre [colchetes] para preencher (dia e horário).\n\nCopiar mesmo assim?')) { el.focus(); return; }
-  try { await navigator.clipboard.writeText(texto); }
-  catch (e) { el.select(); try { document.execCommand('copy'); } catch (e2) {} }
-  if (abrir && tel) {
-    window.open('https://wa.me/' + tel + '?text=' + encodeURIComponent(texto), '_blank', 'noopener');
-    toast('Mensagem copiada. Confira e envie no WhatsApp: o card some da fila sozinho quando a mensagem sair.', 'ok');
-  } else toast('Mensagem copiada', 'ok');
+  if (!enviar) {
+    try { await navigator.clipboard.writeText(texto); }
+    catch (e) { el.select(); try { document.execCommand('copy'); } catch (e2) {} }
+    toast(fuTemLacuna(texto) ? 'Copiada, mas ainda tem trecho entre [colchetes] para preencher' : 'Mensagem copiada', fuTemLacuna(texto) ? 'err' : 'ok');
+    return;
+  }
+  // só envia depois de preenchido o que estava entre colchetes
+  if (fuTemLacuna(texto)) {
+    toast('Preencha o que está entre [colchetes] antes de enviar', 'err');
+    const i = el.value.indexOf('['), f = el.value.indexOf(']', i);
+    el.focus();
+    if (i >= 0 && f > i) el.setSelectionRange(i, f + 1);
+    return;
+  }
+  const c = (window._fuFila || []).find(x => x.id === id) || {};
+  if (!confirm('Enviar esta mensagem para ' + (c.nome || formatPhone(c.telefone) || 'o cliente') + ' pelo WhatsApp da XR?\n\n' + texto)) return;
+  const bt = document.getElementById('fuRetBt' + id);
+  if (bt) { bt.disabled = true; bt.textContent = 'Enviando…'; }
+  try {
+    await api('POST', '/api/contato/' + id + '/mensagem', { texto });
+    const d = new Date();
+    fuEnviados[id] = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    toast('Mensagem enviada', 'ok');
+    el.blur(); // tira o cursor da caixa, senão a lista não se redesenha (ela não redesenha por cima de quem está digitando)
+    const bloco = el.closest('.fu-ret');
+    if (bloco) { bloco.className = 'fu-ret enviado'; bloco.innerHTML = '&#x2713; Mensagem enviada às ' + fuEnviados[id] + '. O card sai da fila na próxima atualização.'; }
+    loadFollowup();
+    refreshTabBadges();
+  } catch (e) {
+    toast('NÃO foi enviada: ' + e.message, 'err');
+    if (bt) { bt.disabled = false; bt.textContent = 'Enviar pelo CRM'; }
+  }
+}
+// Abre a conversa na aba Conversas (com o campo de mensagem novo), em vez do painel antigo
+function fuAbrir(id) {
+  switchTab('conversas');
+  openConversaChat(id);
+}
+// Últimas mensagens da conversa, para conferir a sugestão com o que o tutor escreveu
+function fuConversa(c) {
+  const msgs = c.conversa || [];
+  if (!msgs.length) return '';
+  const hora = q => { const s = String(q || ''); const hoje = new Date(); const dia = s.slice(8, 10) + '/' + s.slice(5, 7);
+    const ehHoje = s.slice(0, 10) === hoje.getFullYear() + '-' + String(hoje.getMonth() + 1).padStart(2, '0') + '-' + String(hoje.getDate()).padStart(2, '0');
+    return (ehHoje ? '' : dia + ' ') + s.slice(11, 16); };
+  return '<div class="fu-conv" onclick="event.stopPropagation()">' +
+    '<div class="fu-conv-h">Últimas mensagens da conversa</div>' +
+    msgs.map(m => '<div class="fu-conv-m ' + (m.de === 'in' ? 'in' : 'out') + '">' +
+      '<b>' + (m.de === 'in' ? 'Tutor' : 'XR') + '</b> <span>' + hora(m.quando) + '</span>' +
+      '<div>' + esc(String(m.texto || '').slice(0, 420)) + (String(m.texto || '').length > 420 ? '…' : '') + '</div></div>').join('') +
+  '</div>';
 }
 
 function renderFollowup(r) {
   const fila = (r && r.fila) || [];
+  window._fuFila = fila;
+  // card marcado como "enviado" só enquanto o contato continua na fila
+  Object.keys(fuEnviados).forEach(id => { if (!fila.some(c => String(c.id) === String(id))) delete fuEnviados[id]; });
   const res = (r && r.resumo) || { urgente: 0, followup: 0, segunda: 0 };
   const total = fila.length;
   document.getElementById('fuSub').textContent = total
@@ -1395,6 +1473,9 @@ function renderFollowup(r) {
 
   const el = document.getElementById('fuList');
   if (!total) { el.innerHTML = '<div class="fu-empty">🎉 Nenhum orçamento parado.</div>'; return; }
+  // não redesenha por cima de quem está digitando numa sugestão (o texto já fica guardado, mas o cursor se perderia)
+  const foco = document.activeElement;
+  if (foco && foco.classList && foco.classList.contains('fu-ret-txt') && el.contains(foco)) return;
 
   // Três colunas lado a lado: 🔴 | 🟡 | ⚪ — triagem por posição, não por leitura.
   const subt = { 1: 'falou por último, ninguém respondeu · parado há mais de um dia vem com texto de retomada', 2: 'recebeu orçamento e sumiu · ainda não recebeu nenhuma retomada', 3: 'já recebeu retomada e segue sem responder' };
@@ -1406,20 +1487,19 @@ function renderFollowup(r) {
           ? '<img class="cc-avatar" src="' + esc(c.foto_url) + '" onerror="this.style.display=&quot;none&quot;;this.nextElementSibling.style.display=&quot;flex&quot;">' +
             '<div class="cc-avatar cc-avatar-fallback" style="display:none">' + inicial(c.nome) + '</div>'
           : '<div class="cc-avatar cc-avatar-fallback">' + inicial(c.nome) + '</div>';
-        const last = c.ultima_msg ? (c.ultima_msg_dir === 'in' ? '🗨️ ' : '↩️ ') + esc(String(c.ultima_msg).slice(0, 80)) : '';
         const ha = (String(c.followup_motivo || '').match(/há \S+/) || [''])[0];
         return '<div class="fu-card" style="border-left-color:' + g.cor + '" data-id="' + c.id + '">' +
-          '<div class="fu-card-top" onclick="openDetail(' + c.id + ')">' + avatar +
+          '<div class="fu-card-top" onclick="fuAbrir(' + c.id + ')">' + avatar +
             '<div style="min-width:0;flex:1">' +
               '<div class="fu-name">' + esc(c.nome || formatPhone(c.telefone)) + (c.pet_nome ? ' <small>· ' + esc(c.pet_nome) + '</small>' : '') + origemTag(c.origem) + '</div>' +
               '<div class="fu-tel">' + formatPhone(c.telefone) + (c.orcamento_modalidade ? ' · ' + esc(c.orcamento_modalidade) : '') + ' <span style="opacity:.55">#' + c.id + '</span></div>' +
             '</div>' +
             '<span class="fu-ha" style="color:' + g.cor + '">' + ha + '</span>' +
           '</div>' +
-          (last ? '<div class="fu-last">' + last + '</div>' : '') +
+          fuConversa(c) +
           fuRetBloco(c) +
           '<div class="fu-actions">' +
-            '<button class="fu-btn primary" onclick="openDetail(' + c.id + ')">Abrir</button>' +
+            '<button class="fu-btn primary" onclick="fuAbrir(' + c.id + ')" title="Abre a conversa aqui no CRM">Abrir conversa</button>' +
             '<button class="fu-btn good" onclick="fuAcao(' + c.id + ',\'marcou\',this)" title="Marcou o exame → Agendado">Marcou</button>' +
             '<button class="fu-btn bad" onclick="fuAcao(' + c.id + ',\'desistiu\',this)" title="Não vai fazer → sai da fila">Desistiu</button>' +
             '<button class="fu-btn" onclick="fuAcao(' + c.id + ',\'ok\',this)" title="Já resolvi por fora → silencia 24h">OK 24h</button>' +
@@ -3113,6 +3193,14 @@ function avisarNovas(data) {
 }
 
 // ─── Lista de conversas ─────────────────────────────────────────────────────────────────────────
+// Telefone sem o código do país, para caber ao lado do nome: "(31) 99999-9999"
+function telefoneCurto(p) {
+  const d = String(p || '').replace(/\D/g, '');
+  const n = d.length >= 12 && d.startsWith('55') ? d.slice(2) : d;
+  if (n.length === 11) return '(' + n.slice(0, 2) + ') ' + n.slice(2, 7) + '-' + n.slice(7);
+  if (n.length === 10) return '(' + n.slice(0, 2) + ') ' + n.slice(2, 6) + '-' + n.slice(6);
+  return formatPhone(p);
+}
 const fotosRuins = new Set();
 function fotoRuim(img) {
   try { fotosRuins.add(img.getAttribute('src')); } catch (e) {}
@@ -3265,7 +3353,10 @@ function renderConversasList() {
       avatar +
       '<div class="conversa-info">' +
         '<div class="conversa-top-row">' +
-          '<div class="conversa-name">' + esc(c.nome || formatPhone(c.telefone)) + (c.pinado ? '<span class="pin-icon">&#x1F4CC;</span>' : '') + '</div>' +
+          // nome e, ao lado, o telefone em letra pequena (pedido da recepção em 12/11/2026)
+          '<div class="conversa-name"><span class="conversa-nome-txt">' + esc(c.nome || formatPhone(c.telefone)) + '</span>' +
+            (c.nome ? '<span class="conversa-tel">' + telefoneCurto(c.telefone) + '</span>' : '') +
+            (c.pinado ? '<span class="pin-icon">&#x1F4CC;</span>' : '') + '</div>' +
           '<span class="conversa-time' + (unread ? ' unread' : '') + '">' + timeStr + '</span>' +
         '</div>' +
         '<div class="conversa-bottom-row">' +
