@@ -2964,6 +2964,7 @@ function filterByTag(tagId) {
   document.querySelectorAll('.conversas-filters .filter-chip').forEach(c => c.classList.remove('active'));
   document.getElementById('etiquetasDropMenu').classList.remove('show');
   renderConversasList();
+  carregarEtiqueta(tagId);
 }
 
 // ─── Conversas: Chat panel ──────────────────────────────────────────────────
@@ -3348,6 +3349,19 @@ let buscaExtra = [];         // contatos antigos achados pela busca no servidor
 let buscaTexto = '';
 let buscaTimer = null;
 
+// Filtro por etiqueta: busca no servidor todos os contatos marcados (a lista normal só traz as conversas recentes)
+let etiquetaExtra = [];
+let etiquetaExtraDe = null;
+async function carregarEtiqueta(tagId) {
+  try {
+    const r = await api('GET', '/api/contatos/conversas?etiqueta=' + encodeURIComponent(tagId));
+    if (conversasFilter !== 'etiqueta' || conversasTagFilter !== tagId) return; // a pessoa já trocou de filtro
+    etiquetaExtra = Array.isArray(r) ? r : [];
+    etiquetaExtraDe = tagId;
+    renderConversasList();
+  } catch (e) {}
+}
+
 async function loadConversas(forcar) {
   try {
     const hdr = {};
@@ -3412,6 +3426,11 @@ function renderConversasList() {
   } else if (conversasFilter === 'etiqueta') {
     if (conversasTagFilter) {
       filtered = filtered.filter(c => c.etiquetas && c.etiquetas.some(t => t.id === conversasTagFilter));
+      // mais os contatos marcados que não vêm na lista normal (conversa antiga ou finalizada)
+      if (etiquetaExtraDe === conversasTagFilter) {
+        const tem = new Set(filtered.map(c => c.id));
+        for (const c of etiquetaExtra) if (!tem.has(c.id)) filtered.push(c);
+      }
     }
   }
 

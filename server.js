@@ -1085,7 +1085,10 @@ async function handleRequest(req, res) {
       FROM contatos c
       LEFT JOIN mensagens m ON m.id = (SELECT id FROM mensagens WHERE contato_id = c.id ORDER BY created_at DESC, id DESC LIMIT 1)`;
     let rows;
-    if (q.length >= 2) {
+    const daEtiqueta = Number(urlObj.searchParams.get('etiqueta')) || 0;
+    if (daEtiqueta) {
+      rows = db.prepare(campos + ' WHERE EXISTS (SELECT 1 FROM contato_etiquetas ce WHERE ce.contato_id = c.id AND ce.etiqueta_id = ?) ORDER BY c.last_message_at DESC LIMIT 400').all(daEtiqueta);
+    } else if (q.length >= 2) {
       const like = '%' + q + '%';
       const digitos = q.replace(/[^0-9]/g, '');
       const likeTel = digitos.length >= 3 ? '%' + digitos + '%' : like;
