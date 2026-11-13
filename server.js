@@ -1569,7 +1569,11 @@ async function handleRequest(req, res) {
         db.prepare("UPDATE contatos SET last_message_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
       }
       // If I'm sending a message, mark as read (I must have read the conversation)
-      if (isFromMe) {
+      // ...menos quando quem "respondeu" foi um robô: a Athena ou a saudação automática. Aí ninguém leu ainda.
+      const respostaAutomatica = texto.includes(followup.ATHENA_MARCA) || texto.includes(followup.SAUDACAO_MARCA);
+      if (isFromMe && respostaAutomatica) {
+        console.log(`[CRM] resposta automática para ${phone}: a conversa continua como não lida`);
+      } else if (isFromMe) {
         db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(contato.id);
         console.log(`[CRM] fromMe read sync: ${phone} marked as read`);
       }
