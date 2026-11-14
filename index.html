@@ -3381,7 +3381,7 @@ function linhaGrupo(c) {
   const avatar = (c.foto_url && !fotosRuins.has(c.foto_url))
     ? '<img class="conversa-avatar" loading="lazy" src="' + esc(c.foto_url) + '" onerror="fotoRuim(this)"><div class="conversa-avatar-fb" style="display:none">&#x1F465;</div>'
     : '<div class="conversa-avatar-fb">&#x1F465;</div>';
-  return '<div class="conversa-row grupo' + (ativo ? ' active' : '') + (unread ? ' has-unread' : '') + '" data-id="' + c.id + '" onclick="abrirGrupoConversa(' + c.gid + ')">' +
+  return '<div class="conversa-row grupo' + (ativo ? ' active' : '') + (unread ? ' has-unread' : '') + '" data-id="' + c.id + '" onclick="abrirGrupoConversa(' + c.gid + ')" oncontextmenu="menuDoGrupo(event,' + c.gid + ')">' +
     avatar +
     '<div class="conversa-info">' +
       '<div class="conversa-top-row">' +
@@ -5196,11 +5196,44 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape' && selAtiva && !document.getElementById('forwardModal').classList.contains('show')) sairDaSelecao();
 });
 
-// Fixar o grupo aberto no topo da lista
-async function fixarGrupoAberto() {
-  const g = chatGrupo;
+// Botão direito na linha do grupo: menu com Fixar/Desafixar
+let grupoMenuId = null;
+function menuDoGrupo(e, gid) {
+  e.preventDefault();
+  e.stopPropagation();
+  if (typeof hideConversaContext === 'function') hideConversaContext();
+  let menu = document.getElementById('grupoContextMenu');
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.id = 'grupoContextMenu';
+    menu.className = 'conversa-context-menu';
+    document.body.appendChild(menu);
+  }
+  grupoMenuId = gid;
+  const g = gruposLista.find(x => x.id === gid);
+  menu.innerHTML = '<div class="conversa-context-item" onclick="fixarGrupo(grupoMenuId)">&#x1F4CC; ' + (g && g.pinado ? 'Desafixar grupo' : 'Fixar grupo no topo') + '</div>';
+  menu.style.display = 'block';
+  let left = e.clientX, top = e.clientY;
+  if (left + 210 > window.innerWidth) left = window.innerWidth - 220;
+  if (top + 60 > window.innerHeight) top = top - 60;
+  menu.style.left = Math.max(5, left) + 'px';
+  menu.style.top = Math.max(5, top) + 'px';
+}
+function fecharMenuDoGrupo() {
+  const menu = document.getElementById('grupoContextMenu');
+  if (menu) menu.style.display = 'none';
+}
+document.addEventListener('click', fecharMenuDoGrupo);
+document.addEventListener('contextmenu', function (e) { if (!(e.target.closest && e.target.closest('.conversa-row.grupo'))) fecharMenuDoGrupo(); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') fecharMenuDoGrupo(); });
+
+// Fixar (ou desafixar) um grupo no topo da lista: pelo botão do cabeçalho ou pelo botão direito na lista
+function fixarGrupoAberto() { if (chatGrupo) fixarGrupo(chatGrupo.id); }
+async function fixarGrupo(gid) {
+  fecharMenuDoGrupo();
+  const g = gruposLista.find(x => x.id === gid);
   if (!g) return;
-  const btn = document.getElementById('btnFixar');
+  const btn = chatGrupo && chatGrupo.id === gid ? document.getElementById('btnFixar') : null;
   if (btn) btn.disabled = true;
   try {
     const r = await api('POST', '/api/grupo/' + g.id + '/pin');
