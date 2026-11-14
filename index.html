@@ -4634,8 +4634,9 @@ function calcularSugestoes(texto) {
     for (const g of [h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite', 'Olá']) {
       const cheia = g + ', ' + nomeSaud + '!';
       if (normSug(cheia).startsWith(q.trim()) || normSug(g).startsWith(q.trim())) {
-        add(cheia, 300000, '');
-        add(cheia + ' Tudo bem?', 200000, '');
+        // a com "Tudo bem?" vem primeiro (pedido do Thiago em 14/11/2026); a curta fica como segunda opção
+        add(cheia + ' Tudo bem?', 300000, '');
+        add(cheia, 200000, '');
       }
     }
   }
