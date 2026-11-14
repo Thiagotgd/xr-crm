@@ -1764,6 +1764,16 @@ async function handleRequest(req, res) {
     } catch (e) { return sendJSON(res, 409, { error: e.message }); }
   }
 
+  if (method === 'POST' && pathname.match(/^\/api\/grupo\/\d+\/pin$/)) {
+    const id = pathname.split('/')[3];
+    try { db.exec("ALTER TABLE grupos ADD COLUMN pinado INTEGER DEFAULT 0"); } catch {}
+    const atual = db.prepare('SELECT pinado FROM grupos WHERE id = ?').get(id);
+    if (!atual) return sendJSON(res, 404, { error: 'Grupo not found' });
+    const novo = atual.pinado ? 0 : 1;
+    db.prepare('UPDATE grupos SET pinado = ? WHERE id = ?').run(novo, id);
+    return sendJSON(res, 200, { ok: true, pinado: novo });
+  }
+
   if (method === 'DELETE' && pathname.match(/^\/api\/grupo\/\d+$/)) {
     const id = pathname.split('/').pop();
     db.prepare('UPDATE grupos SET ativo = 0 WHERE id = ?').run(id);

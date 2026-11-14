@@ -3362,7 +3362,7 @@ let grupoAssinatura = '';
 async function atualizarGrupos() {
   try {
     const g = await api('GET', '/api/grupos');
-    const ass = JSON.stringify((g || []).map(x => [x.id, x.nome, x.ultima_msg_at, x.nao_lidas]));
+    const ass = JSON.stringify((g || []).map(x => [x.id, x.nome, x.ultima_msg_at, x.nao_lidas, x.pinado, x.foto_url]));
     gruposLista = Array.isArray(g) ? g : [];
     if (ass !== gruposAssinatura) { gruposAssinatura = ass; if (currentTab === 'conversas') renderConversasList(); }
   } catch (e) {}
@@ -3385,7 +3385,7 @@ function linhaGrupo(c) {
     avatar +
     '<div class="conversa-info">' +
       '<div class="conversa-top-row">' +
-        '<div class="conversa-name"><span class="conversa-nome-txt">' + esc(c.nome) + '</span><span class="conversa-tel">grupo</span></div>' +
+        '<div class="conversa-name"><span class="conversa-nome-txt">' + esc(c.nome) + '</span><span class="conversa-tel">grupo</span>' + (c.pinado ? '<span class="pin-icon">&#x1F4CC;</span>' : '') + '</div>' +
         '<span class="conversa-time' + (unread ? ' unread' : '') + '">' + hora + '</span>' +
       '</div>' +
       '<div class="conversa-bottom-row"><div class="conversa-preview">' + previa + '</div>' +
@@ -3423,7 +3423,9 @@ async function abrirGrupoConversa(gid) {
     '<button class="dt-back ch-back" onclick="closeConversaChat()" style="font-size:18px;background:none;border:none;color:var(--text);cursor:pointer;padding:4px">&#x2190;</button>' +
     (g.foto_url ? '<img class="ch-avatar" src="' + esc(g.foto_url) + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"><div class="ch-avatar-fb" style="display:none">&#x1F465;</div>'
       : '<div class="ch-avatar-fb">&#x1F465;</div>') +
-    '<div class="ch-info"><div class="ch-name">' + esc(g.nome) + '</div><div class="ch-status">Grupo do WhatsApp</div></div>';
+    '<div class="ch-info"><div class="ch-name">' + esc(g.nome) + '</div><div class="ch-status">Grupo do WhatsApp</div></div>' +
+    '<div class="ch-actions"><button class="btn btn-ghost btn-sm ch-fixar' + (g.pinado ? ' ativo' : '') + '" id="btnFixar" onclick="fixarConversaAberta()" title="' +
+      (g.pinado ? 'Grupo fixado no topo da lista. Clique para desafixar.' : 'Fixar este grupo no topo da lista') + '" style="font-size:12px;padding:4px 8px">&#x1F4CC; ' + (g.pinado ? 'Fixado' : 'Fixar') + '</button></div>';
   document.getElementById('chatMessagesArea').innerHTML = '<div class="empty" style="padding:40px 0">Carregando…</div>';
   const input = document.getElementById('chatComposeInput');
   input.value = '';
@@ -3650,7 +3652,7 @@ function renderConversasList() {
     for (const g of gruposLista) {
       if (q && !String(g.nome || '').toLowerCase().includes(q)) continue;
       const quando = g.ultima_msg_at || ''; // grupo ainda sem mensagem guardada fica no fim da lista
-      filtered.push({ grupo: 1, id: 'g' + g.id, gid: g.id, nome: g.nome, foto_url: g.foto_url, ultima_msg_at: quando, last_message_at: quando, created_at: quando,
+      filtered.push({ grupo: 1, id: 'g' + g.id, gid: g.id, nome: g.nome, foto_url: g.foto_url, pinado: g.pinado ? 1 : 0, ultima_msg_at: quando, last_message_at: quando, created_at: quando,
         nao_lidas: g.nao_lidas, ultima_msg: g.ultima_msg, ultimo_remetente: g.ultimo_remetente, ultima_msg_tipo: g.ultima_msg_tipo });
     }
   }
@@ -4507,6 +4509,28 @@ function saudacaoForaDeHora(n) {
   if (/\bboa noite\b/.test(n) && h < 18) return true;
   return false;
 }
+// Primeiro nome de quem está na conversa, para a saudação ("Bom dia, Maria!"). Devolve '' quando o nome do contato não
+// parece nome de gente (telefone, clínica, setor…). Nome da agenda no formato "Pet, Tutor" → usa o do tutor.
+function nomeParaSaudacao() {
+  const c = currentChatContato;
+  if (!c) return '';
+  let n = String(c.nome || '').replace(/\(.*?\)|\[.*?\]|\|.*$/g, ' ').replace(/[^A-Za-zÀ-ÿ.,' -]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!n) return '';
+  const partes = n.split(',').map(x => x.trim()).filter(Boolean);
+  if (partes.length === 2 && partes[0].split(' ').length <= 2 && partes[1].split(' ').length <= 3) n = partes[1];
+  else n = partes[0] || '';
+  const palavras = n.split(' ').filter(Boolean);
+  if (!palavras.length) return '';
+  const semAcento = x => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\./g, '');
+  const arruma = x => (x === x.toUpperCase() || x === x.toLowerCase()) ? x.charAt(0).toUpperCase() + x.slice(1).toLowerCase() : x;
+  const naoENome = ['clinica', 'hospital', 'centro', 'comercial', 'financeiro', 'laboratorio', 'lab', 'pet', 'vet', 'veterinaria', 'veterinario', 'recepcao',
+    'atendimento', 'grupo', 'setor', 'equipe', 'xr', 'ame', 'consultorio', 'agropecuaria', 'petshop', 'banho', 'dog', 'cat', 'animal', 'provet', 'petlove', 'contato', 'cliente', 'tutor', 'tutora'];
+  let i = 0, titulo = '';
+  if (['dr', 'dra', 'sr', 'sra', 'prof', 'profa'].indexOf(semAcento(palavras[0])) >= 0 && palavras.length > 1) { titulo = arruma(palavras[0].replace(/\.$/, '')) + '. '; i = 1; }
+  const p = palavras[i];
+  if (!p || p.length < 2 || naoENome.indexOf(semAcento(p)) >= 0) return '';
+  return titulo + arruma(p);
+}
 function calcularSugestoes(texto) {
   if (texto.indexOf('\n') >= 0 || texto.startsWith('/')) return [];
   const q = normSug(texto);
@@ -4517,6 +4541,18 @@ function calcularSugestoes(texto) {
     if (visto.has(k) || k === q.trim() || saudacaoForaDeHora(k)) return;
     visto.add(k); out.push({ t, peso, rotulo });
   };
+  // Saudação já com o nome da pessoa: "bom" → "Bom dia, Maria!" (a saudação certa para a hora) e "ola" → "Olá, Maria!"
+  const nomeSaud = nomeParaSaudacao();
+  if (nomeSaud) {
+    const h = new Date().getHours();
+    for (const g of [h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite', 'Olá']) {
+      const cheia = g + ', ' + nomeSaud + '!';
+      if (normSug(cheia).startsWith(q.trim()) || normSug(g).startsWith(q.trim())) {
+        add(cheia, 300000, '');
+        add(cheia + ' Tudo bem?', 200000, '');
+      }
+    }
+  }
   for (const m of msgsRapidas) {
     if (!m.texto || m.texto.length < 25) continue; // ignora cadastros de teste
     if (normSug(m.texto).startsWith(q)) add(m.texto, 100000, '/' + m.titulo);
@@ -5160,8 +5196,31 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape' && selAtiva && !document.getElementById('forwardModal').classList.contains('show')) sairDaSelecao();
 });
 
+// Fixar o grupo aberto no topo da lista
+async function fixarGrupoAberto() {
+  const g = chatGrupo;
+  if (!g) return;
+  const btn = document.getElementById('btnFixar');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('POST', '/api/grupo/' + g.id + '/pin');
+    const naLista = gruposLista.find(x => x.id === g.id);
+    if (naLista) naLista.pinado = r.pinado;
+    if (btn) {
+      btn.classList.toggle('ativo', !!r.pinado);
+      btn.innerHTML = '&#x1F4CC; ' + (r.pinado ? 'Fixado' : 'Fixar');
+      btn.title = r.pinado ? 'Grupo fixado no topo da lista. Clique para desafixar.' : 'Fixar este grupo no topo da lista';
+    }
+    gruposAssinatura = '';
+    renderConversasList();
+    toast(r.pinado ? 'Grupo fixado no topo da lista' : 'Grupo desafixado');
+  } catch (e) { toast('Não consegui fixar: ' + e.message, 'err'); }
+  if (btn) btn.disabled = false;
+}
+
 // ─── Fixar a conversa aberta no topo da lista (botão no cabeçalho da conversa) ─────────────────────────
 async function fixarConversaAberta() {
+  if (chatGrupo) { fixarGrupoAberto(); return; }
   const c = currentChatContato;
   if (!c) return;
   const btn = document.getElementById('btnFixar');
