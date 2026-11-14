@@ -161,6 +161,8 @@ try { db.exec("ALTER TABLE mensagens ADD COLUMN citacao_wa_id TEXT DEFAULT ''");
 try { db.exec("ALTER TABLE grupo_mensagens ADD COLUMN wa_msg_id TEXT DEFAULT ''"); } catch {}
 for (const col of ['reacoes', 'citacao_texto', 'citacao_de', 'citacao_wa_id']) { try { db.exec(`ALTER TABLE grupo_mensagens ADD COLUMN ${col} TEXT DEFAULT ''`); } catch {} }
 try { db.exec("ALTER TABLE grupo_mensagens ADD COLUMN editada INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE grupo_mensagens ADD COLUMN fixada INTEGER DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE mensagens ADD COLUMN fixada INTEGER DEFAULT 0"); } catch {}
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_grupo_msgs_wa ON grupo_mensagens(wa_msg_id)"); } catch {}
 try { db.exec("CREATE INDEX IF NOT EXISTS idx_grupo_msgs_data ON grupo_mensagens(grupo_id, created_at)"); } catch {}
 db.exec("CREATE TABLE IF NOT EXISTS agenda (telefone TEXT PRIMARY KEY, nome TEXT NOT NULL, importado_em TEXT DEFAULT (datetime('now','localtime')))");
@@ -977,10 +979,12 @@ async function handleRequest(req, res) {
     if (!ref) return sendJSON(res, 400, { error: 'informe a mensagem de referência (antes)' });
     // ?ate_wa=<identificador>: traz de uma vez tudo o que há entre a mensagem de referência e a mensagem citada
     const ateWa = urlObj.searchParams.get('ate_wa') || '';
+    const ateId = Number(urlObj.searchParams.get('ate_id') || 0); // (mensagem fixada: vai pelo número dela)
     let msgs, temMais;
-    if (ateWa) {
-      const alvo = db.prepare('SELECT id, created_at FROM mensagens WHERE wa_msg_id = ? AND contato_id = ?').get(ateWa, id);
-      if (!alvo) return sendJSON(res, 404, { error: 'A mensagem citada não está guardada no CRM.' });
+    if (ateWa || ateId) {
+      const alvo = ateId ? db.prepare('SELECT id, created_at FROM mensagens WHERE id = ? AND contato_id = ?').get(ateId, id)
+        : db.prepare('SELECT id, created_at FROM mensagens WHERE wa_msg_id = ? AND contato_id = ?').get(ateWa, id);
+      if (!alvo) return sendJSON(res, 404, { error: 'A mensagem ' + (ateId ? 'fixada' : 'citada') + ' não está guardada no CRM.' });
       msgs = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? AND (created_at < ? OR (created_at = ? AND id < ?)) AND (created_at > ? OR (created_at = ? AND id >= ?)) ORDER BY created_at DESC, id DESC LIMIT 1500')
         .all(id, ref.created_at, ref.created_at, ref.id, alvo.created_at, alvo.created_at, alvo.id);
       temMais = !!db.prepare('SELECT 1 FROM mensagens WHERE contato_id = ? AND (created_at < ? OR (created_at = ? AND id < ?)) LIMIT 1').get(id, alvo.created_at, alvo.created_at, alvo.id);
@@ -1001,6 +1005,8 @@ async function handleRequest(req, res) {
     contato.mensagens = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? ORDER BY created_at DESC, id DESC LIMIT 51').all(id);
     contato.tem_mais = contato.mensagens.length > 50;
     if (contato.tem_mais) contato.mensagens.pop();
+    // mensagens fixadas desta conversa (mesmo as mais antigas do que as 50 carregadas), para a faixa do alto
+    try { contato.fixadas = db.prepare('SELECT id, direcao, texto, tipo, media_path, created_at FROM mensagens WHERE contato_id = ? AND fixada = 1 ORDER BY created_at DESC, id DESC LIMIT 3').all(id); } catch (e) { contato.fixadas = []; }
     // foto de perfil antiga (ou ainda não guardada): este contato vai para a frente da fila das fotos
     try {
       if (FOTOS_LIGADAS && !String(contato.telefone || '').includes('@') && !fotoFila.some(f => f.tabela === 'contatos' && f.id === contato.id) &&
@@ -1717,6 +1723,11 @@ async function handleRequest(req, res) {
   if (method === 'GET' && pathname.match(/^\/api\/grupo\/\d+\/mensagens$/)) {
     const id = pathname.split('/')[3];
     const msgs = db.prepare('SELECT * FROM grupo_mensagens WHERE grupo_id = ? ORDER BY created_at DESC, id DESC LIMIT 200').all(id);
+    // mensagens fixadas mais antigas do que essas 200 vêm junto, para a faixa do alto poder levar até elas
+    try {
+      const tem = new Set(msgs.map(m => m.id));
+      for (const f of db.prepare('SELECT * FROM grupo_mensagens WHERE grupo_id = ? AND fixada = 1 ORDER BY created_at DESC, id DESC LIMIT 3').all(id)) if (!tem.has(f.id)) msgs.push(f);
+    } catch (e) {}
     // ?visto=0 (aba do CRM em segundo plano): não marca como lido
     if (urlObj.searchParams.get('visto') !== '0') {
       // o que estava sem ler também é marcado como lido no WhatsApp (some o aviso verde no celular); se o WhatsApp não aceitar, segue
@@ -2090,6 +2101,21 @@ async function handleRequest(req, res) {
       console.log('[CRM] mensagem ' + msgId + ' editada');
       return sendJSON(res, 200, { ok: true });
     } catch (e) { console.error('[CRM] erro editando:', e.message); return sendJSON(res, 502, { error: e.message }); }
+  }
+
+  // Fixar ou desafixar uma mensagem na conversa (contato: /api/mensagem/N/fixar; grupo: /api/grupo-msg/N/fixar)
+  if (method === 'POST' && pathname.match(/^\/api\/(mensagem|grupo-msg)\/\d+\/fixar$/)) {
+    const deGrupo = pathname.split('/')[2] === 'grupo-msg';
+    const tabela = deGrupo ? 'grupo_mensagens' : 'mensagens', dono = deGrupo ? 'grupo_id' : 'contato_id';
+    const msgId = pathname.split('/')[3];
+    const m = db.prepare(`SELECT id, ${dono} AS dono, fixada FROM ${tabela} WHERE id = ?`).get(msgId);
+    if (!m) return sendJSON(res, 404, { error: 'Mensagem não encontrada' });
+    const nova = m.fixada ? 0 : 1;
+    if (nova && db.prepare(`SELECT COUNT(*) AS n FROM ${tabela} WHERE ${dono} = ? AND fixada = 1`).get(m.dono).n >= 3) {
+      return sendJSON(res, 400, { error: 'Esta conversa já tem 3 mensagens fixadas. Desafixe uma antes de fixar outra.' });
+    }
+    db.prepare(`UPDATE ${tabela} SET fixada = ? WHERE id = ?`).run(nova, msgId);
+    return sendJSON(res, 200, { ok: true, fixada: nova });
   }
 
   // Reagir a uma mensagem (ou tirar a reação, com emoji vazio), como no WhatsApp

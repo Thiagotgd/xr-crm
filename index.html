@@ -795,6 +795,17 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
 /* no grupo não há orçamento nem cartão de contato */
 #chatActivePanel.modo-grupo .compose-bar [onclick="abrirOrcamentoChat()"],
 #chatActivePanel.modo-grupo .compose-bar [onclick="abrirEnviarContato()"] { display: none; }
+
+/* ── 14/11/2026: mensagem fixada no alto da conversa ── */
+.fix-bar { display: none; align-items: center; gap: 10px; padding: 8px 14px; background: var(--wa-header); border-bottom: 1px solid rgba(134,150,160,.18); font-size: 13.5px; color: var(--text); cursor: pointer; flex-shrink: 0; }
+.fix-bar.show { display: flex; }
+.fix-bar:hover { filter: brightness(1.08); }
+.fix-bar .fx-ic { font-size: 14px; }
+.fix-bar .fx-txt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fix-bar .fx-n { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.fix-bar .fx-x { border: none; background: none; color: var(--text-muted); font-size: 13px; cursor: pointer; padding: 2px 6px; border-radius: 50%; }
+.fix-bar .fx-x:hover { background: rgba(134,150,160,.25); color: var(--text); }
+.msg-pin { font-size: 10px; }
 </style>
 </head>
 <body>
@@ -1143,6 +1154,7 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
   <div class="msg-context-item" id="ctxEditar" onclick="contextEditar()">&#x270F;&#xFE0F; Editar</div>
   <div class="msg-context-item" onclick="contextForward()">&#x21AA;&#xFE0F; Encaminhar</div>
   <div class="msg-context-item" id="ctxSelecionar" onclick="contextSelecionar()">&#x2611;&#xFE0F; Selecionar várias</div>
+  <div class="msg-context-item" id="ctxFixar" onclick="contextFixar()">&#x1F4CC; Fixar</div>
   <div class="msg-context-item" onclick="contextCopy()">&#x1F4CB; Copiar texto</div>
   <div class="msg-context-item danger" onclick="contextDelete()">&#x1F5D1;&#xFE0F; Apagar</div>
 </div>
@@ -2615,7 +2627,7 @@ function showMsgContextMenu(msgEl, x, y) {
   const ctxE = document.getElementById('ctxEditar');
   if (ctxE) ctxE.style.display = (msgEl.closest('#chatMessagesArea') && currentChatContato && podeEditar(mensagensDoChat().find(x => String(x.id) === String(msgEl.dataset.msgId)))) ? '' : 'none';
   menuDaMensagemNoGrupo(msgEl);
-  const menuW = 220, menuH = 340;
+  const menuW = 220, menuH = 385;
   let left = x, top = y;
   if (left + menuW > window.innerWidth) left = window.innerWidth - menuW - 10;
   if (top + menuH > window.innerHeight) top = y - menuH;
@@ -3442,7 +3454,7 @@ async function recarregarGrupo(rolar, forcar) {
   const id = chatGrupo.id;
   const msgs = await api('GET', '/api/grupo/' + id + '/mensagens' + (telaNaFrente() ? '' : '?visto=0'));
   if (!chatGrupo || chatGrupo.id !== id) return; // trocou de conversa enquanto buscava
-  const ass = (msgs || []).map(m => m.id + (m.media_path ? 'M' : '') + (m.reacoes ? 'R' + m.reacoes : '') + (m.editada ? 'E' + String(m.texto || '').length : '') + (m.citacao_texto ? 'C' : '')).join(',');
+  const ass = (msgs || []).map(m => m.id + (m.media_path ? 'M' : '') + (m.reacoes ? 'R' + m.reacoes : '') + (m.editada ? 'E' + String(m.texto || '').length : '') + (m.citacao_texto ? 'C' : '') + (m.fixada ? 'F' : '')).join(',');
   if (ass === grupoAssinatura && rolar !== 'fim' && !forcar) return;
   grupoAssinatura = ass;
   chatGrupo.mensagens = msgs || [];
@@ -3485,8 +3497,11 @@ function menuDaMensagemNoGrupo(msgEl) {
   const menu = document.getElementById('msgContextMenu');
   const apagar = menu.querySelector('[onclick="contextDelete()"]');
   if (apagar) apagar.style.display = chatGrupo ? 'none' : '';
-  if (!chatGrupo || !msgEl.closest('#chatMessagesArea')) return;
-  const m = mensagensDoChat().find(x => String(x.id) === String(msgEl.dataset.msgId));
+  const naConversa = !!(msgEl.closest('#chatMessagesArea') && (currentChatContato || chatGrupo));
+  const m = naConversa ? mensagensDoChat().find(x => String(x.id) === String(msgEl.dataset.msgId)) : null;
+  const fx = document.getElementById('ctxFixar');
+  if (fx) { fx.style.display = m ? '' : 'none'; fx.innerHTML = '&#x1F4CC; ' + (m && m.fixada ? 'Desafixar' : 'Fixar'); }
+  if (!chatGrupo || !naConversa) return;
   const comId = !!(m && m.wa_msg_id);
   const mostra = (id, sim) => { const el = document.getElementById(id); if (el) el.style.display = sim ? '' : 'none'; };
   mostra('ctxReagir', comId);
@@ -3764,7 +3779,7 @@ let chatReply = null;      // mensagem que está sendo respondida (citação)
 const rascunhos = {};      // texto digitado e não enviado, por conversa
 
 function assinaturaMsgs(msgs) {
-  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' + (Array.isArray(m.cfaz) ? m.cfaz.length : 1) : '') + (m.editada ? 'E' + String(m.texto || '').length : '') + (m.reacoes ? 'R' + m.reacoes : '') + (m.previa && m.previa.length > 2 ? 'P' : '')).join(',');
+  return (msgs || []).map(m => m.id + (m.leitura ? 'L' : '') + (m.cfaz ? 'A' + (Array.isArray(m.cfaz) ? m.cfaz.length : 1) : '') + (m.editada ? 'E' + String(m.texto || '').length : '') + (m.reacoes ? 'R' + m.reacoes : '') + (m.previa && m.previa.length > 2 ? 'P' : '') + (m.fixada ? 'F' : '')).join(',');
 }
 // Todas as mensagens na tela, da mais nova para a mais antiga.
 function mensagensDoChat() {
@@ -3800,7 +3815,7 @@ async function openConversaChat(id) {
     currentChatContato = c;
     chatAntigas = [];
     chatTemMais = !!c.tem_mais;
-    chatAssinatura = assinaturaMsgs(c.mensagens);
+    chatAssinatura = assinaturaMsgs(c.mensagens) + '|' + (c.fixadas || []).map(f => f.id).join(',');
     chatEdit = null;
     cancelarResposta();
     hideChatSlashPopup();
@@ -3843,7 +3858,7 @@ async function recarregarChat(rolar, forcar) {
   const id = currentChatContato.id;
   const fresh = await api('GET', '/api/contato/' + id + (telaNaFrente() ? '' : '?visto=0'));
   if (!currentChatContato || currentChatContato.id !== id) return; // trocou de conversa enquanto buscava
-  const ass = assinaturaMsgs(fresh.mensagens);
+  const ass = assinaturaMsgs(fresh.mensagens) + '|' + (fresh.fixadas || []).map(f => f.id).join(',');
   if (!forcar && ass === chatAssinatura) return;
   const chegouDoCliente = (fresh.mensagens || []).some(m => m.direcao === 'in' && !(currentChatContato.mensagens || []).some(o => o.id === m.id));
   guardarForaDaJanela(fresh);
@@ -3988,10 +4003,11 @@ function renderMessagesInto(area, mensagens, opts) {
     }
     const marcada = area.id === 'chatMessagesArea' && selMsgs.has(String(m.id)); // seleção para encaminhar sobrevive ao redesenho
     return faixa + '<div class="msg ' + m.direcao + (temReac ? ' tem-reac' : '') + (marcada ? ' marcada' : '') + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
-      '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + (m.editada ? 'Editada · ' : '') + horaMsg(m.created_at) + '</div>' + reac + '</div>' + extra;
+      '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + (m.fixada ? '<span class="msg-pin" title="Mensagem fixada">&#x1F4CC;</span> ' : '') + (m.editada ? 'Editada · ' : '') + horaMsg(m.created_at) + '</div>' + reac + '</div>' + extra;
   }).join('');
   area.innerHTML = (opts.temMais ? '<button class="msg-mais" onclick="carregarAnteriores(this)">Carregar mensagens anteriores</button>' : '') + html;
   ligarPdfPrevias(area);
+  if (area.id === 'chatMessagesArea') desenharFixadas();
 
   const irAoFim = () => { area.scrollTop = area.scrollHeight; };
   if (rolar === 'topo') {
@@ -4331,6 +4347,76 @@ async function desfazerAgenda(eventoId) {
     toast('Marcação apagada do CFAZ');
     await recarregarChat('auto', true);
   } catch (e) { toast('Não foi apagada: ' + e.message, 'err'); }
+}
+
+// ─── Fixar mensagem na conversa ─────────────────────────────────────────────────────────────────
+// Botão direito na mensagem → Fixar. A faixa no alto da conversa mostra a mensagem fixada; clicar leva até ela
+// (com mais de uma, cada clique passa para a seguinte). Até 3 por conversa. Fica só no CRM.
+let fixadaDaVez = 0;
+function fixadasDaConversa() {
+  if (chatGrupo) return mensagensDoChat().filter(m => m.fixada);
+  if (!currentChatContato) return [];
+  // as que o servidor mandou (inclusive antigas, fora das 50 carregadas), já sem as que foram desafixadas agora
+  const carregadas = mensagensDoChat();
+  const lista = (currentChatContato.fixadas || []).filter(f => { const m = carregadas.find(x => x.id === f.id); return !m || m.fixada; });
+  for (const m of carregadas) if (m.fixada && !lista.some(f => f.id === m.id)) lista.push(m);
+  return lista.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '') || (b.id - a.id));
+}
+function desenharFixadas() {
+  const painel = document.getElementById('chatActivePanel');
+  const area = document.getElementById('chatMessagesArea');
+  if (!painel || !area) return;
+  let b = document.getElementById('chatFixadas');
+  if (!b) { b = document.createElement('div'); b.id = 'chatFixadas'; b.className = 'fix-bar'; area.parentNode.insertBefore(b, area); }
+  const lista = fixadasDaConversa();
+  if (!lista.length) { b.classList.remove('show'); b.innerHTML = ''; fixadaDaVez = 0; return; }
+  if (fixadaDaVez >= lista.length) fixadaDaVez = 0;
+  const m = lista[fixadaDaVez];
+  const resumo = resumoCitar(m).replace(/\s+/g, ' ').slice(0, 140);
+  b.innerHTML = '<span class="fx-ic">&#x1F4CC;</span><span class="fx-txt">' + esc(resumo) + '</span>' +
+    (lista.length > 1 ? '<span class="fx-n">' + (fixadaDaVez + 1) + ' de ' + lista.length + '</span>' : '') +
+    '<button class="fx-x" onclick="event.stopPropagation();fixarMsg(' + m.id + ')" title="Desafixar esta mensagem">&#x2715;</button>';
+  b.onclick = function () { irParaFixada(); };
+  b.title = 'Ir para a mensagem fixada';
+  b.classList.add('show');
+}
+async function irParaFixada() {
+  const lista = fixadasDaConversa();
+  if (!lista.length) return;
+  if (fixadaDaVez >= lista.length) fixadaDaVez = 0;
+  const alvo = lista[fixadaDaVez];
+  let achou = destacarMsg(alvo.id);
+  if (!achou && currentChatContato && chatTemMais) {
+    // a fixada é mais antiga do que o que está carregado: busca de uma vez tudo até ela
+    const id = currentChatContato.id, todas = mensagensDoChat();
+    try {
+      toast('Buscando a mensagem fixada…');
+      const r = await api('GET', '/api/contato/' + id + '/mensagens?antes=' + todas[todas.length - 1].id + '&ate_id=' + alvo.id);
+      if (!currentChatContato || currentChatContato.id !== id) return;
+      const tem = new Set(todas.map(x => x.id));
+      for (const x of (r.mensagens || [])) if (!tem.has(x.id)) chatAntigas.push(x);
+      chatTemMais = !!r.tem_mais;
+      renderConversaChat('manter');
+      achou = destacarMsg(alvo.id);
+    } catch (e) { toast(e.message, 'err'); return; }
+  }
+  if (!achou) toast('Não achei a mensagem fixada nesta conversa.', 'err');
+  // o próximo clique vai para a fixada seguinte
+  if (lista.length > 1) { fixadaDaVez = (fixadaDaVez + 1) % lista.length; setTimeout(desenharFixadas, 900); }
+}
+async function fixarMsg(id) {
+  if (!(currentChatContato || chatGrupo)) return;
+  try {
+    const r = await api('POST', (chatGrupo ? '/api/grupo-msg/' : '/api/mensagem/') + id + '/fixar');
+    toast(r.fixada ? 'Mensagem fixada no alto da conversa' : 'Mensagem desafixada');
+    fixadaDaVez = 0;
+    if (chatGrupo) await recarregarGrupo('auto', true); else await recarregarChat('auto', true);
+  } catch (e) { toast(e.message, 'err'); }
+}
+function contextFixar() {
+  const id = contextMsgId;
+  hideMsgContextMenu();
+  if (id) fixarMsg(id);
 }
 
 // ─── Ir até a mensagem citada (clicar na citação sobe a conversa e destaca a mensagem ou foto original) ──────
