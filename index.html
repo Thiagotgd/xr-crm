@@ -806,6 +806,13 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
 .fix-bar .fx-x { border: none; background: none; color: var(--text-muted); font-size: 13px; cursor: pointer; padding: 2px 6px; border-radius: 50%; }
 .fix-bar .fx-x:hover { background: rgba(134,150,160,.25); color: var(--text); }
 .msg-pin { font-size: 10px; }
+
+/* ── 14/11/2026: figurinhas (sem balão, como no WhatsApp) ── */
+.msg.msg-fig { background: transparent !important; box-shadow: none !important; padding: 2px 2px 4px; }
+.msg-sticker { display: block; width: 150px; height: 150px; object-fit: contain; }
+.msg.msg-fig .msg-time { display: inline-block; background: rgba(11,20,26,.4); color: #fff !important; border-radius: 9px; padding: 1px 7px; margin-top: 2px; }
+.msg-fig-txt { opacity: .8; font-style: italic; }
+.msg-cita .mc-mini { background: transparent; }
 </style>
 </head>
 <body>
@@ -3330,7 +3337,7 @@ let conversasVistas = null; // id do contato -> hora da última mensagem RECEBID
 function previaDe(c) {
   const ic = c.ultima_msg_tipo === 'image' ? '📷 ' : c.ultima_msg_tipo === 'audio' ? '🎤 ' : c.ultima_msg_tipo === 'document' ? '📎 ' : '';
   const t = String(c.ultima_msg || '');
-  return ic + (t.startsWith('[') ? '' : t).slice(0, 90);
+  return ic + (t === '[sticker]' ? 'Figurinha' : t.startsWith('[') ? '' : t).slice(0, 90);
 }
 function atualizarTitulo(lista) {
   const n = (lista || []).filter(c => (c.nao_lidas > 0 || c.manual_unread)).length;
@@ -3388,7 +3395,7 @@ function linhaGrupo(c) {
     const txt = String(c.ultima_msg);
     previa = (c.ultimo_remetente ? esc(String(c.ultimo_remetente).split(' ')[0]) + ': ' : '') +
       (c.ultima_msg_tipo === 'image' ? '&#x1F4F7; ' : c.ultima_msg_tipo === 'audio' ? '&#x1F3A4; ' : c.ultima_msg_tipo === 'document' ? '&#x1F4CE; ' : '') +
-      esc(txt === '[image]' ? 'Foto' : txt === '[audio]' ? 'Áudio' : txt === '[document]' ? 'Documento' : txt === '[video]' ? 'Vídeo' : txt.split('\n')[0]).substring(0, 60);
+      esc(txt === '[image]' ? 'Foto' : txt === '[audio]' ? 'Áudio' : txt === '[document]' ? 'Documento' : txt === '[video]' ? 'Vídeo' : txt === '[sticker]' ? 'Figurinha' : txt.split('\n')[0]).substring(0, 60);
   }
   const avatar = (c.foto_url && !fotosRuins.has(c.foto_url))
     ? '<img class="conversa-avatar" loading="lazy" src="' + esc(c.foto_url) + '" onerror="fotoRuim(this)"><div class="conversa-avatar-fb" style="display:none">&#x1F465;</div>'
@@ -3706,7 +3713,7 @@ function renderConversasList() {
       else if (c.ultima_msg_tipo === 'audio') preview += '&#x1F3A4; ';
       else if (c.ultima_msg_tipo === 'document') preview += '&#x1F4CE; ';
       const txt = String(c.ultima_msg);
-      preview += esc(txt === '[image]' ? 'Foto' : txt === '[audio]' ? 'Áudio' : txt === '[document]' ? 'Documento' : txt).substring(0, 60);
+      preview += esc(txt === '[image]' ? 'Foto' : txt === '[audio]' ? 'Áudio' : txt === '[document]' ? 'Documento' : txt === '[sticker]' ? 'Figurinha' : txt).substring(0, 60);
     }
 
     // Foto de perfil vencida (o WhatsApp devolve 403): depois da primeira falha não tenta de novo a cada redesenho.
@@ -3912,6 +3919,7 @@ function resumoCitar(m) {
   if (m.tipo === 'audio') return '🎤 Áudio';
   if (m.tipo === 'document') return '📎 ' + (t && !t.startsWith('[') ? t : 'Documento');
   if (m.tipo === 'video') return '🎥 Vídeo';
+  if (m.tipo === 'sticker') return 'Figurinha';
   return t;
 }
 function nomeDoCliente() {
@@ -3944,12 +3952,15 @@ function renderMessagesInto(area, mensagens, opts) {
       // Na conversa aberta a citação é clicável (leva até a mensagem original) e mostra a miniatura quando a citada é foto
       const naConversa = area.id === 'chatMessagesArea';
       const orig = naConversa ? acharCitada(m, mensagens) : null;
-      const mini = orig && orig.tipo === 'image' && orig.media_path ? '<img class="mc-mini" src="/media/' + esc(orig.media_path) + '" alt="">' : '';
+      const mini = orig && (orig.tipo === 'image' || orig.tipo === 'sticker') && orig.media_path ? '<img class="mc-mini" src="/media/' + esc(orig.media_path) + '" alt="">' : '';
       content += '<div class="msg-cita' + (naConversa ? ' clicavel' : '') + (mini ? ' com-mini' : '') + '"' +
         (naConversa ? ' onclick="event.stopPropagation();irParaCitada(' + m.id + ')" title="Ir para a mensagem citada"' : '') + '>' +
         '<div class="mc-cita-txt"><b>' + (m.citacao_de === 'out' ? (opts.grupo ? 'Você' : 'XR Diagnóstico') : opts.grupo ? esc((orig && orig.remetente_nome) || 'Participante') : m.citacao_de === 'in' ? esc(nomeDoCliente()) : 'Mensagem citada') + '</b>' + esc(String(m.citacao_texto).slice(0, 220)) + '</div>' + mini + '</div>';
     }
-    if (m.media_path && (m.tipo === 'image')) {
+    if (m.tipo === 'sticker') {
+      // figurinha: sem balão, como no WhatsApp (se o arquivo não foi guardado, fica só a palavra)
+      content += m.media_path ? '<img class="msg-sticker" src="/media/' + esc(m.media_path) + '" alt="figurinha" title="Figurinha">' : '<span class="msg-fig-txt">&#x1F5BC;&#xFE0F; Figurinha</span>';
+    } else if (m.media_path && (m.tipo === 'image')) {
       content += '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="abrirVisor(\'/media/' + esc(m.media_path) + '\',\'image\')" alt="imagem" title="Clique para ver maior (Esc fecha)">';
       if (m.texto && m.texto !== '[image]') content += '<div>' + fmtWa(m.texto) + '</div>';
     } else if (m.media_path && m.tipo === 'audio') {
@@ -3964,7 +3975,7 @@ function renderMessagesInto(area, mensagens, opts) {
       content += cartaoHtml(m.cartao, area.id === 'chatMessagesArea');
     } else {
       content += previaHtml(m); // link com prévia (título e imagem): cartão em cima do texto
-      content += fmtWa(m.texto === '[image]' ? '📷 Foto' : m.texto === '[audio]' ? '🎤 Áudio' : m.texto === '[document]' ? '📎 Documento' : m.texto);
+      content += fmtWa(m.texto === '[image]' ? '📷 Foto' : m.texto === '[audio]' ? '🎤 Áudio' : m.texto === '[document]' ? '📎 Documento' : m.texto === '[video]' ? '🎥 Vídeo' : m.texto);
     }
     content += leituraBloco(m);
     const dia = String(m.created_at || '').slice(0, 10);
@@ -4002,7 +4013,7 @@ function renderMessagesInto(area, mensagens, opts) {
         '<button class="msg-responder" onclick="event.stopPropagation();responderMsg(' + m.id + ')" title="Responder citando esta mensagem">&#x21A9;&#xFE0F;</button>';
     }
     const marcada = area.id === 'chatMessagesArea' && selMsgs.has(String(m.id)); // seleção para encaminhar sobrevive ao redesenho
-    return faixa + '<div class="msg ' + m.direcao + (temReac ? ' tem-reac' : '') + (marcada ? ' marcada' : '') + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
+    return faixa + '<div class="msg ' + m.direcao + (temReac ? ' tem-reac' : '') + (marcada ? ' marcada' : '') + (m.tipo === 'sticker' && m.media_path ? ' msg-fig' : '') + '" data-msg-id="' + m.id + '" data-msg-tipo="' + esc(m.tipo) + '" data-msg-media="' + esc(m.media_path || '') + '">' + content +
       '<div class="msg-time" title="' + esc(m.created_at || '') + '">' + (m.fixada ? '<span class="msg-pin" title="Mensagem fixada">&#x1F4CC;</span> ' : '') + (m.editada ? 'Editada · ' : '') + horaMsg(m.created_at) + '</div>' + reac + '</div>' + extra;
   }).join('');
   area.innerHTML = (opts.temMais ? '<button class="msg-mais" onclick="carregarAnteriores(this)">Carregar mensagens anteriores</button>' : '') + html;

@@ -276,7 +276,18 @@ function resumoParaCitar(m) {
   if (m.tipo === 'audio') return '🎤 Áudio';
   if (m.tipo === 'document') return '📎 ' + (t && !t.startsWith('[') ? t : 'Documento');
   if (m.tipo === 'video') return '🎥 Vídeo';
+  if (m.tipo === 'sticker') return 'Figurinha';
   return t;
+}
+// Envia uma figurinha (arquivo .webp guardado no CRM) para um telefone ou grupo
+async function enviarFigurinha(alvo, base64) {
+  const numero = String(alvo).includes('@g.us') ? String(alvo) : String(alvo).replace(/\D/g, '');
+  const r = await evoPost('/message/sendSticker/' + EVO_INSTANCE, { number: numero, sticker: base64 });
+  if (r.status >= 400) {
+    const m = r.json && r.json.response && r.json.response.message ? JSON.stringify(r.json.response.message) : (r.json && (r.json.error || r.json.message)) || ('código ' + r.status);
+    throw new Error('o WhatsApp não aceitou a figurinha: ' + String(m).slice(0, 160));
+  }
+  return r.json || {};
 }
 
 // Mensagem do WhatsApp que responde a outra traz o trecho citado em contextInfo.quotedMessage.
@@ -1455,7 +1466,7 @@ async function handleRequest(req, res) {
         return sendJSON(res, 200, { ok: true, ignored: true, motivo: 'mensagem de grupo repetida' });
       }
       const doc = msg.documentMessage || (msg.documentWithCaptionMessage && msg.documentWithCaptionMessage.message && msg.documentWithCaptionMessage.message.documentMessage) || null;
-      const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : doc ? 'document' : msg.videoMessage ? 'video' : 'text';
+      const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : doc ? 'document' : msg.videoMessage ? 'video' : msg.stickerMessage ? 'sticker' : 'text';
       let texto = msg.conversation || (msg.extendedTextMessage && msg.extendedTextMessage.text) ||
         (msg.imageMessage && msg.imageMessage.caption) || (msg.videoMessage && msg.videoMessage.caption) || '';
       if (doc) texto = [doc.fileName, doc.caption].filter(Boolean).join('\n');
@@ -1538,7 +1549,7 @@ async function handleRequest(req, res) {
     const texto = msg.conversation || (msg.extendedTextMessage && msg.extendedTextMessage.text) ||
       (cartoes.length ? 'Contato: ' + cartoes.map(c => c.nome || telefoneBonito(c.telefone)).join(', ') : '');
     console.log(`[CRM] Msg ${isFromMe ? 'OUT' : 'IN'} ${phone}: texto="${texto.substring(0,50)}" tipo=${Object.keys(msg).join(',')}`);
-    const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : msg.documentMessage ? 'document' : cartoes.length ? 'contact' : 'text';
+    const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : msg.documentMessage ? 'document' : msg.stickerMessage ? 'sticker' : cartoes.length ? 'contact' : 'text';
 
     // Extract push name (contact name from WhatsApp)
     const pushName = data.pushName || '';
@@ -2325,7 +2336,8 @@ async function handleRequest(req, res) {
               const linhas = legenda.split('\n');
               if (linhas[0] && /\.[a-z0-9]{2,5}$/i.test(linhas[0].trim())) { nome = linhas[0].trim(); legenda = linhas.slice(1).join('\n'); }
             }
-            r = await evoSendMedia(alvo, mediatype, fs.readFileSync(arq).toString('base64'), mediatype === 'audio' ? '' : legenda, nome);
+            if (msg.tipo === 'sticker') r = await enviarFigurinha(alvo, fs.readFileSync(arq).toString('base64')); // figurinha segue como figurinha
+            else r = await evoSendMedia(alvo, mediatype, fs.readFileSync(arq).toString('base64'), mediatype === 'audio' ? '' : legenda, nome);
           } else if (msg.tipo === 'contact' && msg.cartao) {
             let cs = [];
             try { cs = JSON.parse(msg.cartao) || []; } catch {}
