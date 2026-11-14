@@ -3596,7 +3596,8 @@ function renderConversasList() {
   // quantas conversas estão não lidas, no botão "Não lidas" (pedido da recepção em 12/11/2026)
   const chipNum = document.getElementById('chipNaoLidas');
   if (chipNum) {
-    const nNao = conversasList.filter(c => (c.nao_lidas > 0 || c.manual_unread)).length + gruposLista.filter(g => g.nao_lidas > 0).length;
+    // só conversas com contato: a leitura de grupo feita no celular não chega ao CRM, então grupo não entra na conta
+    const nNao = conversasList.filter(c => (c.nao_lidas > 0 || c.manual_unread)).length;
     chipNum.textContent = nNao > 99 ? '99+' : String(nNao);
     chipNum.style.display = nNao ? '' : 'none';
   }
@@ -3643,10 +3644,10 @@ function renderConversasList() {
     buscarAntigos(q);
   } else if (buscaExtra.length) { buscaExtra = []; buscaTexto = ''; }
 
-  // Grupos do WhatsApp entram junto com as conversas (em "Tudo" e "Não lidas"), na posição da última mensagem
-  if (conversasFilter === 'tudo' || conversasFilter === 'nao-lidas') {
+  // Grupos do WhatsApp entram junto com as conversas em "Tudo", na posição da última mensagem. Ficam fora de
+  // "Não lidas": o WhatsApp não avisa o CRM quando um grupo é lido no celular, e o número passaria do real.
+  if (conversasFilter === 'tudo') {
     for (const g of gruposLista) {
-      if (conversasFilter === 'nao-lidas' && !(g.nao_lidas > 0)) continue;
       if (q && !String(g.nome || '').toLowerCase().includes(q)) continue;
       const quando = g.ultima_msg_at || ''; // grupo ainda sem mensagem guardada fica no fim da lista
       filtered.push({ grupo: 1, id: 'g' + g.id, gid: g.id, nome: g.nome, foto_url: g.foto_url, ultima_msg_at: quando, last_message_at: quando, created_at: quando,

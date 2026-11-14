@@ -1483,6 +1483,10 @@ async function handleRequest(req, res) {
             }
           } catch (e) { console.error('[CRM] Erro baixando arquivo de grupo:', e.message); }
         }
+        // a recepção escreveu no grupo pelo celular: quem escreveu, leu (mensagem de robô pela API chega como send.message e não conta)
+        if (key.fromMe && (event === 'messages.upsert' || event === 'MESSAGES_UPSERT')) {
+          db.prepare("UPDATE grupos SET last_read_at = datetime('now','localtime') WHERE id = ?").run(grupo.id);
+        }
       }
       return sendJSON(res, 200, { ok: true });
     }
@@ -1714,7 +1718,21 @@ async function handleRequest(req, res) {
     const id = pathname.split('/')[3];
     const msgs = db.prepare('SELECT * FROM grupo_mensagens WHERE grupo_id = ? ORDER BY created_at DESC, id DESC LIMIT 200').all(id);
     // ?visto=0 (aba do CRM em segundo plano): não marca como lido
-    if (urlObj.searchParams.get('visto') !== '0') db.prepare("UPDATE grupos SET last_read_at = datetime('now','localtime') WHERE id = ?").run(id);
+    if (urlObj.searchParams.get('visto') !== '0') {
+      // o que estava sem ler também é marcado como lido no WhatsApp (some o aviso verde no celular); se o WhatsApp não aceitar, segue
+      try {
+        const g = db.prepare("SELECT jid, COALESCE(NULLIF(last_read_at,''), '1970-01-01') AS lido FROM grupos WHERE id = ?").get(id);
+        const pend = g ? db.prepare("SELECT wa_msg_id, remetente FROM grupo_mensagens WHERE grupo_id = ? AND remetente != 'me' AND COALESCE(wa_msg_id,'') <> '' AND created_at > ? ORDER BY id DESC LIMIT 30").all(id, g.lido) : [];
+        if (pend.length) {
+          evoPost('/chat/markMessageAsRead/' + EVO_INSTANCE, { readMessages: pend.map(m => {
+            const k = { remoteJid: g.jid, fromMe: false, id: m.wa_msg_id };
+            if (String(m.remetente || '').includes('@')) k.participant = m.remetente;
+            return k;
+          }) }).catch(() => {});
+        }
+      } catch (e) {}
+      db.prepare("UPDATE grupos SET last_read_at = datetime('now','localtime') WHERE id = ?").run(id);
+    }
     return sendJSON(res, 200, msgs);
   }
 
@@ -1786,6 +1804,7 @@ async function handleRequest(req, res) {
       db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo, wa_msg_id, citacao_texto, citacao_de, citacao_wa_id) VALUES (?, 'me', 'Eu', ?, 'text', ?, ?, ?, ?)").run(
         id, body.texto, String(chaveG.id || ''), citaTxt, citaDeG, citaWa);
     }
+    db.prepare("UPDATE grupos SET last_read_at = datetime('now','localtime') WHERE id = ?").run(id);
     return sendJSON(res, 200, { ok: true, sem_citacao: !!body.citar && !citadaG });
   }
 
