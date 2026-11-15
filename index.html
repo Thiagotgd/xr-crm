@@ -813,6 +813,11 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
 .msg.msg-fig .msg-time { display: inline-block; background: rgba(11,20,26,.4); color: #fff !important; border-radius: 9px; padding: 1px 7px; margin-top: 2px; }
 .msg-fig-txt { opacity: .8; font-style: italic; }
 .msg-cita .mc-mini { background: transparent; }
+/* 14/11/2026: botão de pausar a Athena na conversa */
+.ch-athena.pausada { background: rgba(245,158,11,.18); color: #c77700; border-color: rgba(245,158,11,.6); }
+.athena-menu { min-width: 250px; }
+.athena-menu-tit { padding: 12px 24px 6px; font-size: 12.5px; line-height: 1.45; color: var(--text); opacity: .72; }
+.athena-menu-tit b { font-weight: 600; }
 </style>
 </head>
 <body>
@@ -3034,6 +3039,7 @@ function renderConversaChat(rolar, chegouDoCliente) {
     '<div class="ch-actions">' +
       '<a href="https://wa.me/' + c.telefone + '" target="_blank" class="wa-link" style="font-size:14px">WhatsApp</a>' +
       '<button class="btn btn-ghost btn-sm" onclick="abrirAgendaCfaz(null)" title="Criar uma marcação na agenda do CFAZ" style="font-size:12px;padding:4px 8px">&#x1F4C5; Agenda</button>' +
+      botaoAthena(c) +
       '<button class="btn btn-ghost btn-sm ch-fixar' + (c.pinado ? ' ativo' : '') + '" id="btnFixar" onclick="fixarConversaAberta()" title="' + (c.pinado ? 'Conversa fixada no topo da lista. Clique para desafixar.' : 'Fixar esta conversa no topo da lista') + '" style="font-size:12px;padding:4px 8px">&#x1F4CC; ' + (c.pinado ? 'Fixada' : 'Fixar') + '</button>' +
       '<button class="btn btn-ghost btn-sm" onclick="openEditModalChat()" style="font-size:12px;padding:4px 8px">Editar</button>' +
       '<button class="btn btn-ghost btn-sm" onclick="openTagModalChat()" style="font-size:12px;padding:4px 8px">&#x1F3F7;&#xFE0F;</button>' +
@@ -5347,6 +5353,86 @@ async function fixarGrupo(gid) {
     toast(r.pinado ? 'Grupo fixado no topo da lista' : 'Grupo desafixado');
   } catch (e) { toast('Não consegui fixar: ' + e.message, 'err'); }
   if (btn) btn.disabled = false;
+}
+
+// ─── Pausar a Athena nesta conversa (14/11/2026) ───────────────────────────────────────────────────────
+// A Athena responde sozinha fora do horário. Quando a recepção está cuidando de uma conversa e não quer que ela
+// entre, pausa aqui: a pausa vale só para este contato e acaba sozinha (a não ser no "até eu religar").
+const ATHENA_SEMPRE = '9999-12-31 00:00:00';
+function athenaAteQuando(ate) {
+  if (!ate) return '';
+  if (ate === ATHENA_SEMPRE) return 'até alguém religar';
+  const m = String(ate).match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})/);
+  if (!m) return '';
+  const dias = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return 'até ' + dias[d.getDay()] + ', ' + m[3] + '/' + m[2] + ' às ' + m[4] + 'h' + m[5];
+}
+function athenaTitulo(c) {
+  return c && c.athena_pausada
+    ? 'A Athena não responde este contato ' + athenaAteQuando(c.athena_pausa_ate) + '. Clique para religar.'
+    : 'A Athena responde sozinha fora do horário. Clique para pausar só nesta conversa.';
+}
+function botaoAthena(c) {
+  const p = !!(c && c.athena_pausada);
+  return '<button class="btn btn-ghost btn-sm ch-athena' + (p ? ' pausada' : '') + '" id="btnAthena" onclick="menuDaAthena(event)" title="' + athenaTitulo(c) +
+    '" style="font-size:12px;padding:4px 8px">&#x1F916; ' + (p ? 'Athena pausada' : 'Athena') + '</button>';
+}
+function fecharMenuDaAthena() {
+  const menu = document.getElementById('athenaMenu');
+  if (menu) menu.style.display = 'none';
+}
+function menuDaAthena(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const c = currentChatContato;
+  const btn = document.getElementById('btnAthena');
+  if (!c || !btn) return;
+  let menu = document.getElementById('athenaMenu');
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.id = 'athenaMenu';
+    menu.className = 'conversa-context-menu athena-menu';
+    menu.addEventListener('click', function (ev) { ev.stopPropagation(); });
+    document.body.appendChild(menu);
+  }
+  if (menu.style.display === 'block') { fecharMenuDaAthena(); return; }
+  menu.innerHTML = c.athena_pausada
+    ? '<div class="athena-menu-tit">Athena pausada nesta conversa<br><b>' + athenaAteQuando(c.athena_pausa_ate) + '</b></div>' +
+      '<div class="conversa-context-item" onclick="pausarAthena(\'ligar\')">&#x25B6;&#xFE0F; Religar a Athena agora</div>'
+    : '<div class="athena-menu-tit">Pausar a Athena só nesta conversa</div>' +
+      '<div class="conversa-context-item" onclick="pausarAthena(\'volta\')">&#x23F8;&#xFE0F; Até a recepção abrir de novo</div>' +
+      '<div class="conversa-context-item" onclick="pausarAthena(\'24h\')">&#x23F8;&#xFE0F; Por 24 horas</div>' +
+      '<div class="conversa-context-item" onclick="pausarAthena(\'sempre\')">&#x23F9;&#xFE0F; Até eu religar</div>';
+  menu.style.display = 'block';
+  const r = btn.getBoundingClientRect();
+  menu.style.left = Math.max(5, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+  menu.style.top = (r.bottom + 4) + 'px';
+}
+document.addEventListener('click', fecharMenuDaAthena);
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') fecharMenuDaAthena(); });
+async function pausarAthena(modo) {
+  fecharMenuDaAthena();
+  const c = currentChatContato;
+  if (!c) return;
+  const btn = document.getElementById('btnAthena');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('POST', '/api/contato/' + c.id + '/athena', { modo: modo });
+    if (currentChatContato && currentChatContato.id === c.id) {
+      currentChatContato.athena_pausa_ate = r.athena_pausa_ate;
+      currentChatContato.athena_pausada = r.athena_pausada;
+      const b = document.getElementById('btnAthena');
+      if (b) {
+        b.classList.toggle('pausada', !!r.athena_pausada);
+        b.innerHTML = '&#x1F916; ' + (r.athena_pausada ? 'Athena pausada' : 'Athena');
+        b.title = athenaTitulo(currentChatContato);
+      }
+    }
+    toast(r.athena_pausada ? 'Athena pausada nesta conversa ' + athenaAteQuando(r.athena_pausa_ate) : 'Athena religada nesta conversa');
+  } catch (err) { toast('Não consegui mudar a Athena: ' + err.message, 'err'); }
+  const b2 = document.getElementById('btnAthena');
+  if (b2) b2.disabled = false;
 }
 
 // ─── Fixar a conversa aberta no topo da lista (botão no cabeçalho da conversa) ─────────────────────────

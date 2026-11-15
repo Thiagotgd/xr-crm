@@ -395,6 +395,33 @@ function evoPost(caminho, corpo) {
 // 14 dias (grupo, 7). Abrir uma conversa com foto antiga põe o contato na frente da fila. FOTOS=0 desliga.
 const FOTOS_LIGADAS = process.env.FOTOS !== '0' && EVO_INSTANCE !== 'ensaio';
 try { db.exec("ALTER TABLE contatos ADD COLUMN foto_em TEXT DEFAULT ''"); } catch {}
+
+// ─── Athena pausada em um contato (14/11/2026) ───────────────────────────────────────────────────────
+// A recepção pausa a Athena numa conversa pelo botão do cabeçalho; a Athena consulta /api/athena/pausada antes
+// de responder. athena_pausa_ate guarda até quando vale a pausa (horário de Brasília, 'AAAA-MM-DD HH:MM:SS');
+// vazio = Athena normal. Passada a hora, ela volta sozinha, sem ninguém precisar religar.
+try { db.exec("ALTER TABLE contatos ADD COLUMN athena_pausa_ate TEXT DEFAULT ''"); } catch {}
+const ATHENA_SEMPRE = '9999-12-31 00:00:00';
+function agoraBrasilia() { return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' })); }
+function dataHoraTexto(d) {
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+// próxima abertura da recepção: 7h30 do próximo dia de segunda a sábado (é a hora em que a Athena para de responder)
+function proximaAberturaRecepcao() {
+  const agora = agoraBrasilia();
+  const alvo = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate(), 7, 30, 0);
+  while (alvo <= agora || alvo.getDay() === 0) alvo.setDate(alvo.getDate() + 1);
+  return alvo;
+}
+function athenaPausada(ate) { return !!ate && String(ate) > dataHoraTexto(agoraBrasilia()); }
+// o mesmo número pode estar gravado com ou sem o nono dígito
+function variantesDoNumero(n) {
+  const v = [n];
+  if (n.startsWith('55') && n.length === 13 && n[4] === '9') v.push(n.slice(0, 4) + n.slice(5));
+  if (n.startsWith('55') && n.length === 12 && /[6-9]/.test(n[4])) v.push(n.slice(0, 4) + '9' + n.slice(4));
+  return v;
+}
 try { db.exec("ALTER TABLE grupos ADD COLUMN foto_em TEXT DEFAULT ''"); } catch {}
 const fotoFila = [];
 let fotoOcupada = false;
@@ -1015,6 +1042,7 @@ async function handleRequest(req, res) {
     if (!contato) return sendJSON(res, 404, { error: 'Not found' });
     contato.mensagens = db.prepare('SELECT * FROM mensagens WHERE contato_id = ? ORDER BY created_at DESC, id DESC LIMIT 51').all(id);
     contato.tem_mais = contato.mensagens.length > 50;
+    contato.athena_pausada = athenaPausada(contato.athena_pausa_ate);
     if (contato.tem_mais) contato.mensagens.pop();
     // mensagens fixadas desta conversa (mesmo as mais antigas do que as 50 carregadas), para a faixa do alto
     try { contato.fixadas = db.prepare('SELECT id, direcao, texto, tipo, media_path, created_at FROM mensagens WHERE contato_id = ? AND fixada = 1 ORDER BY created_at DESC, id DESC LIMIT 3').all(id); } catch (e) { contato.fixadas = []; }
@@ -1129,6 +1157,35 @@ async function handleRequest(req, res) {
     const id = pathname.split('/')[3];
     db.prepare('UPDATE contatos SET manual_unread = 1 WHERE id = ?').run(id);
     return sendJSON(res, 200, { ok: true });
+  }
+
+  // ─── Athena: pausar ou religar neste contato (botão no cabeçalho da conversa) ───
+  // modo: 'volta' = até a recepção abrir de novo | '24h' | 'sempre' = até alguém religar | 'ligar' = tira a pausa
+  if (method === 'POST' && pathname.match(/^\/api\/contato\/\d+\/athena$/)) {
+    const id = pathname.split('/')[3];
+    const c = db.prepare('SELECT id, telefone FROM contatos WHERE id = ?').get(id);
+    if (!c) return sendJSON(res, 404, { error: 'Not found' });
+    const body = await parseBody(req);
+    const modo = String(body.modo || '');
+    let ate;
+    if (modo === 'ligar') ate = '';
+    else if (modo === 'volta') ate = dataHoraTexto(proximaAberturaRecepcao());
+    else if (modo === '24h') { const d = agoraBrasilia(); d.setDate(d.getDate() + 1); ate = dataHoraTexto(d); }
+    else if (modo === 'sempre') ate = ATHENA_SEMPRE;
+    else return sendJSON(res, 400, { error: 'Modo inválido' });
+    db.prepare('UPDATE contatos SET athena_pausa_ate = ? WHERE id = ?').run(ate, id);
+    console.log(`[CRM] Athena ${ate ? 'pausada até ' + ate : 'religada'} no contato ${id}`);
+    return sendJSON(res, 200, { ok: true, athena_pausa_ate: ate, athena_pausada: athenaPausada(ate) });
+  }
+
+  // A Athena pergunta aqui, antes de responder, se a recepção pausou este número
+  if (method === 'GET' && pathname === '/api/athena/pausada') {
+    const numero = String(urlObj.searchParams.get('numero') || '').replace(/\D/g, '');
+    if (!numero) return sendJSON(res, 200, { pausada: false });
+    const vs = variantesDoNumero(numero);
+    const achados = db.prepare(`SELECT athena_pausa_ate FROM contatos WHERE telefone IN (${vs.map(() => '?').join(',')}) AND COALESCE(athena_pausa_ate,'') != ''`).all(...vs);
+    const valendo = achados.map(a => a.athena_pausa_ate).filter(athenaPausada).sort().pop() || '';
+    return sendJSON(res, 200, { pausada: !!valendo, ate: valendo });
   }
 
   // ─── API: Toggle pin contato ──────────────────────────────────────────────
