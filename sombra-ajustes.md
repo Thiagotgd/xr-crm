@@ -9,3 +9,11 @@ O resumo semanal do Telegram mostra as linhas dos últimos 7 dias. Este arquivo 
 - 2026-11-11: anexos: o agente passa a ver o pedido do veterinário transcrito (foto/PDF) e o que o cliente falou nos áudios.
 
 - 11/11/2026: condição de pagamento de TC e RM corrigida para 10x sem juros ou 5% à vista (era 12x e 10%, de outubro). Confirmado pelo Thiago.
+- 2026-11-16: valores: só informa os da lista curta; não soma, não desmembra e não inventa. A lista de serviços que ele recebe passou a ter só os nomes, sem valores (ele sabe tudo o que fazemos, inclusive raio-X de 1 projeção, mas ainda não cota).
+- 2026-11-16: nunca fica mudo ao passar para uma pessoa: responde o que sabe, pede o que falta e avisa que a equipe confirma.
+- 2026-11-16: mensagem padrão de abertura (pedido, plano ou particular, CPF) e resposta para pergunta vaga de quem vem de anúncio.
+- 2026-11-16: TC/RM: confere os pré-anestésicos antes de falar de data; pré-anestésicos feitos aqui entram no mesmo parcelamento de 10x (confirmado pelo Thiago).
+- 2026-11-16: não confirma data, atraso nem o que entra no exame sem a agenda; não diz que viu anexo que não abriu.
+- 2026-11-16: medicação de uso contínuo: sempre manter (Thiago). Ficha de cadastro: na chegada; link antes só quando o animal vem com motorista (Thiago).
+- 2026-11-16: ecocardiograma: no momento sem atendimento nas tardes de terça e quinta (Thiago). Coelho: não realizamos; outras espécies a equipe confirma.
+- 2026-11-16: painel neurológico (9 agentes no cão, 7 no gato) e prazos de líquor e painel, tirados do portfólio da Provet. Ponto de referência do endereço (Thiago).

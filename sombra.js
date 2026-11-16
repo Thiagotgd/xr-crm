@@ -155,7 +155,8 @@ function base() {
   try { texto = fs.readFileSync(path.join(__dirname, 'sombra-base.md'), 'utf8'); } catch (e) { texto = '(base de conhecimento não encontrada)'; }
   try {
     const lista = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'xr-orcamento', 'tabela-precos.json'), 'utf8'));
-    tabela = lista.filter(x => x && x.nome && x.preco != null).map(x => `${x.nome}: R$ ${Number(x.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`).join('\n');
+    // 16/11/2026 (Thiago): o agente sabe TODOS os serviços, mas ainda não informa valor fora da lista curta da base. Só os nomes.
+    tabela = lista.filter(x => x && x.nome).map(x => String(x.nome).trim()).join('\n');
   } catch (e) { tabela = ''; }
   _base = { texto, tabela, em: Date.now() };
   return _base;
@@ -168,7 +169,7 @@ Regras:
 - Tom de WhatsApp: cordial, direto, 1 a 4 frases curtas, em português, sem asteriscos e sem repetir o que já foi dito na conversa.
 - Leia a conversa inteira antes: a mensagem pode ser continuação de um atendimento em andamento.
 - Se a situação estiver em "O que o agente NÃO decide sozinho", use a ação passar_para_humano.
-- Se precisar de algo que você não enxerga (agenda, plano, orçamento em PDF, conteúdo de imagem/áudio/documento, laudo), use a ação correspondente e escreva em "mensagem" o que diria ao cliente enquanto isso (pode ficar vazio).
+- Se precisar de algo que você não enxerga (agenda, plano, orçamento em PDF, conteúdo de imagem/áudio/documento, laudo), use a ação correspondente e escreva em "mensagem" o que diria ao cliente enquanto isso. O mesmo vale para passar_para_humano: a "mensagem" nunca fica vazia quando o cliente espera resposta.
 - Se a mensagem não pede resposta, use nao_responder.
 
 Ações possíveis: responder | enviar_orcamento_pdf | consultar_agenda | consultar_plano | ver_anexo | consultar_laudo | passar_para_humano | nao_responder
@@ -209,7 +210,7 @@ function promptRascunho(db, turno) {
   const c = db.prepare("SELECT nome, pet_nome, etapa, orcamento_modalidade FROM contatos WHERE id = ?").get(turno.contato_id) || {};
   const d = dt(turno.quando) || new Date();
   const agora = `${DIAS[d.getDay()]}, ${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()} às ${p2(d.getHours())}:${p2(d.getMinutes())}`;
-  return `=== BASE DE CONHECIMENTO ===\n${b.texto}\n\n=== TABELA DE PREÇOS (particular) ===\n${b.tabela || '(indisponível)'}\n\n` +
+  return `=== BASE DE CONHECIMENTO ===\n${b.texto}\n\n=== SERVIÇOS CADASTRADOS NA XR (só os nomes, SEM valores; lista interna: nomes com Petz, Domiciliar, Plantão, Silvestre ou Equino são tabelas internas ou de parceiros, e o que a base diz que não fazemos continua valendo) ===\n${b.tabela || '(indisponível)'}\n\n` +
     `=== AGORA ===\n${agora}\n\n=== CONTATO ===\nNome no WhatsApp: ${c.nome || '(sem nome)'}\nPet: ${c.pet_nome || '(não informado)'}\n` +
     `Etapa no CRM: ${c.etapa || '?'}${c.orcamento_modalidade ? ' · orçamento de ' + c.orcamento_modalidade : ''}\n\n` +
     `=== CONVERSA (mais antiga em cima) ===\n${historico(db, turno)}\n\n` +
