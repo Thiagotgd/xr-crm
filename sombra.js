@@ -155,8 +155,7 @@ function base() {
   try { texto = fs.readFileSync(path.join(__dirname, 'sombra-base.md'), 'utf8'); } catch (e) { texto = '(base de conhecimento não encontrada)'; }
   try {
     const lista = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'xr-orcamento', 'tabela-precos.json'), 'utf8'));
-    // 16/11/2026 (Thiago): o agente sabe TODOS os serviços, mas ainda não informa valor fora da lista curta da base. Só os nomes.
-    tabela = lista.filter(x => x && x.nome).map(x => String(x.nome).trim()).join('\n');
+    tabela = lista.filter(x => x && x.nome && x.preco != null).map(x => `${x.nome}: R$ ${Number(x.preco).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`).join('\n');
   } catch (e) { tabela = ''; }
   _base = { texto, tabela, em: Date.now() };
   return _base;
@@ -210,7 +209,7 @@ function promptRascunho(db, turno) {
   const c = db.prepare("SELECT nome, pet_nome, etapa, orcamento_modalidade FROM contatos WHERE id = ?").get(turno.contato_id) || {};
   const d = dt(turno.quando) || new Date();
   const agora = `${DIAS[d.getDay()]}, ${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()} às ${p2(d.getHours())}:${p2(d.getMinutes())}`;
-  return `=== BASE DE CONHECIMENTO ===\n${b.texto}\n\n=== SERVIÇOS CADASTRADOS NA XR (só os nomes, SEM valores; lista interna: nomes com Petz, Domiciliar, Plantão, Silvestre ou Equino são tabelas internas ou de parceiros, e o que a base diz que não fazemos continua valendo) ===\n${b.tabela || '(indisponível)'}\n\n` +
+  return `=== BASE DE CONHECIMENTO ===\n${b.texto}\n\n=== TABELA DE VALORES (particular; a mesma do gerador de orçamentos; como ler: seção Valores da base) ===\n${b.tabela || '(indisponível)'}\n\n` +
     `=== AGORA ===\n${agora}\n\n=== CONTATO ===\nNome no WhatsApp: ${c.nome || '(sem nome)'}\nPet: ${c.pet_nome || '(não informado)'}\n` +
     `Etapa no CRM: ${c.etapa || '?'}${c.orcamento_modalidade ? ' · orçamento de ' + c.orcamento_modalidade : ''}\n\n` +
     `=== CONVERSA (mais antiga em cima) ===\n${historico(db, turno)}\n\n` +
