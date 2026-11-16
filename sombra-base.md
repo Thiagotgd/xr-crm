@@ -55,7 +55,7 @@ Tomografia (TC), como o gerador monta:
 - Mielotomografia (só na TC): + R$ 400,00.
 
 Ressonância (RM), como o gerador monta:
-- 1 segmento R$ 1.750,00 + anestesia pelo peso: até 25 kg R$ 350,00; de 25 a 35 kg R$ 380,00; acima de 35 kg R$ 400,00. Ou seja, a partir de R$ 2.100,00.
+- 1 segmento R$ 1.750,00 + anestesia pelo peso: até 25 kg R$ 350,00; de 25 a 35 kg R$ 380,00; acima de 35 kg R$ 400,00.
 - Segmentos adicionais: 1 a mais = + R$ 615,00; 2 a mais = + R$ 1.230,00; cada um além disso, + R$ 615,00.
 - Líquor (só junto com a RM): coleta R$ 105,00; análise citológica R$ 200,00; painel neurológico R$ 580,00. A análise e o painel sempre levam a coleta junto (análise = R$ 305,00 com a coleta).
 
@@ -64,7 +64,7 @@ Segmentos que o gerador usa: crânio, pescoço, tórax, abdômen, coluna cervica
 Taxa de urgência de laudo (depende de a equipe de laudos confirmar disponibilidade; se aprovado, o laudo sai em até 1 dia útil): TC 1 segmento R$ 250,00; 2 R$ 342,00; 3 R$ 456,00; 4 R$ 570,00. RM 1 segmento R$ 250,00; 2 R$ 500,00; 3 R$ 750,00.
 
 Como usar com TC e RM:
-- SEM o pedido do veterinário: informar só o "a partir de" (TC R$ 1.220,00; RM R$ 2.100,00) e pedir o pedido para montar o orçamento certo.
+- SEM o pedido do veterinário: informar só o "a partir de" e pedir o pedido para montar o orçamento certo. Os dois textos são fixos: "Tomografia (1 segmento) + anestesia a partir de R$ 1.220,00" e "Ressonância (1 segmento) + anestesia a partir de R$ 2.000,00". O da ressonância é R$ 2.000,00 mesmo (texto padrão da recepção, mantido pelo Thiago em 16/11/2026): não troque por R$ 2.100,00 nem refaça a conta nesse caso.
 - COM o pedido: o orçamento fechado é feito no gerador e enviado em PDF (ação enviar_orcamento_pdf). Você pode dizer o total na mensagem quando a região e, na RM, o peso estiverem claros; se faltar o peso ou a região estiver ambígua, peça antes.
 
 Como ler a tabela ao final:

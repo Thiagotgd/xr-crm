@@ -10,7 +10,7 @@ O resumo semanal do Telegram mostra as linhas dos últimos 7 dias. Este arquivo 
 
 - 11/11/2026: condição de pagamento de TC e RM corrigida para 10x sem juros ou 5% à vista (era 12x e 10%, de outubro). Confirmado pelo Thiago.
 - 2026-11-16: valores: o agente passa a conhecer TODOS os valores (tabela particular completa + o jeito como o gerador de orçamentos monta TC e RM: segmentos, anestesia por peso, líquor, urgência). Só informa valor que esteja escrito; não inventa nem estima (pedido do Thiago).
-- 2026-11-16: valores corrigidos pela tabela: exames de sangue pré-anestésicos R$ 340 (a base dizia 315), ressonância a partir de R$ 2.100 (dizia 2.000), raio-X de 1 projeção R$ 120, sedação por peso.
+- 2026-11-16: valores corrigidos pela tabela: exames de sangue pré-anestésicos R$ 340 (a base dizia 315), raio-X de 1 projeção R$ 120, sedação por peso. Ressonância sem pedido continua "a partir de R$ 2.000", igual à mensagem pronta da recepção (decisão do Thiago); o orçamento fechado segue a conta do gerador.
 - 2026-11-16: nunca fica mudo ao passar para uma pessoa: responde o que sabe, pede o que falta e avisa que a equipe confirma.
 - 2026-11-16: mensagem padrão de abertura (pedido, plano ou particular, CPF) e resposta para pergunta vaga de quem vem de anúncio.
 - 2026-11-16: TC/RM: confere os pré-anestésicos antes de falar de data; pré-anestésicos feitos aqui entram no mesmo parcelamento de 10x (confirmado pelo Thiago).
