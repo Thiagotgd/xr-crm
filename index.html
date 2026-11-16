@@ -818,6 +818,33 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
 .athena-menu { min-width: 250px; }
 .athena-menu-tit { padding: 12px 24px 6px; font-size: 12.5px; line-height: 1.45; color: var(--text); opacity: .72; }
 .athena-menu-tit b { font-weight: 600; }
+/* ══ 16/11/2026 · celular: campo de digitar largo e cabeçalho da conversa em duas linhas ══ */
+.ci-extras { display: contents; }
+.compose-bar .ci-mais { display: none; }
+@media (max-width: 768px) {
+  /* barra de digitar: emoji, "+", campo e enviar; os outros botões abrem pelo "+" */
+  .compose-bar { gap: 2px; padding: 5px 8px 5px 4px; }
+  .compose-bar .attach-btn { width: 38px; flex-shrink: 0; }
+  .compose-bar .ci-mais { display: flex; font-size: 27px; font-weight: 300; line-height: 1; padding: 0 0 3px; transition: transform .15s ease, color .15s ease; }
+  .compose-bar.mais-aberto .ci-mais { transform: rotate(45deg); color: var(--primary); }
+  .ci-extras { display: none; position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 60; flex-direction: column; min-width: 236px; padding: 6px; background: var(--wa-dropdown); border-radius: 14px; box-shadow: 0 8px 28px rgba(0,0,0,.38); }
+  .compose-bar.mais-aberto .ci-extras { display: flex; }
+  .compose-bar .ci-extras .attach-btn { width: 100%; height: 48px; justify-content: flex-start; gap: 14px; padding: 0 14px !important; margin: 0; border-radius: 10px; font-size: 20px !important; color: var(--text); }
+  .compose-bar .ci-extras .attach-btn::after { content: attr(data-r); font-size: 15.5px; }
+  .compose-bar .ci-extras .attach-btn:active { background: var(--wa-active); }
+  /* 16px evita o zoom automático do iPhone ao tocar no campo */
+  .compose-bar textarea { font-size: 16px; }
+  .compose-bar > .btn { margin-left: 4px; }
+  .emoji-painel { left: 4px; grid-template-columns: repeat(8, 1fr); }
+
+  /* cabeçalho da conversa: nome e telefone na primeira linha, botões na segunda (rola para o lado) */
+  .chat-header { flex-wrap: wrap; gap: 10px; row-gap: 6px; padding: 8px 10px 6px; }
+  .chat-header .ch-info { flex: 1 1 0; }
+  .chat-header .ch-actions { order: 9; flex: 0 0 100%; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding: 0 2px 2px; }
+  .chat-header .ch-actions::-webkit-scrollbar { display: none; }
+  .chat-header .ch-actions > * { flex-shrink: 0; white-space: nowrap; }
+}
+/* ══ fim celular ══ */
 </style>
 </head>
 <body>
@@ -881,10 +908,13 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
         <div class="sug-bar" id="chatSugestoes"></div>
         <div class="emoji-painel" id="emojiPainel"></div>
         <button class="attach-btn" id="btnEmoji" onclick="alternarEmojis()" title="Emojis" style="font-size:18px;padding:2px 4px">&#x1F642;</button>
-        <button class="attach-btn" onclick="document.getElementById('chatFileInput').click()" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
-        <button class="attach-btn" onclick="abrirOrcamentoChat()" title="Criar orçamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
-        <button class="attach-btn" onclick="enviarArquivoPronto(0)" title="Enviar a imagem das recomendações de tomografia e ressonância (atalho: /foto)" style="font-size:16px;padding:2px 4px">&#x1F4CB;</button>
-        <button class="attach-btn" onclick="abrirEnviarContato()" title="Enviar contato (cartão com nome e telefone)" style="font-size:16px;padding:2px 4px">&#x1F464;</button>
+        <button class="attach-btn ci-mais" id="btnMais" onclick="alternarMais(event)" title="Anexar: arquivo, orçamento, preparo, contato">+</button>
+        <div class="ci-extras" id="ciExtras">
+        <button class="attach-btn" onclick="document.getElementById('chatFileInput').click()" data-r="Foto ou arquivo" title="Enviar arquivo" style="font-size:18px;padding:2px 4px">&#x1F4CE;</button>
+        <button class="attach-btn" onclick="abrirOrcamentoChat()" data-r="Criar orçamento" title="Criar orçamento" style="font-size:16px;padding:2px 4px">&#x1F4B0;</button>
+        <button class="attach-btn" onclick="enviarArquivoPronto(0)" data-r="Preparo para o exame" title="Enviar a imagem das recomendações de tomografia e ressonância (atalho: /foto)" style="font-size:16px;padding:2px 4px">&#x1F4CB;</button>
+        <button class="attach-btn" onclick="abrirEnviarContato()" data-r="Enviar contato" title="Enviar contato (cartão com nome e telefone)" style="font-size:16px;padding:2px 4px">&#x1F464;</button>
+        </div>
         <input type="file" id="chatFileInput" multiple style="display:none" onchange="escolherArquivosChat(this)">
         <textarea id="chatComposeInput" rows="1" placeholder="Digite uma mensagem ( / abre as mensagens rápidas )" onkeydown="handleChatComposeKey(event)" oninput="checkChatSlashTrigger(this);ajustarAltura(this);sugDispensada=null;mostrarSugestoes()" onclick="mostrarSugestoes()" onkeyup="if(event.key.indexOf('Arrow')===0||event.key==='Home'||event.key==='End')mostrarSugestoes()"></textarea>
         <div class="envio-estado" id="chatEnvioEstado"></div>
@@ -5354,6 +5384,34 @@ async function fixarGrupo(gid) {
   } catch (e) { toast('Não consegui fixar: ' + e.message, 'err'); }
   if (btn) btn.disabled = false;
 }
+
+// ─── Celular (16/11/2026): botões de anexar atrás do "+" e texto curto no campo ─────────────────────────
+// No computador nada muda: o "+" fica escondido e os botões aparecem direto na barra.
+function fecharMais() {
+  const ex = document.getElementById('ciExtras');
+  if (ex && ex.parentElement) ex.parentElement.classList.remove('mais-aberto');
+}
+function alternarMais(e) {
+  if (e) e.stopPropagation();
+  const ex = document.getElementById('ciExtras');
+  if (!ex || !ex.parentElement) return;
+  const abrir = !ex.parentElement.classList.contains('mais-aberto');
+  if (abrir) { const p = document.getElementById('emojiPainel'); if (p) p.classList.remove('show'); }
+  ex.parentElement.classList.toggle('mais-aberto', abrir);
+}
+document.addEventListener('click', fecharMais);
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') fecharMais(); });
+const TEXTO_DO_CAMPO = 'Digite uma mensagem ( / abre as mensagens rápidas )';
+function ajustarParaCelular() {
+  const celular = window.matchMedia('(max-width: 768px)').matches;
+  ['chatComposeInput', 'composeInput'].forEach(function (id) {
+    const t = document.getElementById(id);
+    if (t) t.placeholder = celular ? 'Mensagem' : TEXTO_DO_CAMPO;
+  });
+  if (!celular) fecharMais();
+}
+window.addEventListener('resize', ajustarParaCelular);
+ajustarParaCelular();
 
 // ─── Pausar a Athena nesta conversa (14/11/2026) ───────────────────────────────────────────────────────
 // A Athena responde sozinha fora do horário. Quando a recepção está cuidando de uma conversa e não quer que ela
