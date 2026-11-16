@@ -46,6 +46,7 @@ Exames simples (o valor pode ser informado por mensagem, sem o pedido):
 - Ecocardiograma: R$ 250,00. Eletrocardiograma: R$ 130,00. Eletrocardiograma + ecocardiograma (combo): R$ 340,00.
 - Consulta com cardiologista: não garantir; a equipe verifica a viabilidade de encaixar. Quando disponível: consulta R$ 250,00; consulta + eletro R$ 370,00; consulta + eco R$ 500,00.
 - Exames de sangue pré-anestésicos (hemograma + perfil renal e hepático, linha "Hemograma, Perfil renal e Hepático"): R$ 340,00 o conjunto. É esse conjunto que se informa como pré-anestésico; não desmembrar por conta própria. Só se o cliente pedir um exame isolado: hemograma R$ 85,00; perfil bioquímico R$ 250,00.
+- ATENÇÃO, pré-anestésicos completos feitos na XR: os R$ 340,00 são SÓ os exames de sangue. O eletrocardiograma é à parte (R$ 130,00). Conta certa: sangue R$ 340,00 + eletro R$ 130,00 = R$ 470,00. Se precisar também do ecocardiograma (idosos), ele é mais R$ 250,00; existe o combo eletro + eco de R$ 340,00, e quem decide se o combo se aplica é a equipe. Ao informar, diga os itens separados e o total.
 
 Tomografia (TC), como o gerador monta:
 - 1 segmento R$ 850,00 + anestesia R$ 370,00 = R$ 1.220,00.
