@@ -845,6 +845,18 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
   .chat-header .ch-actions > * { flex-shrink: 0; white-space: nowrap; }
 }
 /* ══ fim celular ══ */
+/* ══ 17/11/2026 · visualizador: botão Baixar ══ */
+.visor-topo em.vt-l { font-style: normal; }
+.visor-topo button.vt-baixar { background: #00a884; color: #fff; font-weight: 600; }
+.visor-topo button.vt-baixar:hover { background: #06cf9c; }
+.visor-topo button.vt-baixar:disabled { opacity: .6; cursor: progress; }
+@media (max-width: 768px) {
+  .visor-topo { gap: 8px; padding: 8px 10px; }
+  .visor-topo em.vt-l { display: none; }
+  .visor-topo button { padding: 8px 12px; }
+  .visor-corpo { padding: 0 6px 10px; }
+}
+/* ══ fim baixar ══ */
 </style>
 </head>
 <body>
@@ -1140,8 +1152,9 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
 <div class="visor" id="visor" onclick="if(event.target===this)fecharVisor()">
   <div class="visor-topo">
     <span id="visorNome"></span>
-    <a id="visorAbrir" href="#" target="_blank" rel="noopener">Abrir em outra aba</a>
-    <button type="button" onclick="fecharVisor()">&#x2715; Fechar (Esc)</button>
+    <button type="button" class="vt-baixar" id="visorBaixar" onclick="baixarDoVisor(this)" title="Baixar este arquivo para o seu aparelho">&#x2B07; Baixar</button>
+    <a id="visorAbrir" href="#" target="_blank" rel="noopener">Abrir<em class="vt-l"> em outra aba</em></a>
+    <button type="button" onclick="fecharVisor()">&#x2715; Fechar<em class="vt-l"> (Esc)</em></button>
   </div>
   <div class="visor-corpo" id="visorCorpo" onclick="if(event.target===this)fecharVisor()"></div>
 </div>
@@ -4994,6 +5007,44 @@ document.addEventListener('mouseover', function (e) {
     if (document.activeElement && document.activeElement.tagName === 'IFRAME') { document.activeElement.blur(); window.focus(); }
   }
 });
+
+// ─── Baixar a foto ou o PDF aberto no visualizador (17/11/2026) ────────────────────────────────────────
+// Busca o arquivo e entrega como download, sem sair da conversa. Se o navegador não deixar (arquivo de outro
+// site, por exemplo a prévia de um link), abre em outra aba para a pessoa salvar por lá.
+const EXT_POR_TIPO = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'application/pdf': '.pdf' };
+function nomeParaBaixar(url, rotulo, tipoDoArquivo) {
+  let base = '';
+  try { base = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop() || ''); } catch (e) {}
+  const temExt = function (t) { return /\.[a-z0-9]{2,5}$/i.test(t); };
+  const ext = temExt(base) ? base.slice(base.lastIndexOf('.')) : (EXT_POR_TIPO[String(tipoDoArquivo || '').split(';')[0].trim()] || '');
+  rotulo = String(rotulo || '').trim();
+  let nome;
+  if (temExt(rotulo)) nome = rotulo;
+  else if (rotulo && rotulo !== 'Foto' && rotulo !== 'Documento') nome = rotulo + ext;
+  else nome = temExt(base) ? base : (base || 'arquivo') + ext;
+  return nome.replace(/[\\/:*?"<>|\n\r]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'arquivo' + ext;
+}
+async function baixarDoVisor(btn) {
+  const url = document.getElementById('visorAbrir').getAttribute('href') || '';
+  if (!url || url === '#') return;
+  const rotulo = document.getElementById('visorNome').textContent;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(url, { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const blob = await r.blob();
+    const nome = nomeParaBaixar(url, rotulo, blob.type);
+    const obj = URL.createObjectURL(blob), link = document.createElement('a');
+    link.href = obj; link.download = nome; link.style.display = 'none';
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(function () { URL.revokeObjectURL(obj); }, 60000);
+    toast('Baixado: ' + nome);
+  } catch (e) {
+    window.open(url, '_blank', 'noopener');
+    toast('Não consegui baixar direto. Abri em outra aba para você salvar por lá.', 'err');
+  }
+  if (btn) btn.disabled = false;
+}
 
 // ─── Arquivos prontos da recepção (botão ao lado do orçamento e atalho "/foto") ────────────────────────
 // Abre a prévia de envio já com o arquivo e a legenda; a pessoa só confere e aperta Enter. Para acrescentar
