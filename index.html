@@ -4010,15 +4010,15 @@ function renderMessagesInto(area, mensagens, opts) {
       // figurinha: sem balão, como no WhatsApp (se o arquivo não foi guardado, fica só a palavra)
       content += m.media_path ? '<img class="msg-sticker" src="/media/' + esc(m.media_path) + '" alt="figurinha" title="Figurinha">' : '<span class="msg-fig-txt">&#x1F5BC;&#xFE0F; Figurinha</span>';
     } else if (m.media_path && (m.tipo === 'image')) {
-      content += '<img src="/media/' + esc(m.media_path) + '" class="msg-img" onclick="abrirVisor(\'/media/' + esc(m.media_path) + '\',\'image\')" alt="imagem" title="Clique para ver maior (Esc fecha)">';
+      content += '<img src="/media/' + esc(m.media_path) + '" class="msg-img" data-baixar="' + esc(nomeFacilDoArquivo(m, opts)) + '" onclick="abrirVisor(\'/media/' + esc(m.media_path) + '\',\'image\',null,this.dataset.baixar)" alt="imagem" title="Clique para ver maior (Esc fecha)">';
       if (m.texto && m.texto !== '[image]') content += '<div>' + fmtWa(m.texto) + '</div>';
     } else if (m.media_path && m.tipo === 'audio') {
       content += '<audio controls src="/media/' + esc(m.media_path) + '" style="max-width:250px"></audio>';
     } else if (m.media_path && (m.tipo === 'document' || m.tipo === 'video')) {
       const arq = rotuloArquivo(m);
       // PDF: miniatura da 1ª página em cima do nome do arquivo (clicar abre o PDF no visualizador)
-      if (/\.pdf$/i.test(m.media_path)) content += '<div class="msg-pdf-box" data-pdf="/media/' + esc(m.media_path) + '" data-nome="' + esc(arq.rotulo) + '" onclick="abrirVisor(this.dataset.pdf, \'pdf\', this.dataset.nome)" title="Abrir o PDF (Esc fecha)"><span>PDF</span></div>';
-      content += '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link" title="Abrir o arquivo" data-nome="' + esc(arq.rotulo) + '" onclick="return abrirArquivo(event, this)">&#x1F4CE; <span>' + esc(arq.rotulo) + '</span></a>';
+      if (/\.pdf$/i.test(m.media_path)) content += '<div class="msg-pdf-box" data-pdf="/media/' + esc(m.media_path) + '" data-nome="' + esc(arq.rotulo) + '" data-baixar="' + esc(nomeFacilDoArquivo(m, opts, arq.rotulo)) + '" onclick="abrirVisor(this.dataset.pdf, \'pdf\', this.dataset.nome, this.dataset.baixar)" title="Abrir o PDF (Esc fecha)"><span>PDF</span></div>';
+      content += '<a href="/media/' + esc(m.media_path) + '" target="_blank" class="msg-file-link" title="Abrir o arquivo" data-nome="' + esc(arq.rotulo) + '" data-baixar="' + esc(nomeFacilDoArquivo(m, opts, arq.rotulo)) + '" onclick="return abrirArquivo(event, this)">&#x1F4CE; <span>' + esc(arq.rotulo) + '</span></a>';
       if (arq.legenda) content += '<div>' + fmtWa(arq.legenda) + '</div>';
     } else if (m.tipo === 'contact' && m.cartao) {
       content += cartaoHtml(m.cartao, area.id === 'chatMessagesArea');
@@ -4968,7 +4968,9 @@ async function salvarEdicao() {
 }
 
 // ─── Visualizador de foto e PDF dentro do CRM (Esc fecha) ───────────────────────────────────────────────
-function abrirVisor(url, tipo, nome) {
+let visorBaixarComo = '';
+function abrirVisor(url, tipo, nome, baixarComo) {
+  visorBaixarComo = baixarComo || '';
   const v = document.getElementById('visor'), corpo = document.getElementById('visorCorpo');
   document.getElementById('visorNome').textContent = nome || (tipo === 'pdf' ? 'Documento' : 'Foto');
   document.getElementById('visorAbrir').href = url;
@@ -4992,7 +4994,7 @@ function abrirArquivo(e, a) {
   const url = a.getAttribute('href') || '';
   if (!/\.pdf(\?|#|$)/i.test(url)) return true;
   e.preventDefault();
-  abrirVisor(url, 'pdf', a.dataset.nome || 'Documento');
+  abrirVisor(url, 'pdf', a.dataset.nome || 'Documento', a.dataset.baixar);
   return false;
 }
 // Esc fecha o visualizador antes de qualquer outra coisa
@@ -5012,6 +5014,26 @@ document.addEventListener('mouseover', function (e) {
 // Busca o arquivo e entrega como download, sem sair da conversa. Se o navegador não deixar (arquivo de outro
 // site, por exemplo a prévia de um link), abre em outra aba para a pessoa salvar por lá.
 const EXT_POR_TIPO = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'application/pdf': '.pdf' };
+// Nome com que a foto ou o PDF de uma mensagem é baixado: de quem é a conversa, o que é e quando chegou.
+//   conversa:  "Maria Silva (Rex) - foto - 17-11-2026 10h32.jpg"
+//   grupo:     "Laudos - Fulano - foto - 17-11-2026 10h32.jpg"
+//   documento: "Maria Silva (Rex) - Exames laboratoriais - 17-11-2026 10h32.pdf" (mantém o nome original do arquivo)
+function nomeFacilDoArquivo(m, opts, original) {
+  const limpa = function (x) { return String(x || '').replace(/[\\/:*?"<>|\n\r]+/g, ' ').replace(/\s+/g, ' ').trim(); };
+  let quem = '';
+  if (opts && opts.grupo) {
+    quem = [limpa(chatGrupo && chatGrupo.nome), m.direcao === 'out' ? 'XR' : limpa(m.remetente_nome)].filter(Boolean).join(' - ');
+  } else {
+    const c = (currentTab === 'conversas' ? currentChatContato : currentContato) || currentChatContato || currentContato;
+    if (c) quem = limpa(c.nome || formatPhone(c.telefone)) + (limpa(c.pet_nome) ? ' (' + limpa(c.pet_nome) + ')' : '');
+  }
+  const s = String(m.created_at || '');
+  const quando = /^\d{4}-\d{2}-\d{2}.\d{2}:\d{2}/.test(s) ? s.slice(8, 10) + '-' + s.slice(5, 7) + '-' + s.slice(0, 4) + ' ' + s.slice(11, 13) + 'h' + s.slice(14, 16) : '';
+  const ext = (String(m.media_path || '').match(/\.[a-z0-9]{2,5}$/i) || [''])[0].toLowerCase();
+  const generico = !original || /^(Documento|Vídeo)( [A-Z0-9]+)?$/.test(original);
+  const oQue = generico ? (m.tipo === 'image' ? 'foto' : m.tipo === 'video' ? 'vídeo' : 'documento') : limpa(String(original).replace(/\.[a-z0-9]{2,5}$/i, ''));
+  return [quem, oQue, quando].filter(Boolean).join(' - ').slice(0, 150).trim() + ext;
+}
 function nomeParaBaixar(url, rotulo, tipoDoArquivo) {
   let base = '';
   try { base = decodeURIComponent(new URL(url, location.href).pathname.split('/').pop() || ''); } catch (e) {}
@@ -5033,7 +5055,7 @@ async function baixarDoVisor(btn) {
     const r = await fetch(url, { credentials: 'same-origin' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const blob = await r.blob();
-    const nome = nomeParaBaixar(url, rotulo, blob.type);
+    const nome = nomeParaBaixar(url, visorBaixarComo || rotulo, blob.type);
     const obj = URL.createObjectURL(blob), link = document.createElement('a');
     link.href = obj; link.download = nome; link.style.display = 'none';
     document.body.appendChild(link); link.click(); link.remove();
