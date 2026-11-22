@@ -14,6 +14,7 @@ const origem = require('./origem');
 const retomada = require('./retomada');
 const sombra = require('./sombra');
 const leitor = require('./leitor');
+const conexao = require('./conexao');
 
 const PORT = process.env.PORT || 8095;
 const EVO_BASE = process.env.EVO_BASE || 'http://172.18.0.1:8085';
@@ -724,10 +725,11 @@ function evoMarkAsRead(phone, ids) {
   req.end();
 }
 
-function evoDownloadMedia(messageKey) {
+function evoDownloadMedia(messageKey, mensagem) {
   return new Promise((resolve) => {
     const url = new URL(`${EVO_BASE}/chat/getBase64FromMediaMessage/${EVO_INSTANCE}`);
-    const payload = JSON.stringify({ message: { key: messageKey }, convertToMp4: false });
+    // mensagem do histórico (reconexão): a Evolution não a tem no banco, então vai a mensagem inteira e ela baixa direto do WhatsApp
+    const payload = JSON.stringify({ message: mensagem ? { key: messageKey, message: mensagem } : { key: messageKey }, convertToMp4: false });
     const req = http.request({
       hostname: url.hostname, port: url.port, path: url.pathname,
       method: 'POST',
@@ -886,6 +888,304 @@ function anexarAgenda(mensagens) {
 }
 
 // ─── Routes ────────────────────────────────────────────────────────────────────
+// ─── Uma mensagem do WhatsApp (webhook ao vivo OU histórico da reconexão) ──────────────────────────────────────
+// 22/11/2026: o corpo do webhook virou esta função para a sincronização (conexao.js) reaproveitar tudo: contato,
+// mídia, etapas, follow-up. opcoes.historico = mensagem antiga que chegou ao reconectar; opcoes.quando = data/hora
+// verdadeira dela ('AAAA-MM-DD HH:MM:SS' de Brasília): entra no created_at e nas marcas de "última", que nunca
+// andam para trás. Devolve { ok, gravada, contatoId | grupo, ignored, motivo }.
+async function processarMensagem(data, event, opcoes) {
+  opcoes = opcoes || {};
+  const agoraSql = opcoes.historico && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(String(opcoes.quando || '')) ? `'${opcoes.quando}'` : "datetime('now','localtime')";
+  {
+    const key = data.key || {};
+    const jid = key.remoteJid || '';
+
+    // Mesma mensagem chegando duas vezes (ex.: send.message + upsert) não grava de novo
+    if (key.id && db.prepare('SELECT 1 FROM mensagens WHERE wa_msg_id = ? LIMIT 1').get(key.id)) {
+      return ({ ok: true, ignored: true, motivo: 'wa_msg_id repetido' });
+    }
+
+    // Reação (👍, ❤️…) a uma mensagem: não é mensagem nova. Fica guardada na mensagem reagida, sem mexer na
+    // ordem da lista nem no "não lida". key.fromMe diz quem reagiu; reactionMessage.key aponta a mensagem.
+    const reacao = data.message && data.message.reactionMessage;
+    if (reacao) {
+      if (!jid.includes('@g.us') && reacao.key && reacao.key.id) {
+        const achou = gravarReacao(reacao.key.id, key.fromMe ? 'out' : 'in', String(reacao.text || ''));
+        console.log(`[CRM] reação ${key.fromMe ? 'da recepção' : 'do cliente'}: ${reacao.text || '(tirou)'}${achou ? '' : ' (mensagem não encontrada)'}`);
+      } else if (jid.includes('@g.us') && reacao.key && reacao.key.id) {
+        // em grupo cada participante tem a sua reação: {"me":"👍","<participante>":"❤️"}
+        gravarReacaoGrupo(reacao.key.id, key.fromMe ? 'me' : String(key.participant || data.pushName || '?'), String(reacao.text || ''));
+      }
+      return ({ ok: true, reacao: true });
+    }
+
+    // Handle group messages
+    if (jid.includes('@g.us')) {
+      const grupo = db.prepare('SELECT * FROM grupos WHERE jid = ? AND ativo = 1').get(jid);
+      if (!grupo) return ({ ok: true, ignored: true });
+
+      const msg = data.message || {};
+      const waId = String(key.id || '');
+      // a mesma mensagem de grupo chega mais de uma vez: só a primeira é gravada
+      if (waId && db.prepare('SELECT 1 FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(waId)) {
+        return ({ ok: true, ignored: true, motivo: 'mensagem de grupo repetida' });
+      }
+      const doc = msg.documentMessage || (msg.documentWithCaptionMessage && msg.documentWithCaptionMessage.message && msg.documentWithCaptionMessage.message.documentMessage) || null;
+      const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : doc ? 'document' : msg.videoMessage ? 'video' : msg.stickerMessage ? 'sticker' : 'text';
+      let texto = msg.conversation || (msg.extendedTextMessage && msg.extendedTextMessage.text) ||
+        (msg.imageMessage && msg.imageMessage.caption) || (msg.videoMessage && msg.videoMessage.caption) || '';
+      if (doc) texto = [doc.fileName, doc.caption].filter(Boolean).join('\n');
+      // o que a recepção manda pelo celular entra como "Eu", igual ao que sai pelo CRM
+      const remetente = key.fromMe ? 'me' : (key.participant || data.pushName || '');
+      const remetenteNome = key.fromMe ? 'Eu' : (data.pushName || '');
+      // resposta que cita outra mensagem do grupo
+      const citaG = citacaoDoContexto(msg, data, jid);
+      let citaGDe = '';
+      if (citaG.id) {
+        const og = db.prepare('SELECT remetente FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(citaG.id);
+        if (og) citaGDe = og.remetente === 'me' ? 'out' : 'in';
+      }
+
+      let gravadaG = false;
+      if (texto || tipo !== 'text') {
+        gravadaG = true;
+        // grava primeiro (a repetição que chega em seguida já é reconhecida) e baixa o arquivo depois
+        const nova = db.prepare(`INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo, wa_msg_id, citacao_texto, citacao_de, citacao_wa_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${agoraSql})`).run(
+          grupo.id, remetente, remetenteNome, texto || `[${tipo}]`, tipo, waId, citaG.texto || '', citaGDe, citaG.id || ''
+        );
+        if (tipo !== 'text') {
+          try {
+            const mediaData = await evoDownloadMedia(key, opcoes.historico ? msg : undefined);
+            if (mediaData && mediaData.base64) {
+              const mime = mediaData.mimetype || '';
+              const ext = mime.includes('jpeg') || mime.includes('jpg') ? '.jpg' : mime.includes('png') ? '.png' : mime.includes('webp') ? '.webp'
+                : mime.includes('mp4') ? '.mp4' : mime.includes('ogg') || mime.includes('opus') ? '.ogg' : mime.includes('pdf') ? '.pdf' : mime.includes('mp3') ? '.mp3'
+                : (doc && /\.[a-z0-9]{2,5}$/i.test(String(doc.fileName || '')) ? String(doc.fileName).slice(String(doc.fileName).lastIndexOf('.')).toLowerCase() : '');
+              const filename = `${Date.now()}_g${grupo.id}${ext}`;
+              fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(mediaData.base64, 'base64'));
+              db.prepare('UPDATE grupo_mensagens SET media_path = ? WHERE id = ?').run(filename, nova.lastInsertRowid);
+            }
+          } catch (e) { console.error('[CRM] Erro baixando arquivo de grupo:', e.message); }
+        }
+        // a recepção escreveu no grupo pelo celular: quem escreveu, leu (mensagem de robô pela API chega como send.message e não conta)
+        if (key.fromMe && (event === 'messages.upsert' || event === 'MESSAGES_UPSERT')) {
+          db.prepare(`UPDATE grupos SET last_read_at = MAX(COALESCE(last_read_at,''), ${agoraSql}) WHERE id = ?`).run(grupo.id);
+        }
+      }
+      return ({ ok: true, gravada: gravadaG, grupo: grupo.id });
+    }
+
+    const isFromMe = !!key.fromMe;
+
+    const phone = phoneFromJid(jid);
+    if (!phone) return ({ ok: true, ignored: true });
+
+    // ─── Comandos do follow-up ─────────────────────────────────────────────
+    // A recepção responde na conversa "Prevenvets" (o número que manda os
+    // alertas). Pra instância da recepção isso é uma mensagem ENVIADA pro
+    // prevenvet — e cai aqui. Ex.: "perdeu 123", "ok 123", "fechou 123".
+    if (!opcoes.historico && isFromMe && phone.replace(/\D/g, '').endsWith(alerta.ORIGEM.slice(-11))) {
+      const msgCmd = data.message || {};
+      const txt = (msgCmd.conversation || (msgCmd.extendedTextMessage && msgCmd.extendedTextMessage.text) || '').trim();
+      const m = txt.match(/^(marcou|desistiu|desistiram|perdeu|perdido|ok|feito|resolvido|fechou|agendou|ignorar|ajuda|\?)\s*#?(\d+)?\s*$/i);
+      if (m) {
+        const resposta = followup.executarComando(db, m[1].toLowerCase(), m[2] ? Number(m[2]) : null);
+        if (resposta) alerta.enviarRecepcao(resposta);
+        return ({ ok: true, comando: m[1] });
+      }
+    }
+
+    // Handle status updates (no actual message content)
+    const status = data.status || '';
+    if (!data.message && (status === 'SERVER_ACK' || status === 'DELIVERY_ACK' || status === 'READ' || status === 'PLAYED')) {
+      // If I read a message on real WhatsApp, mark as read in CRM too
+      if (status === 'READ' && !isFromMe) {
+        const contato = db.prepare('SELECT id FROM contatos WHERE telefone = ?').get(phone);
+        if (contato) {
+          db.prepare(`UPDATE contatos SET last_read_at = MAX(COALESCE(last_read_at,''), ${agoraSql}), manual_unread = 0 WHERE id = ?`).run(contato.id);
+          console.log(`[CRM] WhatsApp read sync: ${phone} marked as read`);
+        }
+      }
+      return ({ ok: true, ignored: true });
+    }
+
+    // Extract message text
+    const msg = data.message || {};
+    // cartão de contato (um ou vários) vira mensagem do tipo 'contact', com os contatos guardados em "cartao"
+    const cartoes = cartoesDaMensagem(msg);
+    const texto = msg.conversation || (msg.extendedTextMessage && msg.extendedTextMessage.text) ||
+      (cartoes.length ? 'Contato: ' + cartoes.map(c => c.nome || telefoneBonito(c.telefone)).join(', ') : '');
+    console.log(`[CRM] Msg ${isFromMe ? 'OUT' : 'IN'} ${phone}: texto="${texto.substring(0,50)}" tipo=${Object.keys(msg).join(',')}`);
+    const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : msg.documentMessage ? 'document' : msg.stickerMessage ? 'sticker' : cartoes.length ? 'contact' : 'text';
+
+    // Extract push name (contact name from WhatsApp)
+    const pushName = data.pushName || '';
+
+    // Upsert contato
+    let contato = db.prepare('SELECT * FROM contatos WHERE telefone = ?').get(phone);
+    if (!contato) {
+      if (isFromMe) {
+        // Create contact from outgoing message (sent via native WhatsApp)
+        const result = db.prepare(`
+          INSERT INTO contatos (nome, telefone, etapa, last_message_at, updated_at)
+          VALUES (?, ?, 'novo', ${agoraSql}, ${agoraSql})
+        `).run(nomeDaAgenda(phone), phone);
+        contato = { id: result.lastInsertRowid, etapa: 'novo' };
+        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, '', 'novo')").run(contato.id);
+        console.log(`[CRM] Novo contato (fromMe): ${phone}`);
+      } else {
+        const fotoUrl = await evoFetchProfilePic(phone);
+        const result = db.prepare(`
+          INSERT INTO contatos (nome, telefone, etapa, foto_url, last_message_at, updated_at)
+          VALUES (?, ?, 'novo', ?, ${agoraSql}, ${agoraSql})
+        `).run(nomeDaAgenda(phone) || pushName, phone, fotoUrl);
+        contato = { id: result.lastInsertRowid, etapa: 'novo' };
+        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, '', 'novo')").run(contato.id);
+        console.log(`[CRM] Novo contato: ${pushName} (${phone}) foto: ${fotoUrl ? 'sim' : 'nao'}`);
+      }
+    } else {
+      // Update name if we got a pushName and contact has no name
+      if (pushName && !contato.nome && !isFromMe) {
+        db.prepare('UPDATE contatos SET nome = ? WHERE id = ?').run(pushName, contato.id);
+      }
+      // If contact was finalized for 2+ days and THEY sent a message, move back to "novo"
+      if (!isFromMe && contato.etapa === 'finalizado' && contato.updated_at < new Date(Date.now() - 2 * 86400000).toISOString().replace('T', ' ').slice(0, 19)) {
+        db.prepare(`UPDATE contatos SET etapa = 'novo', last_message_at = MAX(COALESCE(last_message_at,''), ${agoraSql}), updated_at = MAX(COALESCE(updated_at,''), ${agoraSql}) WHERE id = ?`).run(contato.id);
+        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, 'finalizado', 'novo')").run(contato.id);
+        console.log(`[CRM] Contato ${contato.nome || phone} voltou de finalizado para novo`);
+      } else {
+        db.prepare(`UPDATE contatos SET last_message_at = MAX(COALESCE(last_message_at,''), ${agoraSql}), updated_at = MAX(COALESCE(updated_at,''), ${agoraSql}) WHERE id = ?`).run(contato.id);
+      }
+      // If I'm sending a message, mark as read (I must have read the conversation)
+      // ...menos quando quem "respondeu" foi um robô: a Athena ou a saudação automática. Aí ninguém leu ainda.
+      const respostaAutomatica = texto.includes(followup.ATHENA_MARCA) || texto.includes(followup.SAUDACAO_MARCA);
+      if (isFromMe && respostaAutomatica) {
+        console.log(`[CRM] resposta automática para ${phone}: a conversa continua como não lida`);
+      } else if (isFromMe) {
+        db.prepare(`UPDATE contatos SET last_read_at = MAX(COALESCE(last_read_at,''), ${agoraSql}), manual_unread = 0 WHERE id = ?`).run(contato.id);
+        console.log(`[CRM] fromMe read sync: ${phone} marked as read`);
+      }
+    }
+
+    // Save incoming message + download media
+    let gravada = false;
+    if (texto || tipo !== 'text') {
+      gravada = true;
+      let mediaPath = '';
+      if (tipo !== 'text' && tipo !== 'contact') {
+        try {
+          const mediaData = await evoDownloadMedia(key, opcoes.historico ? msg : undefined);
+          if (mediaData && mediaData.base64) {
+            const mime = mediaData.mimetype || '';
+            const ext = mime.includes('jpeg') || mime.includes('jpg') ? '.jpg'
+              : mime.includes('png') ? '.png'
+              : mime.includes('webp') ? '.webp'
+              : mime.includes('mp4') ? '.mp4'
+              : mime.includes('ogg') || mime.includes('opus') ? '.ogg'
+              : mime.includes('pdf') ? '.pdf'
+              : mime.includes('mp3') ? '.mp3'
+              : '';
+            const filename = `${Date.now()}_${contato.id}${ext}`;
+            fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(mediaData.base64, 'base64'));
+            mediaPath = filename;
+            console.log(`[CRM] Media salva: ${filename} (${tipo})`);
+          }
+        } catch (e) { console.error('[CRM] Erro download media:', e.message); }
+      }
+
+      const caption = tipo === 'image' && msg.imageMessage && msg.imageMessage.caption ? msg.imageMessage.caption : '';
+      const direcao = isFromMe ? 'out' : 'in';
+      const waMsgId = (key && key.id) || '';
+      const waJid = jid || '';
+      const docName = (tipo === 'document' && msg.documentMessage && msg.documentMessage.fileName) ? String(msg.documentMessage.fileName) : '';
+      const docCaption = (tipo === 'document' && msg.documentMessage && msg.documentMessage.caption) ? String(msg.documentMessage.caption) : '';
+      const cita = citacaoDoContexto(msg, data, jid);
+      db.prepare(`INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid, citacao_texto, citacao_de, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ${agoraSql})`).run(
+        contato.id, direcao, texto || caption || [docName, docCaption].filter(Boolean).join('\n') || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid, cita.texto, cita.de
+      );
+      if (cartoes.length && waMsgId) db.prepare('UPDATE mensagens SET cartao = ? WHERE wa_msg_id = ?').run(JSON.stringify(cartoes), waMsgId);
+      if (cita.id && waMsgId) db.prepare('UPDATE mensagens SET citacao_wa_id = ? WHERE wa_msg_id = ?').run(cita.id, waMsgId);
+      // mensagem com link (pedido no Adobe, LoopVet…): busca a prévia em segundo plano
+      if (tipo === 'text' && waMsgId && /https?:\/\//.test(texto)) {
+        try { const nv = db.prepare('SELECT id FROM mensagens WHERE wa_msg_id = ?').get(waMsgId); if (nv) agendarPrevia(nv.id, texto); } catch (e) {}
+      }
+      // De onde o cliente veio (anúncio Meta, Google, direto) — só leitura das primeiras mensagens dele.
+      if (!isFromMe) { try { origem.classificar(db, contato.id, texto || caption); } catch (e) { console.error('[ORIGEM]', e.message); } }
+      // A recepção escreveu para um orçamento parado (🟡/⚪)? Conta como retomada (1ª, 2ª ou última).
+      else { try { retomada.registrarSeRetomada(db, contato.id, texto || caption || docName || docCaption, tipo); } catch (e) { console.error('[RETOMADA]', e.message); } }
+      // Cliente mandou foto, PDF ou áudio: lê/transcreve em seguida (pedido do veterinário, comprovante, fala). Só transcreve.
+      if (!isFromMe && mediaPath && (tipo === 'image' || tipo === 'document' || tipo === 'audio')) { try { leitor.aoReceber(db); } catch (e) { console.error('[LEITOR]', e.message); } }
+    }
+
+    // ─── Auto-move to Orçamento when PDF sent outgoing ───────────────────
+    if (isFromMe && tipo === 'document') {
+      // É orçamento mesmo? O gerador nomeia "Orçamento Tomografia - Pet (Tutor).pdf".
+      // Se o nome não disser, vale o que o time escreveu nos últimos 10 min
+      // ("segue o orçamento..."). Nota fiscal pro contador NÃO é orçamento.
+      const dn = (msg.documentMessage && msg.documentMessage.fileName) ? String(msg.documentMessage.fileName) : '';
+      const dc = (msg.documentMessage && msg.documentMessage.caption) ? String(msg.documentMessage.caption) : '';
+      const reOrc = /or[cç]amento/i;
+      const textoRecente = db.prepare("SELECT texto FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND tipo = 'text' AND created_at >= datetime('now','localtime','-10 minutes') ORDER BY id DESC LIMIT 3").all(contato.id).map(r => r.texto).filter(t => !String(t).includes(followup.ATHENA_MARCA)).join(' ');
+      const ehOrcamento = reOrc.test(dn) || reOrc.test(dc) || reOrc.test(textoRecente);
+
+      // Modalidade e pet saem do nome do arquivo, quando houver.
+      const modalidade = /tomograf/i.test(dn) ? 'TC' : /resson/i.test(dn) ? 'RM' : /radiograf|raio/i.test(dn) ? 'RX' : /ultrass/i.test(dn) ? 'US' : '';
+      const petMatch = dn.match(/-\s*([^()]+?)\s*\(/);
+      const petDoArquivo = petMatch ? petMatch[1].trim().replace(/\.pdf$/i, '') : '';
+
+      // Só 'novo'. Quem está em 'agendado' recebe PDF de LAUDO, não de orçamento.
+      const etapasAntes = ['novo'];
+      const currentEtapa = db.prepare('SELECT etapa, pet_nome FROM contatos WHERE id = ?').get(contato.id);
+      if (!ehOrcamento) {
+        console.log(`[CRM] PDF ignorado (não é orçamento): ${contato.nome || phone} "${dn.slice(0, 40)}"`);
+      } else if (currentEtapa && etapasAntes.includes(currentEtapa.etapa)) {
+        db.prepare(`UPDATE contatos SET etapa = 'orcamento', orcamento_enviado_at = ${agoraSql}, orcamento_modalidade = ?, updated_at = ${agoraSql} WHERE id = ?`).run(modalidade, contato.id);
+        if (petDoArquivo && !currentEtapa.pet_nome) db.prepare("UPDATE contatos SET pet_nome = ? WHERE id = ?").run(petDoArquivo, contato.id);
+        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'orcamento')").run(contato.id, currentEtapa.etapa);
+        console.log(`[CRM] Auto-move para Orçamento: ${contato.nome || phone} (${modalidade || 'PDF'}${petDoArquivo ? ' · ' + petDoArquivo : ''})`);
+      } else if (currentEtapa && currentEtapa.etapa === 'orcamento') {
+        // Orçamento novo pra quem já estava em orçamento: renova o relógio e a modalidade.
+        db.prepare(`UPDATE contatos SET orcamento_enviado_at = ${agoraSql}, orcamento_modalidade = COALESCE(NULLIF(?, ''), orcamento_modalidade), updated_at = ${agoraSql} WHERE id = ?`).run(modalidade, contato.id);
+        if (petDoArquivo && !currentEtapa.pet_nome) db.prepare("UPDATE contatos SET pet_nome = ? WHERE id = ?").run(petDoArquivo, contato.id);
+      } else if (currentEtapa && currentEtapa.etapa === 'orcamento' && !db.prepare('SELECT orcamento_enviado_at FROM contatos WHERE id = ?').get(contato.id).orcamento_enviado_at) {
+        // Already in orcamento but no timestamp — set it now
+        db.prepare(`UPDATE contatos SET orcamento_enviado_at = ${agoraSql} WHERE id = ?`).run(contato.id);
+      }
+    }
+
+    // ─── Auto-move to Agendado when scheduling message sent ──────────────
+    if (isFromMe && tipo === 'text' && texto && !texto.includes(followup.ATHENA_MARCA)) {
+      const lower = texto.toLowerCase();
+      const agendaKeywords = ['agendado', 'agendamos', 'agendada', 'confirmado para', 'confirmada para', 'marcado para', 'marcada para', 'exame agendado', 'exame marcado'];
+      // "marcado" / "reservado" / "confirmado" secos também fecham (confirmação curta do time).
+      const hasAgenda = agendaKeywords.some(kw => lower.includes(kw)) || followup.ehConfirmacaoCurta(texto);
+      if (hasAgenda) {
+        const currentEtapa = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(contato.id);
+        const etapasAntes = ['novo', 'orcamento'];
+        if (currentEtapa && etapasAntes.includes(currentEtapa.etapa)) {
+          db.prepare(`UPDATE contatos SET etapa = 'agendado', updated_at = ${agoraSql} WHERE id = ?`).run(contato.id);
+          db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'agendado')").run(contato.id, currentEtapa.etapa);
+          console.log(`[CRM] Auto-move para Agendado: ${contato.nome || phone} (mensagem: "${texto.substring(0, 40)}")`);
+        }
+        // Extrair nome do animal entre parênteses na mensagem de agendamento
+        const parenMatch = texto.match(/\(([^)]+)\)/);
+        if (parenMatch) {
+          const petNome = parenMatch[1].trim();
+          db.prepare(`UPDATE contatos SET pet_nome = ?, updated_at = ${agoraSql} WHERE id = ?`).run(petNome, contato.id);
+          console.log(`[CRM] Pet nome extraído: "${petNome}" para ${contato.nome || phone}`);
+        }
+      }
+    }
+
+    // ─── Track last client response (for follow-up) ─────────────────────
+    if (!isFromMe) {
+      db.prepare(`UPDATE contatos SET ultima_resposta_cliente_at = MAX(COALESCE(ultima_resposta_cliente_at,''), ${agoraSql}) WHERE id = ?`).run(contato.id);
+    }
+
+    return ({ ok: true, gravada, contatoId: contato.id });
+  }
+}
+
 async function handleRequest(req, res) {
   const urlObj = new URL(req.url, 'http://localhost');
   const pathname = urlObj.pathname;
@@ -1433,8 +1733,9 @@ async function handleRequest(req, res) {
 
   // ─── Webhook: Evolution API ───────────────────────────────────────────────
   if (method === 'POST' && pathname === '/webhook/evolution') {
-    const body = await parseBody(req);
-    console.log('[CRM] Webhook:', JSON.stringify(body).substring(0, 300));
+    const body = await parseBody(req, 60e6); // lote do histórico da reconexão pode ser grande
+    if (body.event === 'messages.set' || body.event === 'MESSAGES_SET') console.log('[CRM] Webhook: messages.set com', Array.isArray(body.data) ? body.data.length : 0, 'mensagens');
+    else console.log('[CRM] Webhook:', JSON.stringify(body).substring(0, 300));
 
     const event = body.event;
 
@@ -1470,6 +1771,17 @@ async function handleRequest(req, res) {
       return sendJSON(res, 200, { ok: true });
     }
 
+    // Reconexão (22/11/2026): o WhatsApp manda o histórico recente em lotes (messages.set). Vai para a fila da
+    // sincronização e responde já, sem segurar a Evolution/Athena.
+    if (event === 'messages.set' || event === 'MESSAGES_SET') {
+      const n = conexao.receberLote(body.data, body.extra || {});
+      return sendJSON(res, 200, { ok: true, historico: n });
+    }
+    if (event === 'connection.update' || event === 'CONNECTION_UPDATE') {
+      conexao.registrarConexao(body.data || {});
+      return sendJSON(res, 200, { ok: true });
+    }
+
     // send.message = mensagem enviada pela API da Evolution (a Athena, à noite).
     // Essas NÃO vêm como messages.upsert, então o CRM nunca via as respostas
     // dela. Só aceitamos as que levam a marca da Athena: o que o próprio CRM
@@ -1488,289 +1800,16 @@ async function handleRequest(req, res) {
       return sendJSON(res, 200, { ok: true, ignored: true });
     }
 
-    const data = body.data || body;
-    const key = data.key || {};
-    const jid = key.remoteJid || '';
+    return sendJSON(res, 200, await processarMensagem(body.data || body, event, {}));
+  }
 
-    // Mesma mensagem chegando duas vezes (ex.: send.message + upsert) não grava de novo
-    if (key.id && db.prepare('SELECT 1 FROM mensagens WHERE wa_msg_id = ? LIMIT 1').get(key.id)) {
-      return sendJSON(res, 200, { ok: true, ignored: true, motivo: 'wa_msg_id repetido' });
-    }
-
-    // Reação (👍, ❤️…) a uma mensagem: não é mensagem nova. Fica guardada na mensagem reagida, sem mexer na
-    // ordem da lista nem no "não lida". key.fromMe diz quem reagiu; reactionMessage.key aponta a mensagem.
-    const reacao = data.message && data.message.reactionMessage;
-    if (reacao) {
-      if (!jid.includes('@g.us') && reacao.key && reacao.key.id) {
-        const achou = gravarReacao(reacao.key.id, key.fromMe ? 'out' : 'in', String(reacao.text || ''));
-        console.log(`[CRM] reação ${key.fromMe ? 'da recepção' : 'do cliente'}: ${reacao.text || '(tirou)'}${achou ? '' : ' (mensagem não encontrada)'}`);
-      } else if (jid.includes('@g.us') && reacao.key && reacao.key.id) {
-        // em grupo cada participante tem a sua reação: {"me":"👍","<participante>":"❤️"}
-        gravarReacaoGrupo(reacao.key.id, key.fromMe ? 'me' : String(key.participant || data.pushName || '?'), String(reacao.text || ''));
-      }
-      return sendJSON(res, 200, { ok: true, reacao: true });
-    }
-
-    // Handle group messages
-    if (jid.includes('@g.us')) {
-      const grupo = db.prepare('SELECT * FROM grupos WHERE jid = ? AND ativo = 1').get(jid);
-      if (!grupo) return sendJSON(res, 200, { ok: true, ignored: true });
-
-      const msg = data.message || {};
-      const waId = String(key.id || '');
-      // a mesma mensagem de grupo chega mais de uma vez: só a primeira é gravada
-      if (waId && db.prepare('SELECT 1 FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(waId)) {
-        return sendJSON(res, 200, { ok: true, ignored: true, motivo: 'mensagem de grupo repetida' });
-      }
-      const doc = msg.documentMessage || (msg.documentWithCaptionMessage && msg.documentWithCaptionMessage.message && msg.documentWithCaptionMessage.message.documentMessage) || null;
-      const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : doc ? 'document' : msg.videoMessage ? 'video' : msg.stickerMessage ? 'sticker' : 'text';
-      let texto = msg.conversation || (msg.extendedTextMessage && msg.extendedTextMessage.text) ||
-        (msg.imageMessage && msg.imageMessage.caption) || (msg.videoMessage && msg.videoMessage.caption) || '';
-      if (doc) texto = [doc.fileName, doc.caption].filter(Boolean).join('\n');
-      // o que a recepção manda pelo celular entra como "Eu", igual ao que sai pelo CRM
-      const remetente = key.fromMe ? 'me' : (key.participant || data.pushName || '');
-      const remetenteNome = key.fromMe ? 'Eu' : (data.pushName || '');
-      // resposta que cita outra mensagem do grupo
-      const citaG = citacaoDoContexto(msg, data, jid);
-      let citaGDe = '';
-      if (citaG.id) {
-        const og = db.prepare('SELECT remetente FROM grupo_mensagens WHERE wa_msg_id = ? LIMIT 1').get(citaG.id);
-        if (og) citaGDe = og.remetente === 'me' ? 'out' : 'in';
-      }
-
-      if (texto || tipo !== 'text') {
-        // grava primeiro (a repetição que chega em seguida já é reconhecida) e baixa o arquivo depois
-        const nova = db.prepare("INSERT INTO grupo_mensagens (grupo_id, remetente, remetente_nome, texto, tipo, wa_msg_id, citacao_texto, citacao_de, citacao_wa_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-          grupo.id, remetente, remetenteNome, texto || `[${tipo}]`, tipo, waId, citaG.texto || '', citaGDe, citaG.id || ''
-        );
-        if (tipo !== 'text') {
-          try {
-            const mediaData = await evoDownloadMedia(key);
-            if (mediaData && mediaData.base64) {
-              const mime = mediaData.mimetype || '';
-              const ext = mime.includes('jpeg') || mime.includes('jpg') ? '.jpg' : mime.includes('png') ? '.png' : mime.includes('webp') ? '.webp'
-                : mime.includes('mp4') ? '.mp4' : mime.includes('ogg') || mime.includes('opus') ? '.ogg' : mime.includes('pdf') ? '.pdf' : mime.includes('mp3') ? '.mp3'
-                : (doc && /\.[a-z0-9]{2,5}$/i.test(String(doc.fileName || '')) ? String(doc.fileName).slice(String(doc.fileName).lastIndexOf('.')).toLowerCase() : '');
-              const filename = `${Date.now()}_g${grupo.id}${ext}`;
-              fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(mediaData.base64, 'base64'));
-              db.prepare('UPDATE grupo_mensagens SET media_path = ? WHERE id = ?').run(filename, nova.lastInsertRowid);
-            }
-          } catch (e) { console.error('[CRM] Erro baixando arquivo de grupo:', e.message); }
-        }
-        // a recepção escreveu no grupo pelo celular: quem escreveu, leu (mensagem de robô pela API chega como send.message e não conta)
-        if (key.fromMe && (event === 'messages.upsert' || event === 'MESSAGES_UPSERT')) {
-          db.prepare("UPDATE grupos SET last_read_at = datetime('now','localtime') WHERE id = ?").run(grupo.id);
-        }
-      }
-      return sendJSON(res, 200, { ok: true });
-    }
-
-    const isFromMe = !!key.fromMe;
-
-    const phone = phoneFromJid(jid);
-    if (!phone) return sendJSON(res, 200, { ok: true, ignored: true });
-
-    // ─── Comandos do follow-up ─────────────────────────────────────────────
-    // A recepção responde na conversa "Prevenvets" (o número que manda os
-    // alertas). Pra instância da recepção isso é uma mensagem ENVIADA pro
-    // prevenvet — e cai aqui. Ex.: "perdeu 123", "ok 123", "fechou 123".
-    if (isFromMe && phone.replace(/\D/g, '').endsWith(alerta.ORIGEM.slice(-11))) {
-      const msgCmd = data.message || {};
-      const txt = (msgCmd.conversation || (msgCmd.extendedTextMessage && msgCmd.extendedTextMessage.text) || '').trim();
-      const m = txt.match(/^(marcou|desistiu|desistiram|perdeu|perdido|ok|feito|resolvido|fechou|agendou|ignorar|ajuda|\?)\s*#?(\d+)?\s*$/i);
-      if (m) {
-        const resposta = followup.executarComando(db, m[1].toLowerCase(), m[2] ? Number(m[2]) : null);
-        if (resposta) alerta.enviarRecepcao(resposta);
-        return sendJSON(res, 200, { ok: true, comando: m[1] });
-      }
-    }
-
-    // Handle status updates (no actual message content)
-    const status = data.status || '';
-    if (!data.message && (status === 'SERVER_ACK' || status === 'DELIVERY_ACK' || status === 'READ' || status === 'PLAYED')) {
-      // If I read a message on real WhatsApp, mark as read in CRM too
-      if (status === 'READ' && !isFromMe) {
-        const contato = db.prepare('SELECT id FROM contatos WHERE telefone = ?').get(phone);
-        if (contato) {
-          db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(contato.id);
-          console.log(`[CRM] WhatsApp read sync: ${phone} marked as read`);
-        }
-      }
-      return sendJSON(res, 200, { ok: true, ignored: true });
-    }
-
-    // Extract message text
-    const msg = data.message || {};
-    // cartão de contato (um ou vários) vira mensagem do tipo 'contact', com os contatos guardados em "cartao"
-    const cartoes = cartoesDaMensagem(msg);
-    const texto = msg.conversation || (msg.extendedTextMessage && msg.extendedTextMessage.text) ||
-      (cartoes.length ? 'Contato: ' + cartoes.map(c => c.nome || telefoneBonito(c.telefone)).join(', ') : '');
-    console.log(`[CRM] Msg ${isFromMe ? 'OUT' : 'IN'} ${phone}: texto="${texto.substring(0,50)}" tipo=${Object.keys(msg).join(',')}`);
-    const tipo = msg.audioMessage ? 'audio' : msg.imageMessage ? 'image' : msg.documentMessage ? 'document' : msg.stickerMessage ? 'sticker' : cartoes.length ? 'contact' : 'text';
-
-    // Extract push name (contact name from WhatsApp)
-    const pushName = data.pushName || '';
-
-    // Upsert contato
-    let contato = db.prepare('SELECT * FROM contatos WHERE telefone = ?').get(phone);
-    if (!contato) {
-      if (isFromMe) {
-        // Create contact from outgoing message (sent via native WhatsApp)
-        const result = db.prepare(`
-          INSERT INTO contatos (nome, telefone, etapa, last_message_at, updated_at)
-          VALUES (?, ?, 'novo', datetime('now','localtime'), datetime('now','localtime'))
-        `).run(nomeDaAgenda(phone), phone);
-        contato = { id: result.lastInsertRowid, etapa: 'novo' };
-        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, '', 'novo')").run(contato.id);
-        console.log(`[CRM] Novo contato (fromMe): ${phone}`);
-      } else {
-        const fotoUrl = await evoFetchProfilePic(phone);
-        const result = db.prepare(`
-          INSERT INTO contatos (nome, telefone, etapa, foto_url, last_message_at, updated_at)
-          VALUES (?, ?, 'novo', ?, datetime('now','localtime'), datetime('now','localtime'))
-        `).run(nomeDaAgenda(phone) || pushName, phone, fotoUrl);
-        contato = { id: result.lastInsertRowid, etapa: 'novo' };
-        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, '', 'novo')").run(contato.id);
-        console.log(`[CRM] Novo contato: ${pushName} (${phone}) foto: ${fotoUrl ? 'sim' : 'nao'}`);
-      }
-    } else {
-      // Update name if we got a pushName and contact has no name
-      if (pushName && !contato.nome && !isFromMe) {
-        db.prepare('UPDATE contatos SET nome = ? WHERE id = ?').run(pushName, contato.id);
-      }
-      // If contact was finalized for 2+ days and THEY sent a message, move back to "novo"
-      if (!isFromMe && contato.etapa === 'finalizado' && contato.updated_at < new Date(Date.now() - 2 * 86400000).toISOString().replace('T', ' ').slice(0, 19)) {
-        db.prepare("UPDATE contatos SET etapa = 'novo', last_message_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
-        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, 'finalizado', 'novo')").run(contato.id);
-        console.log(`[CRM] Contato ${contato.nome || phone} voltou de finalizado para novo`);
-      } else {
-        db.prepare("UPDATE contatos SET last_message_at = datetime('now','localtime'), updated_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
-      }
-      // If I'm sending a message, mark as read (I must have read the conversation)
-      // ...menos quando quem "respondeu" foi um robô: a Athena ou a saudação automática. Aí ninguém leu ainda.
-      const respostaAutomatica = texto.includes(followup.ATHENA_MARCA) || texto.includes(followup.SAUDACAO_MARCA);
-      if (isFromMe && respostaAutomatica) {
-        console.log(`[CRM] resposta automática para ${phone}: a conversa continua como não lida`);
-      } else if (isFromMe) {
-        db.prepare("UPDATE contatos SET last_read_at = datetime('now','localtime'), manual_unread = 0 WHERE id = ?").run(contato.id);
-        console.log(`[CRM] fromMe read sync: ${phone} marked as read`);
-      }
-    }
-
-    // Save incoming message + download media
-    if (texto || tipo !== 'text') {
-      let mediaPath = '';
-      if (tipo !== 'text' && tipo !== 'contact') {
-        try {
-          const mediaData = await evoDownloadMedia(key);
-          if (mediaData && mediaData.base64) {
-            const mime = mediaData.mimetype || '';
-            const ext = mime.includes('jpeg') || mime.includes('jpg') ? '.jpg'
-              : mime.includes('png') ? '.png'
-              : mime.includes('webp') ? '.webp'
-              : mime.includes('mp4') ? '.mp4'
-              : mime.includes('ogg') || mime.includes('opus') ? '.ogg'
-              : mime.includes('pdf') ? '.pdf'
-              : mime.includes('mp3') ? '.mp3'
-              : '';
-            const filename = `${Date.now()}_${contato.id}${ext}`;
-            fs.writeFileSync(path.join(MEDIA_DIR, filename), Buffer.from(mediaData.base64, 'base64'));
-            mediaPath = filename;
-            console.log(`[CRM] Media salva: ${filename} (${tipo})`);
-          }
-        } catch (e) { console.error('[CRM] Erro download media:', e.message); }
-      }
-
-      const caption = tipo === 'image' && msg.imageMessage && msg.imageMessage.caption ? msg.imageMessage.caption : '';
-      const direcao = isFromMe ? 'out' : 'in';
-      const waMsgId = (key && key.id) || '';
-      const waJid = jid || '';
-      const docName = (tipo === 'document' && msg.documentMessage && msg.documentMessage.fileName) ? String(msg.documentMessage.fileName) : '';
-      const docCaption = (tipo === 'document' && msg.documentMessage && msg.documentMessage.caption) ? String(msg.documentMessage.caption) : '';
-      const cita = citacaoDoContexto(msg, data, jid);
-      db.prepare("INSERT INTO mensagens (contato_id, direcao, texto, tipo, media_path, wa_msg_id, wa_remote_jid, citacao_texto, citacao_de) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
-        contato.id, direcao, texto || caption || [docName, docCaption].filter(Boolean).join('\n') || `[${tipo}]`, tipo, mediaPath, waMsgId, waJid, cita.texto, cita.de
-      );
-      if (cartoes.length && waMsgId) db.prepare('UPDATE mensagens SET cartao = ? WHERE wa_msg_id = ?').run(JSON.stringify(cartoes), waMsgId);
-      if (cita.id && waMsgId) db.prepare('UPDATE mensagens SET citacao_wa_id = ? WHERE wa_msg_id = ?').run(cita.id, waMsgId);
-      // mensagem com link (pedido no Adobe, LoopVet…): busca a prévia em segundo plano
-      if (tipo === 'text' && waMsgId && /https?:\/\//.test(texto)) {
-        try { const nv = db.prepare('SELECT id FROM mensagens WHERE wa_msg_id = ?').get(waMsgId); if (nv) agendarPrevia(nv.id, texto); } catch (e) {}
-      }
-      // De onde o cliente veio (anúncio Meta, Google, direto) — só leitura das primeiras mensagens dele.
-      if (!isFromMe) { try { origem.classificar(db, contato.id, texto || caption); } catch (e) { console.error('[ORIGEM]', e.message); } }
-      // A recepção escreveu para um orçamento parado (🟡/⚪)? Conta como retomada (1ª, 2ª ou última).
-      else { try { retomada.registrarSeRetomada(db, contato.id, texto || caption || docName || docCaption, tipo); } catch (e) { console.error('[RETOMADA]', e.message); } }
-      // Cliente mandou foto, PDF ou áudio: lê/transcreve em seguida (pedido do veterinário, comprovante, fala). Só transcreve.
-      if (!isFromMe && mediaPath && (tipo === 'image' || tipo === 'document' || tipo === 'audio')) { try { leitor.aoReceber(db); } catch (e) { console.error('[LEITOR]', e.message); } }
-    }
-
-    // ─── Auto-move to Orçamento when PDF sent outgoing ───────────────────
-    if (isFromMe && tipo === 'document') {
-      // É orçamento mesmo? O gerador nomeia "Orçamento Tomografia - Pet (Tutor).pdf".
-      // Se o nome não disser, vale o que o time escreveu nos últimos 10 min
-      // ("segue o orçamento..."). Nota fiscal pro contador NÃO é orçamento.
-      const dn = (msg.documentMessage && msg.documentMessage.fileName) ? String(msg.documentMessage.fileName) : '';
-      const dc = (msg.documentMessage && msg.documentMessage.caption) ? String(msg.documentMessage.caption) : '';
-      const reOrc = /or[cç]amento/i;
-      const textoRecente = db.prepare("SELECT texto FROM mensagens WHERE contato_id = ? AND direcao = 'out' AND tipo = 'text' AND created_at >= datetime('now','localtime','-10 minutes') ORDER BY id DESC LIMIT 3").all(contato.id).map(r => r.texto).filter(t => !String(t).includes(followup.ATHENA_MARCA)).join(' ');
-      const ehOrcamento = reOrc.test(dn) || reOrc.test(dc) || reOrc.test(textoRecente);
-
-      // Modalidade e pet saem do nome do arquivo, quando houver.
-      const modalidade = /tomograf/i.test(dn) ? 'TC' : /resson/i.test(dn) ? 'RM' : /radiograf|raio/i.test(dn) ? 'RX' : /ultrass/i.test(dn) ? 'US' : '';
-      const petMatch = dn.match(/-\s*([^()]+?)\s*\(/);
-      const petDoArquivo = petMatch ? petMatch[1].trim().replace(/\.pdf$/i, '') : '';
-
-      // Só 'novo'. Quem está em 'agendado' recebe PDF de LAUDO, não de orçamento.
-      const etapasAntes = ['novo'];
-      const currentEtapa = db.prepare('SELECT etapa, pet_nome FROM contatos WHERE id = ?').get(contato.id);
-      if (!ehOrcamento) {
-        console.log(`[CRM] PDF ignorado (não é orçamento): ${contato.nome || phone} "${dn.slice(0, 40)}"`);
-      } else if (currentEtapa && etapasAntes.includes(currentEtapa.etapa)) {
-        db.prepare("UPDATE contatos SET etapa = 'orcamento', orcamento_enviado_at = datetime('now','localtime'), orcamento_modalidade = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(modalidade, contato.id);
-        if (petDoArquivo && !currentEtapa.pet_nome) db.prepare("UPDATE contatos SET pet_nome = ? WHERE id = ?").run(petDoArquivo, contato.id);
-        db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'orcamento')").run(contato.id, currentEtapa.etapa);
-        console.log(`[CRM] Auto-move para Orçamento: ${contato.nome || phone} (${modalidade || 'PDF'}${petDoArquivo ? ' · ' + petDoArquivo : ''})`);
-      } else if (currentEtapa && currentEtapa.etapa === 'orcamento') {
-        // Orçamento novo pra quem já estava em orçamento: renova o relógio e a modalidade.
-        db.prepare("UPDATE contatos SET orcamento_enviado_at = datetime('now','localtime'), orcamento_modalidade = COALESCE(NULLIF(?, ''), orcamento_modalidade), updated_at = datetime('now','localtime') WHERE id = ?").run(modalidade, contato.id);
-        if (petDoArquivo && !currentEtapa.pet_nome) db.prepare("UPDATE contatos SET pet_nome = ? WHERE id = ?").run(petDoArquivo, contato.id);
-      } else if (currentEtapa && currentEtapa.etapa === 'orcamento' && !db.prepare('SELECT orcamento_enviado_at FROM contatos WHERE id = ?').get(contato.id).orcamento_enviado_at) {
-        // Already in orcamento but no timestamp — set it now
-        db.prepare("UPDATE contatos SET orcamento_enviado_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
-      }
-    }
-
-    // ─── Auto-move to Agendado when scheduling message sent ──────────────
-    if (isFromMe && tipo === 'text' && texto && !texto.includes(followup.ATHENA_MARCA)) {
-      const lower = texto.toLowerCase();
-      const agendaKeywords = ['agendado', 'agendamos', 'agendada', 'confirmado para', 'confirmada para', 'marcado para', 'marcada para', 'exame agendado', 'exame marcado'];
-      // "marcado" / "reservado" / "confirmado" secos também fecham (confirmação curta do time).
-      const hasAgenda = agendaKeywords.some(kw => lower.includes(kw)) || followup.ehConfirmacaoCurta(texto);
-      if (hasAgenda) {
-        const currentEtapa = db.prepare('SELECT etapa FROM contatos WHERE id = ?').get(contato.id);
-        const etapasAntes = ['novo', 'orcamento'];
-        if (currentEtapa && etapasAntes.includes(currentEtapa.etapa)) {
-          db.prepare("UPDATE contatos SET etapa = 'agendado', updated_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
-          db.prepare("INSERT INTO etapa_historico (contato_id, etapa_de, etapa_para) VALUES (?, ?, 'agendado')").run(contato.id, currentEtapa.etapa);
-          console.log(`[CRM] Auto-move para Agendado: ${contato.nome || phone} (mensagem: "${texto.substring(0, 40)}")`);
-        }
-        // Extrair nome do animal entre parênteses na mensagem de agendamento
-        const parenMatch = texto.match(/\(([^)]+)\)/);
-        if (parenMatch) {
-          const petNome = parenMatch[1].trim();
-          db.prepare("UPDATE contatos SET pet_nome = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(petNome, contato.id);
-          console.log(`[CRM] Pet nome extraído: "${petNome}" para ${contato.nome || phone}`);
-        }
-      }
-    }
-
-    // ─── Track last client response (for follow-up) ─────────────────────
-    if (!isFromMe) {
-      db.prepare("UPDATE contatos SET ultima_resposta_cliente_at = datetime('now','localtime') WHERE id = ?").run(contato.id);
-    }
-
-    return sendJSON(res, 200, { ok: true });
+  // ─── WhatsApp da recepção: estado, QR para religar, sincronização (22/11/2026) ───────────────────────────
+  if (method === 'GET' && pathname === '/api/whatsapp/estado') {
+    return sendJSON(res, 200, await conexao.estado());
+  }
+  if (method === 'GET' && pathname === '/api/whatsapp/qr') {
+    try { return sendJSON(res, 200, await conexao.gerarQr(urlObj.searchParams.get('numero') || '')); }
+    catch (e) { return sendJSON(res, 502, { error: e.message }); }
   }
 
   // ─── API: Grupos ───────────────────────────────────────────────────────────
@@ -2650,6 +2689,8 @@ async function handleRequest(req, res) {
 }
 
 // ─── HTTP Server ───────────────────────────────────────────────────────────────
+conexao.iniciar({ db, evoBase: EVO_BASE, evoKey: EVO_KEY, instancia: EVO_INSTANCE, processarMensagem });
+
 const server = http.createServer(async (req, res) => {
   try {
     await handleRequest(req, res);

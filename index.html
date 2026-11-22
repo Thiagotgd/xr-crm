@@ -1119,6 +1119,7 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
     <div class="config-tabs">
       <button class="config-tab active" onclick="switchConfigTab('etiquetas')">Etiquetas</button>
       <button class="config-tab" onclick="switchConfigTab('msgsrapidas')">Msgs Rápidas</button>
+      <button class="config-tab" id="configTabWhatsapp" onclick="switchConfigTab('whatsapp')">WhatsApp</button>
     </div>
 
     <!-- Etiquetas panel -->
@@ -1138,6 +1139,22 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
         <input type="text" id="newMsgRapidaTitulo" placeholder="Título (ex: Saudação)" style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin-bottom:6px">
         <textarea id="newMsgRapidaTexto" placeholder="Texto da mensagem..." style="width:100%;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;min-height:60px;resize:vertical"></textarea>
         <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="createMsgRapida()">Criar</button>
+      </div>
+    </div>
+
+    <!-- WhatsApp panel (22/11/2026): estado da ligação, QR para religar, sincronização -->
+    <div class="config-panel" id="configWhatsapp">
+      <div id="waEstado" style="padding:10px 12px;border-radius:10px;background:var(--bg);border:1px solid var(--border);font-size:13px;line-height:1.5">Consultando…</div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" id="waBtnQr" onclick="waMostrarQr(false)">Mostrar QR code</button>
+        <button class="btn btn-ghost btn-sm" id="waBtnCodigo" onclick="waMostrarQr(true)">Código por número</button>
+        <button class="btn btn-ghost btn-sm" onclick="waAtualizar(true)">Atualizar</button>
+      </div>
+      <div id="waQrArea" style="display:none;margin-top:12px;text-align:center"></div>
+      <div id="waSync" style="margin-top:12px;font-size:13px;color:var(--text-muted);line-height:1.5"></div>
+      <div style="margin-top:12px;font-size:12px;color:var(--text-muted);line-height:1.5">
+        Quando o WhatsApp da recepção desconecta deste CRM, religue por aqui: no celular da recepção, abra o WhatsApp Business → <b>⋮</b> (ou Configurações) → <b>Aparelhos conectados</b> → <b>Conectar aparelho</b> e aponte a câmera para o QR code. Ou use <b>Conectar com número de telefone</b> e digite o código.
+        Ao reconectar, o WhatsApp manda o histórico recente e o CRM grava sozinho o que ficou de fora, na ordem e com a hora certa. Conversa que a recepção já respondeu pelo celular fica lida até a resposta; o que o cliente mandou depois continua não lido.
       </div>
     </div>
 
@@ -2036,18 +2053,98 @@ function openConfig() {
 }
 function closeConfig() {
   document.getElementById('configModal').classList.remove('show');
+  waParar();
 }
 function switchConfigTab(tab) {
   document.querySelectorAll('.config-tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.config-panel').forEach(p => p.classList.remove('active'));
-  if (tab === 'etiquetas') {
-    document.querySelector('.config-tab:nth-child(1)').classList.add('active');
-    document.getElementById('configEtiquetas').classList.add('active');
-  } else {
-    document.querySelector('.config-tab:nth-child(2)').classList.add('active');
-    document.getElementById('configMsgsRapidas').classList.add('active');
+  const idx = tab === 'etiquetas' ? 1 : tab === 'msgsrapidas' ? 2 : 3;
+  const painel = tab === 'etiquetas' ? 'configEtiquetas' : tab === 'msgsrapidas' ? 'configMsgsRapidas' : 'configWhatsapp';
+  document.querySelector('.config-tab:nth-child(' + idx + ')').classList.add('active');
+  document.getElementById(painel).classList.add('active');
+  if (tab === 'whatsapp') waAbrir(); else waParar();
+}
+
+// ─── WhatsApp da recepção: estado, QR para religar, sincronização (22/11/2026) ───────────────────────────────
+let waTimerEstado = null, waTimerQr = null, waQrVezes = 0, waUltimoEstado = '';
+function waAbrir() { waAtualizar(true); waTimerEstado = setInterval(() => waAtualizar(false), 5000); }
+function waParar() {
+  if (waTimerEstado) clearInterval(waTimerEstado); waTimerEstado = null;
+  if (waTimerQr) clearTimeout(waTimerQr); waTimerQr = null; waQrVezes = 0;
+  const area = document.getElementById('waQrArea'); if (area) { area.style.display = 'none'; area.innerHTML = ''; }
+}
+function waData(t) { return t ? String(t).replace('T', ' ').slice(0, 16).split(' ').reverse().join(' ').replace(/(\d{4})-(\d{2})-(\d{2})/, '$3/$2/$1') : '—'; }
+async function waAtualizar(mostrarErro) {
+  try {
+    const e = await api('GET', '/api/whatsapp/estado');
+    waUltimoEstado = e.estado;
+    if (e.numero) waNumeroRecepcao = e.numero;
+    const aberta = e.estado === 'open';
+    const cor = aberta ? '#22c55e' : e.estado === 'connecting' ? '#f59e0b' : '#ef4444';
+    const nome = aberta ? 'Conectado' : e.estado === 'connecting' ? 'Conectando…' : e.estado === 'close' ? 'DESCONECTADO' : 'Evolution fora do ar';
+    let html = '<div style="display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600"><span style="width:10px;height:10px;border-radius:50%;background:' + cor + ';display:inline-block"></span>' + nome + '</div>';
+    if (!aberta && e.desconectouEm) html += '<div>Desligou em ' + waData(new Date(e.desconectouEm).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' })) + (e.motivo ? ' (código ' + esc(String(e.motivo)) + (String(e.motivo) === '401' ? ': o WhatsApp tirou este aparelho; precisa ler o QR de novo' : '') + ')' : '') + '</div>';
+    html += '<div>Última mensagem recebida: <b>' + waData(e.ultimaRecebida) + '</b> · enviada: ' + waData(e.ultimaEnviada) + '</div>';
+    if (e.evolution && e.evolution !== 'ok') html += '<div style="color:#ef4444">' + esc(e.evolution) + '</div>';
+    document.getElementById('waEstado').innerHTML = html;
+    const btn = document.getElementById('waBtnQr'); const btn2 = document.getElementById('waBtnCodigo');
+    btn.style.display = aberta ? 'none' : ''; btn2.style.display = aberta ? 'none' : '';
+    if (aberta && waTimerQr) { clearTimeout(waTimerQr); waTimerQr = null; document.getElementById('waQrArea').innerHTML = '<div style="color:#22c55e;font-weight:600">✅ WhatsApp conectado!</div>'; }
+    const sy = e.sync || {};
+    let st = '';
+    if (sy.emAndamento) st = '⏳ Sincronizando o histórico… ' + sy.gravadas + ' mensagens novas gravadas até agora' + (sy.naFila ? ' (' + sy.naFila + ' na fila)' : '') + (sy.progresso != null ? ' · ' + sy.progresso + '%' : '');
+    else if (sy.lotes) st = '✅ Sincronização: ' + sy.gravadas + ' mensagens novas em ' + sy.conversas + ' conversas (' + sy.ignoradas + ' o CRM já tinha' + (sy.foraDaJanela ? ', ' + sy.foraDaJanela + ' mais antigas que 14 dias' : '') + (sy.erros ? ', ' + sy.erros + ' erros' : '') + ') · ' + waData(sy.inicio) + ' → ' + waData(sy.fim);
+    else if (aberta) st = 'Nenhuma sincronização desde que o CRM subiu. Ela acontece sozinha quando o WhatsApp reconecta.';
+    else st = 'Ao reconectar, o histórico que ficou de fora entra sozinho (aparece aqui).';
+    document.getElementById('waSync').textContent = st;
+  } catch (err) {
+    if (mostrarErro) document.getElementById('waEstado').innerHTML = '<span style="color:#ef4444">Não consegui consultar: ' + esc(err.message) + '</span>';
   }
 }
+async function waMostrarQr(porNumero) {
+  const area = document.getElementById('waQrArea');
+  area.style.display = 'block';
+  area.innerHTML = '<div style="color:var(--text-muted)">Pedindo o ' + (porNumero ? 'código' : 'QR code') + ' à Evolution…</div>';
+  if (waTimerQr) { clearTimeout(waTimerQr); waTimerQr = null; }
+  waQrVezes = 0;
+  waBuscarQr(porNumero);
+}
+async function waBuscarQr(porNumero) {
+  const area = document.getElementById('waQrArea');
+  try {
+    let numero = '';
+    if (porNumero) {
+      numero = (waNumeroRecepcao || '').replace(/\D/g, '');
+      if (!numero) { numero = (prompt('Número do WhatsApp da recepção, com DDD (só dígitos):', '5531') || '').replace(/\D/g, ''); if (!numero) { area.style.display = 'none'; return; } }
+    }
+    const q = await api('GET', '/api/whatsapp/qr' + (numero ? '?numero=' + numero : ''));
+    if (q.conectado) { area.innerHTML = '<div style="color:#22c55e;font-weight:600">✅ WhatsApp já está conectado.</div>'; waAtualizar(false); return; }
+    if (q.erro) { area.innerHTML = '<div style="color:#ef4444">' + esc(q.erro) + '</div>'; return; }
+    waQrVezes++;
+    let html = '';
+    if (porNumero && q.pairingCode) {
+      html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px">No celular: Aparelhos conectados → Conectar aparelho → <b>Conectar com número de telefone</b> → digite:</div>';
+      html += '<div style="font-size:30px;font-weight:700;letter-spacing:4px;font-family:monospace">' + esc(String(q.pairingCode)) + '</div>';
+    } else if (q.base64) {
+      html += '<img src="' + q.base64 + '" alt="QR code" style="width:260px;height:260px;border-radius:12px;background:#fff;padding:8px">';
+    } else {
+      html += '<div style="color:#f59e0b">A Evolution ainda está preparando o QR. Tentando de novo…</div>';
+    }
+    html += '<div id="waQrConta" style="font-size:12px;color:var(--text-muted);margin-top:6px">renova sozinho em <span id="waQrSeg">25</span> s (' + waQrVezes + '/8)</div>';
+    area.innerHTML = html;
+    if (waQrVezes >= 8) { area.innerHTML += '<div style="margin-top:8px">Passou o tempo. Clique em <b>Mostrar QR code</b> de novo quando estiver com o celular em mãos.</div>'; return; }
+    let seg = 25;
+    const tick = () => {
+      seg--; const el = document.getElementById('waQrSeg'); if (el) el.textContent = seg;
+      if (waUltimoEstado === 'open') return;
+      if (seg <= 0) waBuscarQr(porNumero); else waTimerQr = setTimeout(tick, 1000);
+    };
+    waTimerQr = setTimeout(tick, 1000);
+  } catch (err) {
+    area.innerHTML = '<div style="color:#ef4444">' + esc(err.message) + '</div>';
+  }
+}
+let waNumeroRecepcao = '';
 
 // ─── Etiquetas: Manager ─────────────────────────────────────────────────────
 function openManageTags() { openConfig(); }

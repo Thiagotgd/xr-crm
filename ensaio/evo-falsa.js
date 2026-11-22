@@ -40,6 +40,20 @@ http.createServer((req, res) => {
         { remoteJid: '123456@lid', pushName: 'Zelda Do Grupo', type: 'group_member', isSaved: false, profilePicUrl: null },
       ]));
     }
+    // ligação do WhatsApp (22/11/2026): no ensaio a instância está sempre "fechada", desligada por 401, e o QR/código são de mentira
+    if (/\/instance\/connectionState\//.test(req.url)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ instance: { instanceName: 'ensaio', state: 'close' } }));
+    }
+    if (/\/instance\/fetchInstances/.test(req.url)) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify([{ id: 'x', name: 'ensaio', connectionStatus: 'close', ownerJid: '553182043117@s.whatsapp.net', disconnectionReasonCode: 401, disconnectionAt: '2026-11-21T11:34:35.302Z' }]));
+    }
+    if (/\/instance\/connect\//.test(req.url)) {
+      const porNumero = /number=/.test(req.url);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ pairingCode: porNumero ? 'ENSA-IO01' : null, code: '2@ensaio', base64: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', count: 1 }));
+    }
     // texto com a palavra FALHAR simula a Evolution recusando o envio
     if (/FALHAR/.test(String(j.text || j.caption || ''))) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
