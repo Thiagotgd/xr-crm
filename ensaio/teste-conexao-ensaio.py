@@ -119,6 +119,38 @@ time.sleep(2)
 sy = req('GET', '/api/whatsapp/estado').get('sync', {})
 ok(sy.get('erros') == 0, 'sem erro no lote do comando', sy.get('ultimoErro'))
 
+print('8) identificador @lid (histórico com remoteJidAlt cai no contato do telefone)')
+LID1 = '777000111222333'; LID2 = '777000444555666'
+base = req('GET', '/api/whatsapp/estado').get('lidPendentes') or 0  # a cópia pode já ter contatos @lid da produção
+m8 = msg(81, False, 'mensagem com lid e telefone junto (ensaio)', agora - 30)
+m8['key']['remoteJid'] = LID1 + '@lid'; m8['key']['remoteJidAlt'] = TEL + '@s.whatsapp.net'; m8['key']['addressingMode'] = 'lid'
+r = req('POST', '/webhook/evolution', {'event': 'messages.set', 'instance': 'ensaio', 'data': [m8]})
+time.sleep(2)
+c8 = req('GET', '/api/contato/%s?visto=0' % cid)
+ok(any(m['texto'].startswith('mensagem com lid e telefone') for m in c8.get('mensagens', [])), 'caiu no contato do telefone', len(c8.get('mensagens', [])))
+e8 = req('GET', '/api/whatsapp/estado')
+ok(e8.get('lidPendentes') == base, 'nenhum contato @lid pendente a mais', (e8.get('lidPendentes'), base))
+
+print('9) @lid sem tradução vira contato provisório e depois é fundido pelo mapa')
+m9 = msg(91, False, 'mensagem só com lid (ensaio)', agora - 20)
+m9['key']['remoteJid'] = LID2 + '@lid'
+r = req('POST', '/webhook/evolution', {'event': 'messages.set', 'instance': 'ensaio', 'data': [m9]})
+time.sleep(2)
+e9 = req('GET', '/api/whatsapp/estado')
+ok(e9.get('lidPendentes') == base + 1, 'um contato @lid pendente a mais', (e9.get('lidPendentes'), base))
+import os
+mapa_arq = os.environ.get('LID_MAPA', '')
+if mapa_arq:
+    with open(mapa_arq, 'w') as f: json.dump({LID2: TEL}, f)
+    r = req('POST', '/api/whatsapp/lid', {})
+    ok(r.get('fundidos') == 1 and r.get('pendentes') == base, 'fundido pelo arquivo lid-mapa.json', {k: r.get(k) for k in ('fundidos', 'pendentes', 'renomeados')})
+    c9 = req('GET', '/api/contato/%s?visto=0' % cid)
+    ok(any(m['texto'].startswith('mensagem só com lid') for m in c9.get('mensagens', [])), 'mensagem passou para o contato do telefone', len(c9.get('mensagens', [])))
+    e9b = req('GET', '/api/whatsapp/estado')
+    ok(e9b.get('lidPendentes') == base, 'sem pendentes a mais depois da fusão', (e9b.get('lidPendentes'), base))
+else:
+    print('  (LID_MAPA não informado: pulei a fusão pelo arquivo)')
+
 print()
 print('FALHAS:', len(falhas)) if falhas else print('TUDO OK')
 for f in falhas: print(' -', f)

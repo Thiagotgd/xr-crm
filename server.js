@@ -15,6 +15,7 @@ const retomada = require('./retomada');
 const sombra = require('./sombra');
 const leitor = require('./leitor');
 const conexao = require('./conexao');
+const lid = require('./lid');
 
 const PORT = process.env.PORT || 8095;
 const EVO_BASE = process.env.EVO_BASE || 'http://172.18.0.1:8085';
@@ -977,8 +978,10 @@ async function processarMensagem(data, event, opcoes) {
 
     const isFromMe = !!key.fromMe;
 
-    const phone = phoneFromJid(jid);
+    // telefone pela chave: traduz o @lid (remoteJidAlt, tabela ou arquivo); sem tradução fica "...@lid" e o lid.fundir() acerta depois
+    const phone = lid.resolver(key) || phoneFromJid(jid);
     if (!phone) return ({ ok: true, ignored: true });
+    if (phone.endsWith('@lid')) console.log(`[LID] sem tradução ainda: ${phone}`);
 
     // ─── Comandos do follow-up ─────────────────────────────────────────────
     // A recepção responde na conversa "Prevenvets" (o número que manda os
@@ -1746,8 +1749,9 @@ async function handleRequest(req, res) {
         // fromMe=false + READ = alguém da recepção leu a mensagem do cliente em outro aparelho. Acha a mensagem
         // pelo identificador e marca a conversa como lida ATÉ essa mensagem (o que chegou depois continua não lido).
         if (upd && upd.keyId && upd.fromMe === false && (upd.status === 'READ' || upd.status === 'PLAYED')) {
-          const lida = db.prepare("SELECT contato_id, created_at FROM mensagens WHERE wa_msg_id = ? AND direcao = 'in' LIMIT 1").get(String(upd.keyId));
+          const lida = db.prepare("SELECT m.contato_id, m.created_at, c.telefone FROM mensagens m JOIN contatos c ON c.id = m.contato_id WHERE m.wa_msg_id = ? AND m.direcao = 'in' LIMIT 1").get(String(upd.keyId));
           if (lida) {
+            if (lid.soLid(upd.remoteJid) && /^\d+$/.test(String(lida.telefone))) lid.aprender(upd.remoteJid, lida.telefone, 'recibo');
             db.prepare("UPDATE contatos SET last_read_at = ?, manual_unread = 0 WHERE id = ? AND COALESCE(NULLIF(last_read_at,''), '1970-01-01') < ?").run(lida.created_at, lida.contato_id, lida.created_at);
           }
           continue;
@@ -1805,7 +1809,15 @@ async function handleRequest(req, res) {
 
   // ─── WhatsApp da recepção: estado, QR para religar, sincronização (22/11/2026) ───────────────────────────
   if (method === 'GET' && pathname === '/api/whatsapp/estado') {
-    return sendJSON(res, 200, await conexao.estado());
+    const e = await conexao.estado();
+    e.lidPendentes = lid.pendentes().length; // contatos "@lid" ainda sem tradução para telefone
+    return sendJSON(res, 200, e);
+  }
+  // Funde agora os contatos "@lid" no contato do telefone e aplica a regra de lidos (o mesmo que a rotina de 10 min faz)
+  if (method === 'POST' && pathname === '/api/whatsapp/lid') {
+    const r = lid.fundir();
+    try { rotinaLidEContatos(); } catch {}
+    return sendJSON(res, 200, r);
   }
   if (method === 'GET' && pathname === '/api/whatsapp/qr') {
     try { return sendJSON(res, 200, await conexao.gerarQr(urlObj.searchParams.get('numero') || '')); }
@@ -2690,6 +2702,21 @@ async function handleRequest(req, res) {
 
 // ─── HTTP Server ───────────────────────────────────────────────────────────────
 conexao.iniciar({ db, evoBase: EVO_BASE, evoKey: EVO_KEY, instancia: EVO_INSTANCE, processarMensagem, marcas: [followup.ATHENA_MARCA, followup.SAUDACAO_MARCA] });
+lid.iniciar({ db });
+// Rotina de 10 em 10 min (e ao subir): funde contatos "@lid" no contato do telefone e marca como lida a conversa que a
+// recepção já respondeu pelo celular (ou em que só veio cortesia depois). Não usa a regra de "vista em horário de
+// recepção": essa só vale na sincronização, quando o CRM esteve fora.
+function rotinaLidEContatos() {
+  try { lid.fundir(); } catch (e) { console.error('[LID] erro ao fundir:', e.message); }
+  try {
+    const ate = new Date().toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).replace('T', ' ').slice(0, 19);
+    const desde = new Date(Date.now() - 7 * 86400000).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' }).replace('T', ' ').slice(0, 19);
+    const r = conexao.aplicarLidos({ desde, ate, semVista: true, silencioso: true });
+    if (r.marcadas) console.log(`[CONEXAO] rotina de lidos: ${r.marcadas} conversas respondidas pelo celular marcadas como lidas`);
+  } catch (e) { console.error('[CONEXAO] erro na rotina de lidos:', e.message); }
+}
+setTimeout(rotinaLidEContatos, 15000);
+setInterval(rotinaLidEContatos, 10 * 60 * 1000);
 
 const server = http.createServer(async (req, res) => {
   try {

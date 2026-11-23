@@ -184,9 +184,30 @@ async function processarFila() {
 //   (b) depois da resposta só veio cortesia curta ("obrigada", "indo", sem pergunta); ou
 //   (c) ela chegou em horário de recepção (seg-sex 8:30-18h, sáb 8:30-13h) pelo menos 30 min antes do fim da
 //       sincronização: o celular estava funcionando e a equipe atendeu por ele enquanto o CRM estava fora.
-// O que chegou fora do horário (noite, fim de semana) e não teve resposta humana depois continua NÃO LIDO.
-// Equipe/internos ficam de fora. Devolve o que fez; com simular=true só conta.
+// A (c) conta o TEMPO DE RECEPÇÃO depois da mensagem: 30 min de expediente (seg-sex 8:30-18h, sáb 8:30-13h) entre a
+// chegada dela e o fim da janela. Mensagem de domingo à noite conta como vista na segunda às 9h; a de 17:50 só no
+// dia seguinte. Com semVista=true a (c) não entra (rotina de 10 min com o CRM no ar: aí o recibo de leitura do
+// celular já chega pelo webhook). Equipe/internos e conversas marcadas à mão como não lidas ficam de fora.
+// Devolve o que fez; com simular=true só conta.
 const CORTESIA_MAX = 30;
+// Minutos de recepção entre dois instantes 'AAAA-MM-DD HH:MM:SS' (Brasília). Para ao chegar em 'bastam' minutos.
+function minutosRecepcao(aTexto, bTexto, bastam) {
+  const p = t => { const [d, h] = String(t).split(' '); const [y, m, dd] = d.split('-').map(Number); const [hh, mm, ss] = (h || '0:0:0').split(':').map(Number); return Date.UTC(y, m - 1, dd, hh || 0, mm || 0, ss || 0); };
+  const a = p(aTexto), b = p(bTexto);
+  if (!(b > a)) return 0;
+  let total = 0;
+  const d0 = new Date(a);
+  let dia = Date.UTC(d0.getUTCFullYear(), d0.getUTCMonth(), d0.getUTCDate());
+  for (let n = 0; n < 400 && dia <= b; n++, dia += 86400000) {
+    const sem = new Date(dia).getUTCDay();
+    if (sem === 0) continue;
+    const ini = dia + (8 * 60 + 30) * 60000, fim = dia + (sem === 6 ? 13 : 18) * 3600000;
+    const sobre = Math.min(fim, b) - Math.max(ini, a);
+    if (sobre > 0) total += sobre / 60000;
+    if (bastam && total >= bastam) break;
+  }
+  return total;
+}
 function horarioRecepcao(texto) {
   // texto 'AAAA-MM-DD HH:MM:SS' de Brasília; seg-sex 8:30-18h, sáb 8:30-13h, domingo nunca
   const [, h, m] = String(texto).match(/ (\d{2}):(\d{2})/) || [];
@@ -204,9 +225,8 @@ function aplicarLidos(opcoes) {
   if (!desde || !ate) return { erro: 'faltou janela' };
   const marcas = (cfg.marcas || []).filter(Boolean);
   const automatica = t => marcas.some(m => String(t || '').includes(m));
-  const limiteVisto = new Date(ate.replace(' ', 'T') + '-03:00').getTime() - 30 * 60000;
   const contatos = db.prepare(`SELECT c.id, c.nome, c.telefone, COALESCE(c.last_read_at,'') lr FROM contatos c
-    WHERE COALESCE(c.equipe_xr,0) = 0 AND c.telefone NOT LIKE '%@%'
+    WHERE COALESCE(c.equipe_xr,0) = 0 AND c.telefone NOT LIKE '%@g.us' AND COALESCE(c.manual_unread,0) = 0
       AND EXISTS (SELECT 1 FROM mensagens m WHERE m.contato_id = c.id AND m.direcao = 'in' AND m.created_at >= ? AND m.created_at <= ?)`).all(desde, ate);
   const res = { conversas: contatos.length, marcadas: 0, mantidas: 0, semNaoLida: 0, simular: !!o.simular, detalhes: [] };
   const upd = db.prepare("UPDATE contatos SET last_read_at = MAX(COALESCE(last_read_at,''), ?), manual_unread = 0 WHERE id = ?");
@@ -218,20 +238,20 @@ function aplicarLidos(opcoes) {
     const ultResp = respostas.length ? respostas[respostas.length - 1].created_at : '';
     const depois = ultResp ? naoLidas.filter(m => m.created_at > ultResp) : naoLidas;
     const cortesia = m => m.tipo === 'text' && String(m.texto || '').trim().length <= CORTESIA_MAX && !/\?/.test(String(m.texto || ''));
-    const vistaNoCelular = m => horarioRecepcao(m.created_at) && new Date(m.created_at.replace(' ', 'T') + '-03:00').getTime() <= limiteVisto;
+    const vistaNoCelular = m => !o.semVista && minutosRecepcao(m.created_at, ate, 30) >= 30;
     const pendentes = depois.filter(m => !cortesia(m) && !vistaNoCelular(m));
     const ultima = msgs[msgs.length - 1].created_at;
     if (!pendentes.length) {
       if (!o.simular) upd.run(ultima, c.id);
       res.marcadas++;
-      res.detalhes.push({ contato: c.nome || c.telefone, acao: 'lida', ate: ultima, motivo: !depois.length ? 'respondida' : depois.every(cortesia) ? 'só cortesia depois' : 'vista no celular em horário de recepção' });
+      res.detalhes.push({ contato: c.nome || c.telefone, acao: 'lida', ate: ultima, motivo: !depois.length ? 'respondida' : depois.every(cortesia) ? 'só cortesia depois' : 'vista no celular (30 min de recepção depois dela)' });
     } else {
       res.mantidas++;
       res.detalhes.push({ contato: c.nome || c.telefone, acao: 'continua não lida', pendentes: pendentes.length, ultima: pendentes[pendentes.length - 1].created_at, texto: String(pendentes[pendentes.length - 1].texto || '').slice(0, 60) });
     }
   }
-  if (!o.simular) console.log(`[CONEXAO] lidos após sincronização (${desde} → ${ate}): ${res.marcadas} conversas marcadas como lidas, ${res.mantidas} continuam não lidas`);
+  if (!o.simular && !o.silencioso) console.log(`[CONEXAO] lidos após sincronização (${desde} → ${ate}): ${res.marcadas} conversas marcadas como lidas, ${res.mantidas} continuam não lidas`);
   return res;
 }
 
-module.exports = { iniciar, estado, gerarQr, receberLote, registrarConexao, resumoSync, textoDoTimestamp, aplicarLidos, horarioRecepcao, JANELA_DIAS };
+module.exports = { iniciar, estado, gerarQr, receberLote, registrarConexao, resumoSync, textoDoTimestamp, aplicarLidos, horarioRecepcao, minutosRecepcao, JANELA_DIAS };
