@@ -18,3 +18,15 @@ O resumo semanal do Telegram mostra as linhas dos últimos 7 dias. Este arquivo 
 - 2026-11-16: medicação de uso contínuo: sempre manter (Thiago). Ficha de cadastro: na chegada; link antes só quando o animal vem com motorista (Thiago).
 - 2026-11-16: ecocardiograma: no momento sem atendimento nas tardes de terça e quinta (Thiago). Coelho: não realizamos; outras espécies a equipe confirma.
 - 2026-11-16: painel neurológico (9 agentes no cão, 7 no gato) e prazos de líquor e painel, tirados do portfólio da Provet. Ponto de referência do endereço (Thiago).
+- 2026-11-23: bloco padrão dos pré-anestésicos logo após o PDF (eletro 130, sangue 340, "fazemos aqui no mesmo dia, gostaria de agendar?"); animal de 8 anos ou mais entra o combo eletro + eco R$ 340, que só vale se ainda não fez nenhum dos dois; se já fez o eletro, só o eco (250); se já fez o eco, só o eletro (130) (Thiago).
+- 2026-11-23: toda resposta com valor, preparo ou pagamento termina com "Gostaria de agendar? Qual dia seria melhor para você?"; horário concreto é da equipe.
+- 2026-11-23: não pedir de novo CPF, pedido ou resultados que o cliente já mandou na conversa.
+- 2026-11-23: mensagem vaga / "vim do anúncio ou do Google" = texto fixo de horário + urgência e depois "Me envia uma foto do pedido, por favor".
+- 2026-11-23: ultrassom: valor (R$ 180) sempre junto com o preparo e o convite para agendar; se a espécie não estiver clara, preparo com as duas opções (cão / gato), sem assumir.
+- 2026-11-23: laudo: nunca dar previsão de dia ou hora; dizer que está com a equipe de laudos e lembrar o prazo padrão; se o prazo venceu ou pediram o arquivo, consultar_laudo (Thiago).
+- 2026-11-23: raio-X de mais de uma região soma todas as projeções e usa a linha do total (nunca soma duas linhas); crânio informa a sedação pelo peso.
+- 2026-11-23: receita não é pedido de exame; pedir o encaminhamento, sem fixar projeções nem valor.
+- 2026-11-23: cancelamento ou desmarcação no dia do exame passa para uma pessoa, sem oferecer remarcação na hora (Thiago).
+- 2026-11-23: duração de TC/RM depende do exame (TC mais rápida que RM) e inclui o retorno anestésico; sem número fechado, a equipe informa no agendamento (Thiago; sai o "1 a 3 horas").
+- 2026-11-23: tipo de anestesia, se perguntarem: geral, multimodal, com manutenção inalatória; protocolo é do anestesista.
+- 2026-11-23: nunca sugerir, indicar ou escolher exame (sorologia, ultrassom gestacional, "melhor seria RM"); qual exame fazer é do veterinário (3 erros graves de 23/11).
