@@ -30,3 +30,4 @@ O resumo semanal do Telegram mostra as linhas dos últimos 7 dias. Este arquivo 
 - 2026-11-23: duração de TC/RM depende do exame (TC mais rápida que RM) e inclui o retorno anestésico; sem número fechado, a equipe informa no agendamento (Thiago; sai o "1 a 3 horas").
 - 2026-11-23: tipo de anestesia, se perguntarem: geral, multimodal, com manutenção inalatória; protocolo é do anestesista.
 - 2026-11-23: nunca sugerir, indicar ou escolher exame (sorologia, ultrassom gestacional, "melhor seria RM"); qual exame fazer é do veterinário (3 erros graves de 23/11).
+- 2026-11-23: duração: RM de 1 a 3 h no total (exame em si ~2 h depois que o animal entra, mais chegada, preparo e retorno anestésico); TC mais rápida (exame em si ~1 h) (Thiago).

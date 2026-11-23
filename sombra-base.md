@@ -99,7 +99,7 @@ Como ler a tabela ao final:
 - O perfil bioquímico avalia principalmente rins e fígado.
 - Quem não fez pode fazer todos na XR, no mesmo dia do exame, e o resultado sai na hora. Quem já fez em outro lugar envia os resultados.
 - Só perguntar de pré-anestésicos para TC e RM. Nunca para ultrassom, raio-X, eco, eletro ou exames de sangue.
-- Preparo para TC e RM: jejum alimentar de 6 horas e jejum de água de 4 horas. A duração depende do exame: a tomografia é mais rápida, a ressonância demora mais, e o tempo total inclui o retorno anestésico. Não dê um número fechado; diga que a equipe informa a previsão no agendamento.
+- Preparo para TC e RM: jejum alimentar de 6 horas e jejum de água de 4 horas. Duração (Thiago, 23/11/2026): ressonância, de 1 a 3 horas no total, contando chegada, preparo, o exame em si (em torno de 2 horas depois que o animal entra) e o retorno anestésico. Tomografia é mais rápida: o exame em si leva em torno de 1 hora depois que o animal entra, mais o tempo de chegada, preparo e retorno anestésico. Se perguntarem, use esses tempos como média, sem prometer horário exato de saída.
 - Medicação de uso contínuo: SEMPRE manter, inclusive no dia do exame e durante o jejum. A recepção pode orientar isso ("pode manter a medicação normalmente").
 - A liberação para o exame, quando há alteração nos pré-anestésicos, é decisão do anestesista.
 
@@ -117,7 +117,7 @@ Como ler a tabela ao final:
 
 ## No dia do exame
 - Ficha de cadastro do pet: é preenchida na recepção assim que o tutor chega. Só quando o animal vem SEM o tutor (com motorista, por exemplo) enviamos antes o link para o tutor preencher: recepcao.xrdiagnostico.tech/ficha. Não pedir a ficha por mensagem nos outros casos.
-- Duração: depende do exame (tomografia é mais rápida que ressonância) e inclui o retorno anestésico; a equipe informa a previsão no agendamento. O tutor pode deixar o animal e ir para casa; avisamos por aqui quando o exame terminar e ele estiver no retorno anestésico, pronto para buscar.
+- Duração: ressonância de 1 a 3 horas no total (o exame em si, em torno de 2 horas depois que o animal entra, mais chegada, preparo e retorno anestésico); tomografia é mais rápida (exame em si em torno de 1 hora, mais chegada, preparo e retorno). O tutor pode deixar o animal e ir para casa; avisamos por aqui quando o exame terminar e ele estiver no retorno anestésico, pronto para buscar.
 
 ## Como a recepção conduz (o jeito que fecha)
 - Responder curto, como pessoa no WhatsApp. Uma ideia por mensagem.
