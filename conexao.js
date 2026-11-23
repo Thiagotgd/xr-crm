@@ -21,7 +21,8 @@ let rodando = false;
 
 const sync = {
   emAndamento: false, lotes: 0, recebidas: 0, gravadas: 0, ignoradas: 0, foraDaJanela: 0, erros: 0,
-  contatos: new Set(), inicio: '', fim: '', progresso: null, ultimoLote: '', ultimoErro: ''
+  contatos: new Set(), inicio: '', fim: '', progresso: null, ultimoLote: '', ultimoErro: '',
+  desde: '', ate: '', lidas: 0, naoLidas: 0
 };
 let conexao = { estado: '', motivo: '', quando: '' }; // último connection.update visto pelo webhook
 
@@ -35,7 +36,7 @@ function textoDoTimestamp(ts) {
 }
 
 function iniciar(opcoes) {
-  cfg = { base: opcoes.evoBase, key: opcoes.evoKey, instancia: opcoes.instancia, db: opcoes.db };
+  cfg = { base: opcoes.evoBase, key: opcoes.evoKey, instancia: opcoes.instancia, db: opcoes.db, marcas: opcoes.marcas || [] };
   processar = opcoes.processarMensagem;
 }
 
@@ -78,7 +79,8 @@ function resumoSync() {
   return {
     emAndamento: sync.emAndamento, lotes: sync.lotes, recebidas: sync.recebidas, gravadas: sync.gravadas, ignoradas: sync.ignoradas,
     foraDaJanela: sync.foraDaJanela, erros: sync.erros, conversas: sync.contatos.size, inicio: sync.inicio, fim: sync.fim,
-    progresso: sync.progresso, ultimoLote: sync.ultimoLote, naFila: fila.reduce((s, l) => s + l.lista.length, 0), ultimoErro: sync.ultimoErro
+    progresso: sync.progresso, ultimoLote: sync.ultimoLote, naFila: fila.reduce((s, l) => s + l.lista.length, 0), ultimoErro: sync.ultimoErro,
+    desde: sync.desde, ate: sync.ate, lidas: sync.lidas, naoLidas: sync.naoLidas
   };
 }
 
@@ -114,6 +116,7 @@ function registrarConexao(data) {
     // ligação nova: zera o placar da sincronização para a tela mostrar só esta
     sync.lotes = 0; sync.recebidas = 0; sync.gravadas = 0; sync.ignoradas = 0; sync.foraDaJanela = 0; sync.erros = 0;
     sync.contatos = new Set(); sync.inicio = ''; sync.fim = ''; sync.progresso = null; sync.ultimoErro = '';
+    sync.desde = ''; sync.ate = ''; sync.lidas = 0; sync.naoLidas = 0;
   }
 }
 
@@ -145,8 +148,13 @@ async function processarFila() {
       for (const it of itens) {
         if (!it.ts || it.ts < limite) { sync.foraDaJanela += 1; continue; }
         try {
-          const r = await processar(it.m, 'messages.set', { historico: true, quando: textoDoTimestamp(it.ts) });
-          if (r && r.gravada) { sync.gravadas += 1; if (r.contatoId) sync.contatos.add(r.contatoId); }
+          const quando = textoDoTimestamp(it.ts);
+          const r = await processar(it.m, 'messages.set', { historico: true, quando });
+          if (r && r.gravada) {
+            sync.gravadas += 1; if (r.contatoId) sync.contatos.add(r.contatoId);
+            if (!sync.desde || quando < sync.desde) sync.desde = quando;
+            if (!sync.ate || quando > sync.ate) sync.ate = quando;
+          }
           else sync.ignoradas += 1;
         } catch (e) {
           sync.erros += 1; sync.ultimoErro = e.message;
@@ -160,7 +168,70 @@ async function processarFila() {
     sync.emAndamento = false;
     sync.fim = agoraTexto();
     console.log(`[CONEXAO] histórico processado: ${sync.gravadas} novas, ${sync.ignoradas} já existiam, ${sync.foraDaJanela} fora da janela, ${sync.erros} erros, ${sync.contatos.size} conversas`);
+    // o que a recepção já respondeu/viu no celular não fica como não lido (regra do Thiago, 23/11/2026)
+    if (sync.gravadas && sync.desde && sync.ate) {
+      try { const l = aplicarLidos({ desde: sync.desde, ate: sync.ate }); sync.lidas = l.marcadas; sync.naoLidas = l.mantidas; }
+      catch (e) { console.error('[CONEXAO] erro ao marcar lidos:', e.message); }
+    }
   }
 }
 
-module.exports = { iniciar, estado, gerarQr, receberLote, registrarConexao, resumoSync, textoDoTimestamp, JANELA_DIAS };
+// ─── Lido ou não lido depois da sincronização ──────────────────────────────────────────────────────────────────
+// Regra do Thiago (23/11/2026, ao ver 22 conversas "não lidas" no CRM contra bem menos no celular): o que foi
+// respondido ou visto no WhatsApp do celular não fica como não lido no CRM. O WhatsApp não manda o estado de leitura
+// no histórico, então o CRM deduz: a mensagem do cliente conta como VISTA no celular quando
+//   (a) a recepção respondeu (mensagem humana, não Athena/saudação) depois dela; ou
+//   (b) depois da resposta só veio cortesia curta ("obrigada", "indo", sem pergunta); ou
+//   (c) ela chegou em horário de recepção (seg-sex 8:30-18h, sáb 8:30-13h) pelo menos 30 min antes do fim da
+//       sincronização: o celular estava funcionando e a equipe atendeu por ele enquanto o CRM estava fora.
+// O que chegou fora do horário (noite, fim de semana) e não teve resposta humana depois continua NÃO LIDO.
+// Equipe/internos ficam de fora. Devolve o que fez; com simular=true só conta.
+const CORTESIA_MAX = 30;
+function horarioRecepcao(texto) {
+  // texto 'AAAA-MM-DD HH:MM:SS' de Brasília; seg-sex 8:30-18h, sáb 8:30-13h, domingo nunca
+  const [, h, m] = String(texto).match(/ (\d{2}):(\d{2})/) || [];
+  if (!h) return false;
+  const min = Number(h) * 60 + Number(m);
+  const dia = new Date(String(texto).slice(0, 10) + 'T12:00:00Z').getUTCDay(); // 0=dom … 6=sáb
+  if (dia === 0) return false;
+  if (dia === 6) return min >= 8 * 60 + 30 && min < 13 * 60;
+  return min >= 8 * 60 + 30 && min < 18 * 60;
+}
+function aplicarLidos(opcoes) {
+  const o = opcoes || {};
+  const db = cfg.db;
+  const desde = o.desde, ate = o.ate;
+  if (!desde || !ate) return { erro: 'faltou janela' };
+  const marcas = (cfg.marcas || []).filter(Boolean);
+  const automatica = t => marcas.some(m => String(t || '').includes(m));
+  const limiteVisto = new Date(ate.replace(' ', 'T') + '-03:00').getTime() - 30 * 60000;
+  const contatos = db.prepare(`SELECT c.id, c.nome, c.telefone, COALESCE(c.last_read_at,'') lr FROM contatos c
+    WHERE COALESCE(c.equipe_xr,0) = 0 AND c.telefone NOT LIKE '%@%'
+      AND EXISTS (SELECT 1 FROM mensagens m WHERE m.contato_id = c.id AND m.direcao = 'in' AND m.created_at >= ? AND m.created_at <= ?)`).all(desde, ate);
+  const res = { conversas: contatos.length, marcadas: 0, mantidas: 0, semNaoLida: 0, simular: !!o.simular, detalhes: [] };
+  const upd = db.prepare("UPDATE contatos SET last_read_at = MAX(COALESCE(last_read_at,''), ?), manual_unread = 0 WHERE id = ?");
+  for (const c of contatos) {
+    const msgs = db.prepare('SELECT direcao, texto, tipo, created_at FROM mensagens WHERE contato_id = ? AND created_at <= ? ORDER BY created_at, id').all(c.id, ate);
+    const naoLidas = msgs.filter(m => m.direcao === 'in' && m.created_at > c.lr);
+    if (!naoLidas.length) { res.semNaoLida++; continue; }
+    const respostas = msgs.filter(m => m.direcao === 'out' && m.created_at >= desde && m.created_at <= ate && !automatica(m.texto));
+    const ultResp = respostas.length ? respostas[respostas.length - 1].created_at : '';
+    const depois = ultResp ? naoLidas.filter(m => m.created_at > ultResp) : naoLidas;
+    const cortesia = m => m.tipo === 'text' && String(m.texto || '').trim().length <= CORTESIA_MAX && !/\?/.test(String(m.texto || ''));
+    const vistaNoCelular = m => horarioRecepcao(m.created_at) && new Date(m.created_at.replace(' ', 'T') + '-03:00').getTime() <= limiteVisto;
+    const pendentes = depois.filter(m => !cortesia(m) && !vistaNoCelular(m));
+    const ultima = msgs[msgs.length - 1].created_at;
+    if (!pendentes.length) {
+      if (!o.simular) upd.run(ultima, c.id);
+      res.marcadas++;
+      res.detalhes.push({ contato: c.nome || c.telefone, acao: 'lida', ate: ultima, motivo: !depois.length ? 'respondida' : depois.every(cortesia) ? 'só cortesia depois' : 'vista no celular em horário de recepção' });
+    } else {
+      res.mantidas++;
+      res.detalhes.push({ contato: c.nome || c.telefone, acao: 'continua não lida', pendentes: pendentes.length, ultima: pendentes[pendentes.length - 1].created_at, texto: String(pendentes[pendentes.length - 1].texto || '').slice(0, 60) });
+    }
+  }
+  if (!o.simular) console.log(`[CONEXAO] lidos após sincronização (${desde} → ${ate}): ${res.marcadas} conversas marcadas como lidas, ${res.mantidas} continuam não lidas`);
+  return res;
+}
+
+module.exports = { iniciar, estado, gerarQr, receberLote, registrarConexao, resumoSync, textoDoTimestamp, aplicarLidos, horarioRecepcao, JANELA_DIAS };

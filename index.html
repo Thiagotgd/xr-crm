@@ -1154,7 +1154,7 @@ a.msg-link { color: #53bdeb; text-decoration: underline; word-break: break-all; 
       <div id="waSync" style="margin-top:12px;font-size:13px;color:var(--text-muted);line-height:1.5"></div>
       <div style="margin-top:12px;font-size:12px;color:var(--text-muted);line-height:1.5">
         Quando o WhatsApp da recepção desconecta deste CRM, religue por aqui: no celular da recepção, abra o WhatsApp Business → <b>⋮</b> (ou Configurações) → <b>Aparelhos conectados</b> → <b>Conectar aparelho</b> e aponte a câmera para o QR code. Ou use <b>Conectar com número de telefone</b> e digite o código.
-        Ao reconectar, o WhatsApp manda o histórico recente e o CRM grava sozinho o que ficou de fora, na ordem e com a hora certa. Conversa que a recepção já respondeu pelo celular fica lida até a resposta; o que o cliente mandou depois continua não lido.
+        Ao reconectar, o WhatsApp manda o histórico recente e o CRM grava sozinho o que ficou de fora, na ordem e com a hora certa. Conversa que a recepção respondeu ou viu pelo celular em horário de atendimento fica lida; o que chegou fora do horário e ninguém respondeu continua não lido.
       </div>
     </div>
 
@@ -2093,7 +2093,7 @@ async function waAtualizar(mostrarErro) {
     const sy = e.sync || {};
     let st = '';
     if (sy.emAndamento) st = '⏳ Sincronizando o histórico… ' + sy.gravadas + ' mensagens novas gravadas até agora' + (sy.naFila ? ' (' + sy.naFila + ' na fila)' : '') + (sy.progresso != null ? ' · ' + sy.progresso + '%' : '');
-    else if (sy.lotes) st = '✅ Sincronização: ' + sy.gravadas + ' mensagens novas em ' + sy.conversas + ' conversas (' + sy.ignoradas + ' o CRM já tinha' + (sy.foraDaJanela ? ', ' + sy.foraDaJanela + ' mais antigas que 14 dias' : '') + (sy.erros ? ', ' + sy.erros + ' erros' : '') + ') · ' + waData(sy.inicio) + ' → ' + waData(sy.fim);
+    else if (sy.lotes) st = '✅ Sincronização: ' + sy.gravadas + ' mensagens novas em ' + sy.conversas + ' conversas (' + sy.ignoradas + ' o CRM já tinha' + (sy.foraDaJanela ? ', ' + sy.foraDaJanela + ' mais antigas que 14 dias' : '') + (sy.erros ? ', ' + sy.erros + ' erros' : '') + ') · ' + waData(sy.inicio) + ' → ' + waData(sy.fim) + (sy.lidas || sy.naoLidas ? ' · ' + sy.lidas + ' conversas ficaram lidas (respondidas ou vistas no celular), ' + sy.naoLidas + ' continuam não lidas' : '');
     else if (aberta) st = 'Nenhuma sincronização desde que o CRM subiu. Ela acontece sozinha quando o WhatsApp reconecta.';
     else st = 'Ao reconectar, o histórico que ficou de fora entra sozinho (aparece aqui).';
     document.getElementById('waSync').textContent = st;

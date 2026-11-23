@@ -2689,7 +2689,7 @@ async function handleRequest(req, res) {
 }
 
 // ─── HTTP Server ───────────────────────────────────────────────────────────────
-conexao.iniciar({ db, evoBase: EVO_BASE, evoKey: EVO_KEY, instancia: EVO_INSTANCE, processarMensagem });
+conexao.iniciar({ db, evoBase: EVO_BASE, evoKey: EVO_KEY, instancia: EVO_INSTANCE, processarMensagem, marcas: [followup.ATHENA_MARCA, followup.SAUDACAO_MARCA] });
 
 const server = http.createServer(async (req, res) => {
   try {
