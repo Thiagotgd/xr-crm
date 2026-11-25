@@ -283,6 +283,7 @@ function resumoParaCitar(m) {
 }
 // Envia uma figurinha (arquivo .webp guardado no CRM) para um telefone ou grupo
 async function enviarFigurinha(alvo, base64) {
+  destinoSeguro(alvo);
   const numero = String(alvo).includes('@g.us') ? String(alvo) : String(alvo).replace(/\D/g, '');
   const r = await evoPost('/message/sendSticker/' + EVO_INSTANCE, { number: numero, sticker: base64 });
   if (r.status >= 400) {
@@ -335,6 +336,12 @@ function phoneFromJid(jid) {
   return jid.replace('@s.whatsapp.net', '').replace('@c.us', '');
 }
 
+// Contato ainda sem telefone traduzido ("…@lid"): tirar os dígitos viraria um número de outra pessoa. Não envia.
+const LID_SEM_TELEFONE = 'Este contato ainda está sem o telefone traduzido pelo WhatsApp (identificador @lid). Responda pelo celular por enquanto; o CRM acerta sozinho quando o número aparecer.';
+function destinoSeguro(alvo) {
+  if (String(alvo || '').endsWith('@lid')) throw new Error(LID_SEM_TELEFONE);
+  return alvo;
+}
 function jidFromPhone(phone) {
   const clean = phone.replace(/\D/g, '');
   return clean + '@s.whatsapp.net';
@@ -352,6 +359,7 @@ function erroDaEvolution(res, corpo) {
 
 function evoSendText(phone, text, quoted) {
   return new Promise((resolve, reject) => {
+    destinoSeguro(phone);
     const url = new URL(`${EVO_BASE}/message/sendText/${EVO_INSTANCE}`);
     const number = phone.includes('@g.us') ? phone : phone.replace(/\D/g, '');
     const corpo = { number, text };
@@ -615,6 +623,7 @@ function cartoesDaMensagem(msg) {
 }
 // Envia cartões para um telefone ou grupo. Devolve a resposta da Evolution (com a chave da mensagem).
 async function enviarCartao(alvo, lista) {
+  destinoSeguro(alvo);
   const numero = String(alvo).includes('@g.us') ? String(alvo) : String(alvo).replace(/\D/g, '');
   const r = await evoPost('/message/sendContact/' + EVO_INSTANCE, {
     number: numero,
@@ -750,6 +759,7 @@ function evoDownloadMedia(messageKey, mensagem) {
 
 function evoSendMedia(phone, mediatype, base64, caption, fileName, mimetype) {
   return new Promise((resolve, reject) => {
+    destinoSeguro(phone);
     const url = new URL(`${EVO_BASE}/message/sendMedia/${EVO_INSTANCE}`);
     const corpo = { number: phone.includes('@g.us') ? phone : phone.replace(/\D/g, ''), mediatype, media: base64, caption: caption || '', fileName: fileName || '' };
     if (mimetype) corpo.mimetype = mimetype;
